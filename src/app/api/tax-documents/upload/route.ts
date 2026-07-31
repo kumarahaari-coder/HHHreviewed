@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
   let uploadedR2Key: string | null = null;
 
   try {
-    const session = getCurrentSession();
+    const session = await getCurrentSession();
     if (!session) {
       return NextResponse.json({ success: false, error: "Unauthorized. Session required." }, { status: 401 });
     }

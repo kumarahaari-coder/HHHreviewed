@@ -5,7 +5,7 @@ import { createCreatorInvitation, updateClerkInvitation, findUserByEmail } from 
 
 export async function GET(req: NextRequest) {
   try {
-    const session = getCurrentSession();
+    const session = await getCurrentSession();
     if (!session || !canPerformAdminReview(session)) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = getCurrentSession();
+    const session = await getCurrentSession();
     if (!session || !canPerformAdminReview(session)) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }

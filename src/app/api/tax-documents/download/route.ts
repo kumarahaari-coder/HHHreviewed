@@ -5,7 +5,7 @@ import { generateSignedDownloadUrl } from "@/lib/storage/s3";
 
 export async function GET(req: NextRequest) {
   try {
-    const session = getCurrentSession();
+    const session = await getCurrentSession();
     if (!session || !session.partnerId) {
       return NextResponse.json({ success: false, error: "Unauthorized. Creator session required." }, { status: 401 });
     }

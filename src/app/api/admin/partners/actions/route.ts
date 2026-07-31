@@ -5,7 +5,7 @@ import { createClerkPartnerInvitation, revokeClerkInvitation, banClerkUser, unba
 
 export async function POST(req: NextRequest) {
   try {
-    const session = getCurrentSession();
+    const session = await getCurrentSession();
     if (!session || !canPerformAdminReview(session)) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }

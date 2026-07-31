@@ -101,29 +101,8 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
 }
 
 /**
- * Synchronous session helper
+ * Server session helper, delegates to getClerkAuthSession.
  */
-export function getCurrentSession(): AuthSession | null {
-  const isDevMockMode = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
-  if (isDevMockMode) {
-    const user = db.currentUser;
-    if (!user) return null;
-    return {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      partnerId: user.partnerId,
-      clerkUserId: user.clerkUserId
-    };
-  }
-
-  const user = db.currentUser;
-  if (!user) return null;
-  return {
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-    partnerId: user.partnerId || undefined,
-    clerkUserId: user.clerkUserId
-  };
+export async function getCurrentSession(): Promise<AuthSession | null> {
+  return getClerkAuthSession();
 }

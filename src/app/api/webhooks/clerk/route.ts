@@ -104,12 +104,15 @@ export async function POST(req: NextRequest) {
         console.warn(`[Clerk Webhook Ignored] Primary email could not be resolved for Clerk user ${realClerkUserId}`);
         if (isSupabaseEnabled() && claimToken) {
           const supabase = createAdminClient();
-          await supabase.rpc("complete_webhook_event_tx", {
+          const { error: completeErr } = await supabase.rpc("complete_webhook_event_tx", {
             p_provider: provider,
             p_event_id: eventId,
             p_claim_token: claimToken,
             p_outcome: "IGNORED_UNKNOWN_USER"
           });
+          if (completeErr) {
+            throw new Error(`complete_webhook_event_tx (IGNORED_UNKNOWN_USER) failed: ${completeErr.message}`);
+          }
         }
         return NextResponse.json({ success: true, message: "Ignored missing primary email" });
       }
@@ -121,12 +124,15 @@ export async function POST(req: NextRequest) {
         console.warn(`[Clerk Webhook Ignored] Primary email is missing or unverified for Clerk user ${realClerkUserId}`);
         if (isSupabaseEnabled() && claimToken) {
           const supabase = createAdminClient();
-          await supabase.rpc("complete_webhook_event_tx", {
+          const { error: completeErr } = await supabase.rpc("complete_webhook_event_tx", {
             p_provider: provider,
             p_event_id: eventId,
             p_claim_token: claimToken,
             p_outcome: "IGNORED_UNVERIFIED_EMAIL"
           });
+          if (completeErr) {
+            throw new Error(`complete_webhook_event_tx (IGNORED_UNVERIFIED_EMAIL) failed: ${completeErr.message}`);
+          }
         }
         return NextResponse.json({ success: true, message: "Ignored unverified primary email" });
       }
@@ -154,23 +160,29 @@ export async function POST(req: NextRequest) {
 
         if (isSupabaseEnabled() && claimToken) {
           const supabase = createAdminClient();
-          await supabase.rpc("complete_webhook_event_tx", {
+          const { error: completeErr } = await supabase.rpc("complete_webhook_event_tx", {
             p_provider: provider,
             p_event_id: eventId,
             p_claim_token: claimToken,
             p_outcome: "MAPPED"
           });
+          if (completeErr) {
+            throw new Error(`complete_webhook_event_tx (MAPPED) failed: ${completeErr.message}`);
+          }
         }
       } else {
         console.log(`[Clerk Webhook Pending] No application user found matching email ${primaryEmailStr}. Remaining pending.`);
         if (isSupabaseEnabled() && claimToken) {
           const supabase = createAdminClient();
-          await supabase.rpc("complete_webhook_event_tx", {
+          const { error: completeErr } = await supabase.rpc("complete_webhook_event_tx", {
             p_provider: provider,
             p_event_id: eventId,
             p_claim_token: claimToken,
             p_outcome: "IGNORED_UNKNOWN_USER"
           });
+          if (completeErr) {
+            throw new Error(`complete_webhook_event_tx (IGNORED_UNKNOWN_USER) failed: ${completeErr.message}`);
+          }
         }
       }
     }
@@ -183,12 +195,15 @@ export async function POST(req: NextRequest) {
     if (isSupabaseEnabled() && eventId && claimToken) {
       try {
         const supabase = createAdminClient();
-        await supabase.rpc("fail_webhook_event_tx", {
+        const { error: failErr } = await supabase.rpc("fail_webhook_event_tx", {
           p_provider: provider,
           p_event_id: eventId,
           p_claim_token: claimToken,
           p_error_message: error?.message || "Webhook handler exception"
         });
+        if (failErr) {
+          console.error("[Clerk Webhook Fail Logging Error] fail_webhook_event_tx failed:", failErr.message);
+        }
       } catch (failErr) {
         console.error("[Clerk Webhook Fail Logging Error]", failErr);
       }

@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(req: NextRequest) {
   try {
-    const session = getCurrentSession();
+    const session = await getCurrentSession();
     if (!session || !canPerformAdminReview(session)) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
         const supabase = createAdminClient();
         const { data, error } = await supabase
           .from("schema_migrations")
-          .select("version, checksum_sha256, applied_at")
+          .select("version, applied_at")
           .eq("version", "20260731_hhh_final_production_migration")
           .maybeSingle();
 

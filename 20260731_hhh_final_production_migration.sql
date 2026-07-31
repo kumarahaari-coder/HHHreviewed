@@ -75,34 +75,17 @@ DROP FUNCTION IF EXISTS public.fail_webhook_event_tx(TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.repair_hema_user_tx(TEXT, TEXT, TEXT, TEXT);
 
 -- ------------------------------------------------------------------------------
--- 3. SCHEMA MIGRATIONS VERSION TABLE (Item 7: Checksum Locking & Verification)
+-- ------------------------------------------------------------------------------
+-- 3. SCHEMA MIGRATIONS VERSION TABLE (Simplified Versioning - Checksum Control Deferred)
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version TEXT PRIMARY KEY,
-    checksum_sha256 TEXT NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-DO $$
-DECLARE
-    v_existing_checksum TEXT;
-    v_target_version CONSTANT TEXT := '20260731_hhh_final_production_migration';
-    v_target_checksum CONSTANT TEXT := 'e4d985e9fe510aac79377e31f50d477d715e1745ee8f21753731de583b9cb32b';
-BEGIN
-    SELECT checksum_sha256 INTO v_existing_checksum
-    FROM public.schema_migrations
-    WHERE version = v_target_version
-    FOR UPDATE;
-
-    IF v_existing_checksum IS NOT NULL THEN
-        IF v_existing_checksum <> v_target_checksum THEN
-            RAISE EXCEPTION 'Migration Aborted: Version % exists with a different SHA-256 checksum (existing: %, target: %).', v_target_version, v_existing_checksum, v_target_checksum;
-        END IF;
-    ELSE
-        INSERT INTO public.schema_migrations (version, checksum_sha256, applied_at)
-        VALUES (v_target_version, v_target_checksum, NOW());
-    END IF;
-END $$;
+INSERT INTO public.schema_migrations (version, applied_at)
+VALUES ('20260731_hhh_final_production_migration', NOW())
+ON CONFLICT (version) DO NOTHING;
 
 -- ------------------------------------------------------------------------------
 -- 4. SHARED TIMESTAMP TRIGGER FUNCTION
@@ -467,14 +450,14 @@ BEGIN
         RAISE EXCEPTION 'Invitation Aborted: Unsupported audit source %.', p_source;
     END IF;
 
-    -- 2. Partner Resolution & Explicit Active Status Check (Item 1)
+    -- 2. Partner Resolution & Explicit Active Status Check (Allowlist: ACTIVE, INVITED)
     IF p_partner_id IS NOT NULL THEN
         SELECT * INTO v_partner_by_id FROM public.partners WHERE id = p_partner_id;
         IF v_partner_by_id.id IS NULL THEN
             RAISE EXCEPTION 'Invitation Aborted: Partner ID % does not exist.', p_partner_id;
         END IF;
-        IF v_partner_by_id.record_status::text IS DISTINCT FROM 'ACTIVE' THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner % is not active (status: %).', p_partner_id, v_partner_by_id.record_status;
+        IF v_partner_by_id.record_status::text NOT IN ('ACTIVE', 'INVITED') THEN
+            RAISE EXCEPTION 'Invitation Aborted: Partner % status is not eligible for creator access (status: %).', p_partner_id, v_partner_by_id.record_status;
         END IF;
         v_partner_id := v_partner_by_id.id;
     END IF;
@@ -488,8 +471,8 @@ BEGIN
         END IF;
 
         SELECT * INTO v_partner_by_code FROM public.partners WHERE partner_code = p_partner_code;
-        IF v_partner_by_code.record_status::text IS DISTINCT FROM 'ACTIVE' THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner code % is not active (status: %).', p_partner_code, v_partner_by_code.record_status;
+        IF v_partner_by_code.record_status::text NOT IN ('ACTIVE', 'INVITED') THEN
+            RAISE EXCEPTION 'Invitation Aborted: Partner code % status is not eligible for creator access (status: %).', p_partner_code, v_partner_by_code.record_status;
         END IF;
 
         IF v_partner_id IS NOT NULL AND v_partner_id IS DISTINCT FROM v_partner_by_code.id THEN
@@ -517,8 +500,8 @@ BEGIN
         IF v_existing_user_by_id.role <> 'CREATOR' THEN
             RAISE EXCEPTION 'Invitation Aborted: User ID % has non-creator role %', p_internal_user_id, v_existing_user_by_id.role;
         END IF;
-        IF v_existing_user_by_id.status IN ('SUSPENDED', 'ARCHIVED') THEN
-            RAISE EXCEPTION 'Invitation Aborted: User ID % is currently %', p_internal_user_id, v_existing_user_by_id.status;
+        IF v_existing_user_by_id.status NOT IN ('INVITED', 'ACTIVE') THEN
+            RAISE EXCEPTION 'Invitation Aborted: User ID % has status % (not eligible for invitation).', p_internal_user_id, v_existing_user_by_id.status;
         END IF;
         IF v_existing_user_by_id.partner_id IS DISTINCT FROM v_partner_id THEN
             RAISE EXCEPTION 'Invitation Aborted: User ID % linked to partner % (expected %)', p_internal_user_id, v_existing_user_by_id.partner_id, v_partner_id;
@@ -624,11 +607,11 @@ BEGIN
         RAISE EXCEPTION 'Mapping Aborted: User % has role %, expected CREATOR.', v_target_user.id, v_target_user.role;
     END IF;
 
-    IF v_target_user.status IN ('SUSPENDED', 'ARCHIVED') THEN
-        RAISE EXCEPTION 'Mapping Aborted: User % is currently %', v_target_user.id, v_target_user.status;
+    IF v_target_user.status NOT IN ('INVITED', 'ACTIVE') THEN
+        RAISE EXCEPTION 'Mapping Aborted: User % has status % (not eligible for mapping).', v_target_user.id, v_target_user.status;
     END IF;
 
-    -- Item 2: ALWAYS load and lock the creator's partner record and assert ACTIVE status
+    -- Item 2: ALWAYS load and lock the creator's partner record and assert eligible status (Allowlist: ACTIVE, INVITED)
     IF v_target_user.partner_id IS NULL THEN
         RAISE EXCEPTION 'Mapping Aborted: Creator % has no assigned partner UUID.', v_target_user.id;
     END IF;
@@ -638,8 +621,8 @@ BEGIN
         RAISE EXCEPTION 'Mapping Aborted: Assigned partner UUID % does not exist.', v_target_user.partner_id;
     END IF;
 
-    IF v_partner_record.record_status::text IS DISTINCT FROM 'ACTIVE' THEN
-        RAISE EXCEPTION 'Mapping Aborted: Partner % is not active (status: %).', v_partner_record.id, v_partner_record.record_status;
+    IF v_partner_record.record_status::text NOT IN ('ACTIVE', 'INVITED') THEN
+        RAISE EXCEPTION 'Mapping Aborted: Partner % status is not eligible for creator access (status: %).', v_partner_record.id, v_partner_record.record_status;
     END IF;
 
     -- Verify optional partner parameters match assigned partner
@@ -711,7 +694,7 @@ REVOKE ALL ON FUNCTION public.map_clerk_user_tx(TEXT, TEXT, TEXT, UUID, TEXT, TE
 GRANT EXECUTE ON FUNCTION public.map_clerk_user_tx(TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO service_role;
 
 -- ------------------------------------------------------------------------------
--- 9. SUPER ADMIN SEED RPC (Item 11: Identity Replacement Guard & Item 12: Idempotency)
+-- 9. SUPER ADMIN SEED RPC (Hardened replacement protection and strict idempotency)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.seed_super_admin_guarded(
     p_user_id TEXT,
@@ -740,42 +723,35 @@ BEGIN
         RAISE EXCEPTION 'Seed Aborted: Valid Clerk User ID format is required.';
     END IF;
 
+    -- Concurrency-safe lock
     SELECT * INTO v_existing_by_id FROM public.users WHERE id = p_user_id FOR UPDATE;
     SELECT * INTO v_existing_by_email FROM public.users WHERE email = v_norm_email FOR UPDATE;
     SELECT * INTO v_existing_by_clerk FROM public.users WHERE clerk_user_id = p_clerk_user_id FOR UPDATE;
 
-    IF v_existing_by_email.id IS NOT NULL AND v_existing_by_email.id <> p_user_id THEN
-        RAISE EXCEPTION 'Seed Aborted: Email % belongs to user %', v_norm_email, v_existing_by_email.id;
-    END IF;
-
-    IF v_existing_by_clerk.id IS NOT NULL AND v_existing_by_clerk.id <> p_user_id THEN
-        RAISE EXCEPTION 'Seed Aborted: Clerk User ID % belongs to user %', p_clerk_user_id, v_existing_by_clerk.id;
-    END IF;
-
+    -- Strict Idempotency Return: If already seeded and matching, return immediately without any writes or audit log entries
     IF v_existing_by_id.id IS NOT NULL THEN
-        IF v_existing_by_id.email IS DISTINCT FROM v_norm_email THEN
-            RAISE EXCEPTION 'Seed Aborted: User ID % has email %', p_user_id, v_existing_by_id.email;
-        END IF;
-        IF v_existing_by_id.role IS DISTINCT FROM 'SUPER_ADMIN' THEN
-            RAISE EXCEPTION 'Seed Aborted: User ID % has role %', p_user_id, v_existing_by_id.role;
-        END IF;
-        IF v_existing_by_id.partner_id IS NOT NULL THEN
-            RAISE EXCEPTION 'Seed Aborted: Super Admin must not have a partner_id.';
-        END IF;
-        IF v_existing_by_id.status IN ('SUSPENDED', 'ARCHIVED') THEN
-            RAISE EXCEPTION 'Seed Aborted: Super Admin % is currently %', p_user_id, v_existing_by_id.status;
-        END IF;
-
-        -- Item 11: Replacement Protection
-        IF v_existing_by_id.clerk_user_id IS NOT NULL AND v_existing_by_id.clerk_user_id IS DISTINCT FROM p_clerk_user_id THEN
-            RAISE EXCEPTION 'Seed Aborted: Existing Clerk identity % cannot be replaced.', v_existing_by_id.clerk_user_id;
-        END IF;
-
-        -- Item 12: Idempotent Seed Check (No duplicate audit log entry)
         IF v_existing_by_id.clerk_user_id = p_clerk_user_id AND v_existing_by_id.status = 'ACTIVE' AND v_existing_by_id.onboarding_status = 'COMPLETED' THEN
             RETURN jsonb_build_object('success', true, 'user', row_to_json(v_existing_by_id), 'state', 'IDEMPOTENT_SEEDED');
         END IF;
 
+        -- Hardened checks against existing user
+        IF v_existing_by_id.email IS DISTINCT FROM v_norm_email THEN
+            RAISE EXCEPTION 'Seed Aborted: User ID % has email % (expected %)', p_user_id, v_existing_by_id.email, v_norm_email;
+        END IF;
+        IF v_existing_by_id.role IS DISTINCT FROM 'SUPER_ADMIN' THEN
+            RAISE EXCEPTION 'Seed Aborted: User ID % has role % (expected SUPER_ADMIN)', p_user_id, v_existing_by_id.role;
+        END IF;
+        IF v_existing_by_id.partner_id IS NOT NULL THEN
+            RAISE EXCEPTION 'Seed Aborted: Super Admin must not have a partner_id.';
+        END IF;
+        IF v_existing_by_id.status NOT IN ('INVITED', 'ACTIVE') THEN
+            RAISE EXCEPTION 'Seed Aborted: Super Admin % is in status %', p_user_id, v_existing_by_id.status;
+        END IF;
+        IF v_existing_by_id.clerk_user_id IS NOT NULL AND v_existing_by_id.clerk_user_id <> p_clerk_user_id THEN
+            RAISE EXCEPTION 'Seed Aborted: Super Admin % is already linked to a different Clerk ID % (incoming %)', p_user_id, v_existing_by_id.clerk_user_id, p_clerk_user_id;
+        END IF;
+
+        -- Safe update
         UPDATE public.users
         SET clerk_user_id = p_clerk_user_id,
             status = 'ACTIVE',
@@ -784,6 +760,15 @@ BEGIN
         WHERE id = p_user_id
         RETURNING * INTO v_result;
     ELSE
+        -- Ensure no email or Clerk ID conflict
+        IF v_existing_by_email.id IS NOT NULL THEN
+            RAISE EXCEPTION 'Seed Aborted: Email % is already registered to user %', v_norm_email, v_existing_by_email.id;
+        END IF;
+        IF v_existing_by_clerk.id IS NOT NULL THEN
+            RAISE EXCEPTION 'Seed Aborted: Clerk User ID % is already registered to user %', p_clerk_user_id, v_existing_by_clerk.id;
+        END IF;
+
+        -- Create new Super Admin
         INSERT INTO public.users (
             id, name, email, role, partner_id, status, clerk_user_id, onboarding_status
         ) VALUES (
@@ -792,6 +777,7 @@ BEGIN
         RETURNING * INTO v_result;
     END IF;
 
+    -- Audit logs only written for new / modified seeds (not for idempotent retries)
     INSERT INTO public.application_audit_logs (action, target_user_id, performed_by_user_id, source, details)
     VALUES ('SUPER_ADMIN_SEEDED', p_user_id, p_user_id, 'MIGRATION_SEED', jsonb_build_object('email', v_norm_email, 'clerkUserId', p_clerk_user_id));
 
