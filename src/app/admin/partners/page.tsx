@@ -246,6 +246,17 @@ export default function PartnerManagement() {
                         {activeMenuPartnerId === p.id && (
                           <div className="absolute right-4 top-12 w-48 bg-brand-cream border border-brand-blush shadow-xl rounded-xl p-1.5 z-50 text-left space-y-1 text-xs">
                             <button
+                              onClick={() => {
+                                setActiveMenuPartnerId(null);
+                                router.push(`/partner?previewPartnerId=${encodeURIComponent(p.id)}`);
+                              }}
+                              className="w-full flex items-center space-x-2 px-3 py-2 text-brand-plum font-bold hover:bg-brand-blush/40 rounded-lg transition-colors"
+                            >
+                              <Eye size={14} className="text-brand-wine" />
+                              <span>Preview Portal</span>
+                            </button>
+
+                            <button
                               onClick={() => handlePartnerAction(p.id, "RESEND_INVITE")}
                               className="w-full flex items-center space-x-2 px-3 py-2 text-zinc-700 hover:bg-brand-blush/30 hover:text-brand-plum rounded-lg transition-colors font-medium"
                             >

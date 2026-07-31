@@ -20,22 +20,7 @@ export default function EntryPortal() {
     setUsers(db.users);
 
     if (!isDevMockMode && isLoaded && isSignedIn) {
-      fetch("/api/auth/session")
-        .then(res => res.json())
-        .then(data => {
-          console.log(`[Entry Portal Debug] Session:`, data);
-          if (data.status === "PENDING_ACCESS") {
-            router.replace("/pending-access");
-          } else if (data.status === "APPROVED" && data.user) {
-            const role = data.user.role;
-            if (role === "SUPER_ADMIN" || role === "FINANCE_ADMIN" || role === "ADMIN") {
-              router.replace("/admin");
-            } else {
-              router.replace("/partner");
-            }
-          }
-        })
-        .catch(err => console.error("[Entry Portal Error]", err));
+      router.replace("/auth/resolve");
     }
   }, [isLoaded, isSignedIn, isDevMockMode, router]);
 

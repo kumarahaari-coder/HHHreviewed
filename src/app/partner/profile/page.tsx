@@ -45,15 +45,44 @@ export default function PartnerProfile() {
     }
   };
 
-  useEffect(() => {
-    const user = db.currentUser;
-    if (!user || !user.partnerId) return;
+  const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const previewPartnerId = searchParams?.get("previewPartnerId");
 
-    setCurrentUser(user);
-    const p = db.partners.find(p => p.id === user.partnerId) || null;
-    setPartner(p);
-    if (p) fetchTaxStatus(p.id);
-  }, []);
+  useEffect(() => {
+    let isSubscribed = true;
+
+    async function loadProfile() {
+      try {
+        const url = previewPartnerId
+          ? `/api/partner/dashboard?previewPartnerId=${encodeURIComponent(previewPartnerId)}`
+          : "/api/partner/dashboard";
+
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!isSubscribed) return;
+
+        if (data.success && data.partner) {
+          setPartner(data.partner);
+          if (data.taxDocument) {
+            setTaxDocStatus(data.taxDocument.status);
+            setTaxDetails(data.taxDocument);
+          } else {
+            setTaxDocStatus("NOT_SUBMITTED");
+            setTaxDetails(null);
+          }
+        }
+      } catch (err) {
+        console.error("[Partner Profile Error]", err);
+      }
+    }
+
+    loadProfile();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [previewPartnerId]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setMessage(null);

@@ -1,124 +1,153 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { db } from "@/lib/db/mockDb";
+import React, { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Payout, Reservation } from "@/lib/db/schema";
 import { Card, Badge } from "@/components/ui/custom";
-import { DollarSign, Landmark, CheckCircle, Clock } from "lucide-react";
+import { DollarSign, Landmark, CheckCircle, Clock, Loader2 } from "lucide-react";
 
-export default function PartnerPayouts() {
+function PartnerPayoutsContent() {
+  const searchParams = useSearchParams();
+  const previewPartnerId = searchParams.get("previewPartnerId");
+
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const user = db.currentUser;
-    if (!user || !user.partnerId) return;
+    let isSubscribed = true;
 
-    // RLS: Scoped only to partner
-    const myPayouts = db.payouts.filter(p => p.partnerId === user.partnerId);
-    setPayouts(myPayouts);
-    setReservations(db.reservations.filter(r => r.partnerId === user.partnerId));
-  }, []);
+    async function loadData() {
+      try {
+        const url = previewPartnerId
+          ? `/api/partner/dashboard?previewPartnerId=${encodeURIComponent(previewPartnerId)}`
+          : "/api/partner/dashboard";
 
-  // Outstanding unpaid balance
-  const outstandingBalance = payouts
-    .filter(p => p.status === "APPROVED" || p.status === "ELIGIBLE")
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!isSubscribed) return;
+
+        if (data.success) {
+          setPayouts(data.payouts || []);
+          setReservations(data.reservations || []);
+        }
+      } catch (err) {
+        console.error("[Partner Payouts Error]", err);
+      } finally {
+        if (isSubscribed) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadData();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [previewPartnerId]);
+
+  if (loading) {
+    return (
+      <div className="flex py-16 justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-brand-plum" />
+      </div>
+    );
+  }
+
+  const estimatedPayout = payouts
+    .filter(p => p.status === "ESTIMATED")
     .reduce((acc, p) => acc + p.finalPayout, 0);
 
-  const totalPaid = payouts
+  const eligiblePayout = payouts
+    .filter(p => p.status === "ELIGIBLE" || p.status === "APPROVED")
+    .reduce((acc, p) => acc + p.finalPayout, 0);
+
+  const totalPaidOut = payouts
     .filter(p => p.status === "PAID")
     .reduce((acc, p) => acc + p.finalPayout, 0);
 
   return (
-    <div className="space-y-6 font-sans">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Payouts & Earnings</h1>
+        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Payouts & Commission History</h1>
         <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Track outstanding commissions, review payout adjustments, and view complete transaction references.
+          Detailed log of generated commissions, eligible payout balances, and transaction references.
         </p>
       </div>
 
-      {/* BALANCE CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        <Card className="flex items-center space-x-4 bg-brand-blush/20 border border-brand-blush/60">
-          <div className="p-3 bg-brand-plum text-brand-cream rounded-lg">
-            <Clock size={20} />
+      {/* SUMMARY METRICS */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="flex items-center space-x-4">
+          <div className="p-3 bg-purple-50 rounded-xl text-purple-700 shrink-0">
+            <Clock size={24} />
           </div>
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-brand-wine">Outstanding Balance</span>
-            <p className="text-2xl font-extrabold text-brand-plum">${outstandingBalance.toFixed(2)}</p>
+            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Estimated Balance</div>
+            <div className="text-2xl font-extrabold text-brand-plum mt-0.5">${estimatedPayout.toLocaleString()}</div>
           </div>
         </Card>
 
-        <Card className="flex items-center space-x-4 bg-brand-cream border border-brand-blush">
-          <div className="p-3 bg-brand-sage/20 text-brand-wine rounded-lg">
-            <CheckCircle size={20} className="text-brand-wine" />
+        <Card className="flex items-center space-x-4">
+          <div className="p-3 bg-emerald-50 rounded-xl text-emerald-700 shrink-0">
+            <Landmark size={24} />
           </div>
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-brand-wine">Completed Transfers</span>
-            <p className="text-2xl font-extrabold text-brand-plum">${totalPaid.toFixed(2)}</p>
+            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Approved / Eligible Balance</div>
+            <div className="text-2xl font-extrabold text-emerald-700 mt-0.5">${eligiblePayout.toLocaleString()}</div>
+          </div>
+        </Card>
+
+        <Card className="flex items-center space-x-4">
+          <div className="p-3 bg-blue-50 rounded-xl text-blue-700 shrink-0">
+            <CheckCircle size={24} />
+          </div>
+          <div>
+            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Total Paid Out</div>
+            <div className="text-2xl font-extrabold text-blue-800 mt-0.5">${totalPaidOut.toLocaleString()}</div>
           </div>
         </Card>
       </div>
 
-      {/* LEDGER TABLE */}
+      {/* PAYOUT HISTORY TABLE */}
       <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                <th className="p-4">Payout ID</th>
-                <th className="p-4">Stay Code</th>
-                <th className="p-4">Base Amount</th>
-                <th className="p-4">Commission Rate</th>
-                <th className="p-4">Adjustment</th>
-                <th className="p-4">Final Earnings</th>
-                <th className="p-4">Payment Date</th>
-                <th className="p-4">Bank Ref</th>
-                <th className="p-4">Status</th>
+              <tr className="bg-brand-cream border-b border-brand-blush text-[11px] font-bold uppercase tracking-wider text-brand-wine">
+                <th className="py-3 px-4">Payout ID</th>
+                <th className="py-3 px-4">Booking Ref</th>
+                <th className="py-3 px-4">Gross Booking</th>
+                <th className="py-3 px-4">Calculated Payout</th>
+                <th className="py-3 px-4">Approval Date</th>
+                <th className="py-3 px-4">Tx Reference</th>
+                <th className="py-3 px-4">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-brand-blush/60 text-sm">
+            <tbody className="divide-y divide-brand-blush/40 text-xs">
               {payouts.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-8 text-center text-zinc-400 italic">
-                    No payouts recorded yet.
+                  <td colSpan={7} className="py-8 text-center text-zinc-500 font-serif italic">
+                    No payout records found.
                   </td>
                 </tr>
               ) : (
                 payouts.map(p => {
                   const res = reservations.find(r => r.id === p.reservationId);
-                  
-                  let statusBadge = <Badge type="gray">Estimated</Badge>;
-                  if (p.status === "ELIGIBLE") {
-                    statusBadge = <Badge type="sage">Eligible</Badge>;
-                  } else if (p.status === "APPROVED") {
-                    statusBadge = <Badge type="plum">Approved</Badge>;
-                  } else if (p.status === "ON_HOLD") {
-                    statusBadge = <Badge type="warning">Hold</Badge>;
-                  } else if (p.status === "PAID") {
-                    statusBadge = <Badge type="success">Paid</Badge>;
-                  } else if (p.status === "REJECTED") {
-                    statusBadge = <Badge type="danger">Rejected</Badge>;
-                  }
-
                   return (
                     <tr key={p.id} className="hover:bg-brand-blush/10 transition-colors">
-                      <td className="p-4 font-mono text-xs text-zinc-500">{p.id}</td>
-                      <td className="p-4 font-bold text-brand-plum">{res?.confirmationCode}</td>
-                      <td className="p-4">${p.payoutBaseAmount.toFixed(2)}</td>
-                      <td className="p-4">{p.commissionRate}%</td>
-                      <td className="p-4 font-medium text-brand-wine">
-                        {p.adjustment !== 0 ? `$${p.adjustment.toFixed(2)}` : "—"}
+                      <td className="py-3.5 px-4 font-mono font-bold text-brand-plum">{p.id}</td>
+                      <td className="py-3.5 px-4 font-mono text-zinc-600">{p.reservationId}</td>
+                      <td className="py-3.5 px-4 font-bold text-zinc-800">${p.payoutBaseAmount.toLocaleString()}</td>
+                      <td className="py-3.5 px-4 font-bold text-emerald-700">${p.finalPayout.toLocaleString()}</td>
+                      <td className="py-3.5 px-4 text-zinc-500">{p.approvalDate || "—"}</td>
+                      <td className="py-3.5 px-4 font-mono text-[11px] text-zinc-500">{p.transactionReference || "—"}</td>
+                      <td className="py-3.5 px-4">
+                        <Badge type={p.status === "PAID" ? "success" : p.status === "ELIGIBLE" || p.status === "APPROVED" ? "info" : "warning"}>
+                          {p.status}
+                        </Badge>
                       </td>
-                      <td className="p-4 font-extrabold text-brand-plum">${p.finalPayout.toFixed(2)}</td>
-                      <td className="p-4 text-xs text-zinc-500">
-                        {p.paymentDate ? new Date(p.paymentDate).toLocaleDateString() : "—"}
-                      </td>
-                      <td className="p-4 font-mono text-xs text-zinc-600">
-                        {p.transactionReference || <span className="text-zinc-400 italic">Pending ACH</span>}
-                      </td>
-                      <td className="p-4">{statusBadge}</td>
                     </tr>
                   );
                 })
@@ -128,5 +157,13 @@ export default function PartnerPayouts() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PartnerPayouts() {
+  return (
+    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-brand-plum" /></div>}>
+      <PartnerPayoutsContent />
+    </Suspense>
   );
 }

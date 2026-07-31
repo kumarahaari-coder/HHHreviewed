@@ -25,7 +25,8 @@ export async function createClerkPartnerInvitation(
   role: string = "CREATOR"
 ): Promise<ClerkInviteResult> {
   const clerk = getClerkBackend();
-  const redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL || "https://hiddenhoneyhomes.com"}/sign-in`;
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://hh-hreviewed.vercel.app";
+  const redirectUrl = `${baseUrl}/accept-invitation`;
 
   if (!clerk) {
     // In dev mode without Clerk secret key, return simulated inv_ ID

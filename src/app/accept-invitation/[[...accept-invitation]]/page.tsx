@@ -1,6 +1,6 @@
-import { SignIn } from "@clerk/nextjs";
+import { SignUp } from "@clerk/nextjs";
 
-export default function SignInPage() {
+export default function AcceptInvitationPage() {
   return (
     <div className="flex-1 flex flex-col justify-center items-center px-4 py-12 bg-brand-bg relative font-sans min-h-screen">
       {/* Branding Header */}
@@ -9,31 +9,28 @@ export default function SignInPage() {
           Hidden Honey Homes
         </span>
         <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight mt-3">
-          Partner & Creator Portal
+          Partner Account Setup
         </h1>
         <p className="text-zinc-500 font-serif italic text-sm mt-2">
-          Secure sign in for approved creators, partners, and administrators.
+          Set up your secure password to complete your partner portal invitation.
         </p>
       </div>
 
-      {/* Clerk SignIn Component (Sign up disabled, redirects strictly to /auth/resolve) */}
+      {/* Clerk SignUp Component for Invitation Acceptance Only */}
       <div className="w-full max-w-md flex justify-center">
-        <SignIn
+        <SignUp
           appearance={{
             elements: {
               card: "shadow-xl border border-brand-blush bg-brand-cream rounded-2xl p-6",
               headerTitle: "text-xl font-bold text-brand-plum",
               headerSubtitle: "text-xs text-zinc-500",
               formButtonPrimary: "bg-brand-plum hover:bg-brand-wine text-brand-cream text-xs uppercase tracking-wider font-bold py-2.5 rounded-lg transition-all shadow-md",
-              formFieldInput: "bg-brand-bg/50 border border-brand-blush text-sm text-brand-text rounded-lg focus:border-brand-plum focus:ring-1 focus:ring-brand-plum/20",
-              footerAction: "hidden", // Hide "Don't have an account? Sign up"
-              footerActionLink: "hidden",
-              footer: "hidden"
+              formFieldInput: "bg-brand-bg/50 border border-brand-blush text-sm text-brand-text rounded-lg focus:border-brand-plum focus:ring-1 focus:ring-brand-plum/20"
             }
           }}
           routing="path"
-          path="/sign-in"
-          signUpUrl={undefined}
+          path="/accept-invitation"
+          signInUrl="/sign-in"
           fallbackRedirectUrl="/auth/resolve"
           forceRedirectUrl="/auth/resolve"
         />
