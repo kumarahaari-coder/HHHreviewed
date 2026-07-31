@@ -64,18 +64,18 @@ export async function evaluateIntegrationHealth(): Promise<IntegrationHealthRepo
     .eq("status", "RUNNING");
 
   const staleLeaseActive = (runningLocks || []).some(
-    (lock) => new Date(lock.started_at).toISOString() < tenMinutesAgo
+    (lock: any) => new Date(lock.started_at).toISOString() < tenMinutesAgo
   );
 
-  const lastSuccess = latestLogs?.find((log) => log.status === "SUCCESS");
-  const lastFailure = latestLogs?.find((log) => log.status === "FAILED");
+  const lastSuccess = latestLogs?.find((log: any) => log.status === "SUCCESS");
+  const lastFailure = latestLogs?.find((log: any) => log.status === "FAILED");
   const latestLog = latestLogs?.[0];
 
-  const countSuccess7 = (logs7Days || []).filter((l) => l.status === "SUCCESS").length;
+  const countSuccess7 = (logs7Days || []).filter((l: any) => l.status === "SUCCESS").length;
   const total7 = logs7Days?.length || 0;
   const successRate7DaysPercent = total7 > 0 ? Math.round((countSuccess7 / total7) * 100) : 100;
 
-  const countSuccess30 = (logs30Days || []).filter((l) => l.status === "SUCCESS").length;
+  const countSuccess30 = (logs30Days || []).filter((l: any) => l.status === "SUCCESS").length;
   const total30 = logs30Days?.length || 0;
   const successRate30DaysPercent = total30 > 0 ? Math.round((countSuccess30 / total30) * 100) : 100;
 

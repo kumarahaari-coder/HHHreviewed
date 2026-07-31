@@ -1,8 +1,8 @@
 export type UserRole = "SUPER_ADMIN" | "FINANCE_ADMIN" | "PARTNER_OWNER" | "ADMIN" | "CREATOR";
 export type PartnerStatus = "ACTIVE" | "SUSPENDED" | "INACTIVE";
 export type SiteStatus = "ACTIVE" | "PAUSED" | "SUSPENDED" | "ARCHIVED";
-export type ReservationStatus = "PENDING" | "CONFIRMED" | "CHECKED_IN" | "CHECKED_OUT" | "CANCELLED" | "COMPLETED";
-export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID" | "REFUNDED" | "PARTIALLY_REFUNDED" | "DISPUTED";
+export type ReservationStatus = "PENDING" | "CONFIRMED" | "CHECKED_IN" | "CHECKED_OUT" | "CANCELLED" | "COMPLETED" | "UNKNOWN";
+export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID" | "REFUNDED" | "PARTIALLY_REFUNDED" | "DISPUTED" | "UNKNOWN";
 export type AttributionStatus = "ATTRIBUTED" | "UNATTRIBUTED" | "SYSTEM_ERROR" | "RECONCILED";
 export type PayoutStatus = "ESTIMATED" | "ELIGIBLE" | "APPROVED" | "ON_HOLD" | "REJECTED" | "PAID";
 export type PayoutBatchStatus = "PENDING" | "PAID" | "CANCELLED";
@@ -114,6 +114,15 @@ export interface Property {
   timezone: string;
   imageUrl?: string;
   status: "ACTIVE" | "INACTIVE";
+  websiteUrl?: string;
+  bookingUrl?: string;
+  summary?: string;
+  mood?: string;
+  minimumAge?: number;
+  maximumOccupancy?: number;
+  sourceUrl?: string;
+  sourceVerifiedAt?: string;
+  syncStatus?: string;
 }
 
 export interface Reservation {
@@ -143,6 +152,9 @@ export interface Reservation {
   lastSyncedAt: string;
   adminNotes?: string;
   attributionSource?: string; // e.g., "Widget ID", "Referrer URL", "Campaign Parameter"
+  platform?: string;
+  financialDataAvailable?: boolean;
+  paymentConfirmationSource?: string;
 }
 
 export interface CommissionRule {
