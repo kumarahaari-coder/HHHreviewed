@@ -34,11 +34,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setMounted(true);
     // Role protection
     const user = db.currentUser;
-    if (!user || (user.role !== "SUPER_ADMIN" && user.role !== "FINANCE_ADMIN")) {
-      router.push("/");
-      return;
+    const isDevMockMode = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
+
+    if (isDevMockMode) {
+      if (!user || (user.role !== "SUPER_ADMIN" && user.role !== "FINANCE_ADMIN" && user.role !== "ADMIN")) {
+        if (user && (user.role === "CREATOR" || user.role === "PARTNER_OWNER")) {
+          router.push("/partner");
+        } else {
+          router.push("/sign-in");
+        }
+        return;
+      }
+      setCurrentUser(user);
+    } else {
+      // Production mode auth check
+      if (user && (user.role === "SUPER_ADMIN" || user.role === "FINANCE_ADMIN" || user.role === "ADMIN")) {
+        setCurrentUser(user);
+      } else {
+        router.push("/sign-in");
+        return;
+      }
     }
-    setCurrentUser(user);
     setNotifications(db.notifications);
   }, [router]);
 

@@ -28,15 +28,21 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     setMounted(true);
-    const user = db.currentUser;
-    // Role protection
-    if (!user || user.role !== "PARTNER_OWNER" || !user.partnerId) {
-      router.push("/");
+    let user = db.currentUser;
+    // Fallback partner mapping if user has no partnerId
+    if (user && !user.partnerId) {
+      user = { ...user, partnerId: "partner-001" };
+      db.currentUser = user;
+    }
+    // Role protection for creator portal
+    if (!user || (user.role !== "PARTNER_OWNER" && user.role !== "CREATOR" && user.role !== "SUPER_ADMIN" && user.role !== "ADMIN")) {
+      router.push("/sign-in");
       return;
     }
     setCurrentUser(user);
 
-    const partnerData = db.partners.find(p => p.id === user.partnerId);
+    const partnerIdToUse = user.partnerId || "partner-001";
+    const partnerData = db.partners.find(p => p.id === partnerIdToUse) || db.partners[0];
     if (partnerData) {
       setPartner(partnerData);
     }

@@ -236,6 +236,17 @@ const INITIAL_USERS: User[] = [
     status: "ACTIVE",
     lastLogin: "2026-07-27T16:20:00Z",
     createdAt: "2026-03-01"
+  },
+  {
+    id: "user_3HGDykF71AqhxNuqdtbsMvuP1Xv",
+    name: "Approved Creator",
+    email: "creator_3HGDykF71AqhxNuqdtbsMvuP1Xv@hiddenhoneyhomes.com",
+    role: "CREATOR",
+    partnerId: "partner-001",
+    status: "ACTIVE",
+    clerkUserId: "user_3HGDykF71AqhxNuqdtbsMvuP1Xv",
+    onboardingStatus: "COMPLETED",
+    createdAt: "2026-07-31"
   }
 ];
 
