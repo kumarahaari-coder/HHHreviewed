@@ -34,7 +34,8 @@ export function canPerformAdminReview(session: AuthSession): boolean {
 
 /**
  * Server-side session resolver supporting Clerk authentication & dev mock fallback.
- * Strictly guarantees that Clerk authenticated users resolve by Clerk User ID without falling back to seeded Super Admin records.
+ * Strictly guarantees that authorization roles come ONLY from trusted application database records.
+ * Automatically rejects users who do not have an approved application user record.
  */
 export async function getClerkAuthSession(): Promise<AuthSession | null> {
   const isDevMockMode = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
@@ -54,7 +55,6 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
   try {
     const { userId } = await auth();
     if (!userId) {
-      // Unauthenticated request in production
       return null;
     }
 
@@ -65,50 +65,36 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
     // Match strictly by Clerk User ID first, then by exact verified email
     let matchedDbUser = db.users.find(u => u.clerkUserId === userId);
     if (!matchedDbUser && primaryEmail) {
-      // Never auto-match Super Admin record unless exact email match
       matchedDbUser = db.users.find(u => u.email.toLowerCase() === primaryEmail.toLowerCase());
       if (matchedDbUser) {
         matchedDbUser.clerkUserId = userId;
       }
     }
 
-    // Determine strict role: Default to CREATOR. Admin roles require explicit assignment.
-    let role: UserRole = "CREATOR";
+    // SECURITY CONTROL: If no application user record exists, DENY ACCESS (No default CREATOR fallback)
+    if (!matchedDbUser) {
+      console.warn(`[Access Denied] Clerk user ${userId} (${primaryEmail}) has no approved application database record.`);
+      return null;
+    }
+
+    // Role MUST come from application trusted server-side data
+    let role: UserRole = matchedDbUser.role;
     if (publicMetadata.role && isAdminRole(publicMetadata.role)) {
       role = publicMetadata.role;
-    } else if (matchedDbUser?.role) {
-      role = matchedDbUser.role;
     }
 
-    // If target affected user ID `user_3HGDykF71AqhxNuqdtbsMvuP1Xv`, enforce CREATOR role & partner-001 mapping
+    // Enforce role for creator user ID user_3HGDykF71AqhxNuqdtbsMvuP1Xv
     if (userId === "user_3HGDykF71AqhxNuqdtbsMvuP1Xv") {
       role = "CREATOR";
-    }
-
-    const partnerId: string | undefined = publicMetadata.partnerId || matchedDbUser?.partnerId || "partner-001";
-
-    // If user is new to DB, persist record with CREATOR role
-    if (!matchedDbUser) {
-      const newUser: User = {
-        id: userId,
-        name: `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim() || primaryEmail.split("@")[0] || "Creator",
-        email: primaryEmail || "user@clerk.dev",
-        role: role === "SUPER_ADMIN" || role === "FINANCE_ADMIN" || role === "ADMIN" ? role : "CREATOR",
-        partnerId,
-        status: "ACTIVE",
-        clerkUserId: userId,
-        onboardingStatus: "COMPLETED",
-        createdAt: new Date().toISOString()
-      };
-      db.users.push(newUser);
-      matchedDbUser = newUser;
+      matchedDbUser.role = "CREATOR";
+      matchedDbUser.partnerId = "partner-001";
     }
 
     return {
       userId: matchedDbUser.id,
       email: primaryEmail || matchedDbUser.email,
       role: matchedDbUser.role,
-      partnerId: matchedDbUser.partnerId,
+      partnerId: matchedDbUser.partnerId || "partner-001",
       clerkUserId: userId
     };
   } catch (error) {
@@ -133,14 +119,14 @@ export function getCurrentSession(): AuthSession | null {
       clerkUserId: user.clerkUserId
     };
   }
-  // In production, sync calls return db.currentUser if set, or default to current user record
+
   const user = db.currentUser;
   if (!user) return null;
   return {
     userId: user.id,
     email: user.email,
     role: user.role,
-    partnerId: user.partnerId,
+    partnerId: user.partnerId || "partner-001",
     clerkUserId: user.clerkUserId
   };
 }
