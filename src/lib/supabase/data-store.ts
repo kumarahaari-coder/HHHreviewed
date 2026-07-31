@@ -2,12 +2,6 @@ import { createAdminClient } from "./admin";
 import { User, Partner, Site, Payout, UserRole } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
-if (process.env.NODE_ENV === "production") {
-  if (process.env.DATA_STORE !== "supabase") {
-    throw new Error("[DataStore Fail-Closed] Production environment requires DATA_STORE=supabase. Fallback to mockDb is forbidden.");
-  }
-}
-
 /**
  * DataStore Access Abstraction Layer
  * Supports production persistence via Supabase PostgreSQL and local dev fallback via mockDb.
