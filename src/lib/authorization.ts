@@ -77,24 +77,15 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
       return null;
     }
 
-    // Role MUST come from application trusted server-side data
-    let role: UserRole = matchedDbUser.role;
-    if (publicMetadata.role && isAdminRole(publicMetadata.role)) {
-      role = publicMetadata.role;
-    }
-
-    // Enforce role for creator user ID user_3HGDykF71AqhxNuqdtbsMvuP1Xv
-    if (userId === "user_3HGDykF71AqhxNuqdtbsMvuP1Xv") {
-      role = "CREATOR";
-      matchedDbUser.role = "CREATOR";
-      matchedDbUser.partnerId = "partner-001";
-    }
+    // Role MUST come exclusively from application trusted server-side database record.
+    // Never escalate from Clerk publicMetadata.
+    const role: UserRole = matchedDbUser.role;
 
     return {
       userId: matchedDbUser.id,
       email: primaryEmail || matchedDbUser.email,
-      role: matchedDbUser.role,
-      partnerId: matchedDbUser.partnerId || "partner-001",
+      role,
+      partnerId: matchedDbUser.partnerId || undefined,
       clerkUserId: userId
     };
   } catch (error) {
@@ -126,7 +117,7 @@ export function getCurrentSession(): AuthSession | null {
     userId: user.id,
     email: user.email,
     role: user.role,
-    partnerId: user.partnerId || "partner-001",
+    partnerId: user.partnerId || undefined,
     clerkUserId: user.clerkUserId
   };
 }
