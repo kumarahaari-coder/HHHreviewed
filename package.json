@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1100.0",
+    "@clerk/nextjs": "^7.6.3",
     "@supabase/supabase-js": "^2.111.0",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.27.0",
