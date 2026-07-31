@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Assistant } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const assistant = Assistant({
@@ -18,13 +19,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${assistant.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-brand-bg text-brand-text">
-        {children}
-      </body>
-    </html>
+    <ClerkProvider>
+      <html
+        lang="en"
+        className={`${assistant.variable} h-full antialiased`}
+      >
+        <body className="min-h-full flex flex-col bg-brand-bg text-brand-text">
+          {children}
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }
