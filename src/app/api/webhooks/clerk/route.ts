@@ -24,36 +24,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: "Event already processed (idempotent)." }, { status: 200 });
     }
 
-    // Process user event
-    if (eventType === "user.created" || eventType === "user.updated") {
-      const userData = payload.data || {};
-      const clerkUserId = userData.id;
-      const email = userData.email_addresses?.[0]?.email_address || userData.email || "user@example.com";
-      const name = `${userData.first_name || ""} ${userData.last_name || ""}`.trim() || email.split("@")[0];
+    // Process user & session events
+    if (eventType === "user.created" || eventType === "user.updated" || eventType === "session.created") {
+      const userData = payload.data?.user || payload.data || {};
+      const clerkUserId = userData.id || userData.user_id;
+      const email = userData.email_addresses?.[0]?.email_address || userData.email || "";
+      const lastSignInAt = userData.last_sign_in_at ? new Date(userData.last_sign_in_at).toISOString() : new Date().toISOString();
 
-      // Safe 1-time migration mapping by email
-      const existingUser = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (existingUser) {
-        existingUser.clerkUserId = clerkUserId;
-        existingUser.onboardingStatus = "COMPLETED";
-      } else {
-        const publicMetadata = userData.public_metadata || {};
-        const metaRole = publicMetadata.role as string | undefined;
-        // Default strictly to CREATOR. Admin roles require explicit assignment by an administrator.
-        const assignedRole = (metaRole === "SUPER_ADMIN" || metaRole === "FINANCE_ADMIN" || metaRole === "ADMIN") ? metaRole : "CREATOR";
-        const partner = db.partners.find(p => p.email.toLowerCase() === email.toLowerCase());
+      // Find database user by clerkUserId or email
+      let user = db.users.find(u => u.clerkUserId === clerkUserId || (email && u.email.toLowerCase() === email.toLowerCase()));
 
-        db.users.push({
-          id: `user-${Date.now()}`,
-          name,
-          email,
-          role: assignedRole,
-          partnerId: partner?.id || "partner-001",
-          status: "ACTIVE",
-          clerkUserId,
-          onboardingStatus: "COMPLETED",
-          createdAt: new Date().toISOString()
-        });
+      if (user) {
+        user.clerkUserId = clerkUserId;
+        user.onboardingStatus = "COMPLETED";
+        user.lastLogin = lastSignInAt;
+
+        // AUTOMATIC STATUS PROGRESSION: INVITED -> ACTIVE on first login
+        if (user.partnerId) {
+          const partner = db.partners.find(p => p.id === user.partnerId);
+          if (partner) {
+            partner.lastLogin = lastSignInAt;
+            if (partner.status === "INVITED") {
+              partner.status = "ACTIVE";
+              console.log(`[Status Progression] Partner ${partner.businessName} (${partner.id}) transitioned from INVITED to ACTIVE upon first successful sign in.`);
+            }
+          }
+        }
       }
     } else if (eventType === "user.deleted") {
       const clerkUserId = payload.data?.id;
@@ -66,7 +62,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Clerk webhook ${eventType} synced successfully.`,
+      message: `Clerk webhook ${eventType} processed successfully.`,
       eventId
     });
 

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/mockDb";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
-import { sendTransactionalEmail } from "@/lib/email/brevo";
-import crypto from "crypto";
+import { createClerkPartnerInvitation } from "@/lib/auth/clerk-admin";
+import { Partner, User } from "@/lib/db/schema";
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,6 +22,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let createdPartnerId: string | null = null;
+  let createdUserId: string | null = null;
+
   try {
     const session = getCurrentSession();
     if (!session || !canPerformAdminReview(session)) {
@@ -37,7 +40,6 @@ export async function POST(req: NextRequest) {
       website,
       taxDocumentCategory,
       commissionRate,
-      status = "INVITED",
       notes,
       paymentMethod = "BANK_TRANSFER",
       payoutFrequency = "MONTHLY"
@@ -53,9 +55,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `A partner with email ${email} already exists.` }, { status: 409 });
     }
 
-    // STEP 1: Create Partner record in DB
-    const partnerId = `partner-${Date.now().toString().slice(-4)}`;
-    const newPartner = db.addPartner({
+    // STEP 1: Create Partner record in DB (Status ALWAYS defaults to INVITED)
+    const newPartner: Partner = db.addPartner({
       businessName,
       contactName,
       email,
@@ -63,56 +64,70 @@ export async function POST(req: NextRequest) {
       paymentMethod,
       currency: "USD",
       payoutFrequency,
-      status: status as any,
+      status: "INVITED", // System managed status
       notes: notes || `Created by ${session.email}`,
       website,
       commissionRate: Number(commissionRate) || 10,
       taxDocumentCategory
     });
+    createdPartnerId = newPartner.id;
 
-    // STEP 2 & 3: Create User record and Clerk User / Invitation ID
-    const clerkUserId = `user_${crypto.randomBytes(12).toString("hex")}`;
-    const newUser = {
-      id: `user-partner-${newPartner.id}`,
+    // STEP 2: Create User record
+    const userId = `user-partner-${newPartner.id}`;
+    const newUser: User = {
+      id: userId,
       name: contactName,
       email: email,
-      role: "CREATOR" as const,
+      role: "CREATOR",
       partnerId: newPartner.id,
-      status: (status === "SUSPENDED" ? "SUSPENDED" : "ACTIVE") as any,
-      clerkUserId,
-      onboardingStatus: status === "INVITED" ? ("PENDING" as const) : ("COMPLETED" as const),
+      status: "ACTIVE",
+      onboardingStatus: "PENDING",
       createdAt: new Date().toISOString()
     };
-
     db.users.push(newUser);
+    createdUserId = userId;
 
-    // STEP 4: Send Invitation Email via Brevo
-    const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL || "https://hiddenhoneyhomes.com"}/sign-in?invite=${clerkUserId}`;
-    await sendTransactionalEmail({
-      eventType: "WELCOME",
-      recipientEmail: email,
-      recipientName: contactName,
-      params: {
-        partnerName: contactName,
-        businessName,
-        inviteLink,
-        commissionRate: `${commissionRate || 10}%`
+    // STEP 3: Issue Clerk Invitation via Clerk Backend API (ID returned by Clerk)
+    console.log(`[Admin Partner Create] Issuing Clerk Invitation for ${email}...`);
+    const clerkResult = await createClerkPartnerInvitation(email, newPartner.id, "CREATOR");
+
+    if (!clerkResult.success) {
+      // STEP 6: Transactional Rollback: Remove Partner & User records if Clerk invitation fails!
+      console.error(`[Admin Partner Create Failure] Clerk invitation failed: ${clerkResult.error}. Rolling back DB records.`);
+      if (createdPartnerId) {
+        db.partners = db.partners.filter(p => p.id !== createdPartnerId);
       }
-    });
+      if (createdUserId) {
+        db.users = db.users.filter(u => u.id !== createdUserId);
+      }
+      return NextResponse.json({
+        success: false,
+        error: `Failed to create Clerk invitation for ${email}: ${clerkResult.error}`
+      }, { status: 502 });
+    }
+
+    // STEP 4: Store authentic clerkUserId / invitationId returned by Clerk
+    newUser.clerkUserId = clerkResult.clerkUserId;
 
     // Record system notification
-    db.addNotification("SUCCESS", `Partner "${businessName}" created and invitation sent to ${email}. Clerk User ID: ${clerkUserId}`);
+    db.addNotification("SUCCESS", `Partner "${businessName}" created. Status set to INVITED. Clerk Invitation issued (ID: ${clerkResult.clerkUserId}).`);
 
     return NextResponse.json({
       success: true,
-      message: `Partner "${businessName}" created successfully. Invitation sent to ${email}.`,
+      message: `Partner "${businessName}" created successfully. Status set to INVITED. Clerk invitation sent.`,
       partner: newPartner,
       user: newUser,
-      clerkUserId,
-      inviteLink
+      clerkUserId: clerkResult.clerkUserId
     });
 
   } catch (error: any) {
+    // Transactional Rollback on unexpected error
+    if (createdPartnerId) {
+      db.partners = db.partners.filter(p => p.id !== createdPartnerId);
+    }
+    if (createdUserId) {
+      db.users = db.users.filter(u => u.id !== createdUserId);
+    }
     return NextResponse.json({ success: false, error: error?.message || "Failed to create partner" }, { status: 500 });
   }
 }

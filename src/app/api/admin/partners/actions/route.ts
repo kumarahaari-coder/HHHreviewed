@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/mockDb";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
-import { sendTransactionalEmail } from "@/lib/email/brevo";
+import { createClerkPartnerInvitation, banClerkUser, unbanClerkUser, revokeClerkUserSessions } from "@/lib/auth/clerk-admin";
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,58 +23,61 @@ export async function POST(req: NextRequest) {
     }
 
     const user = db.users.find(u => u.partnerId === partnerId || u.email.toLowerCase() === partner.email.toLowerCase());
+    const clerkUserId = user?.clerkUserId || "";
 
     if (action === "RESEND_INVITE") {
       partner.status = "INVITED";
-      const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL || "https://hiddenhoneyhomes.com"}/sign-in?invite=${user?.clerkUserId || partnerId}`;
+      // Resend invitation via Clerk Backend SDK so invitation state remains consistent
+      const clerkRes = await createClerkPartnerInvitation(partner.email, partner.id, "CREATOR");
+      if (!clerkRes.success) {
+        return NextResponse.json({ success: false, error: `Clerk resend failed: ${clerkRes.error}` }, { status: 502 });
+      }
 
-      await sendTransactionalEmail({
-        eventType: "WELCOME",
-        recipientEmail: partner.email,
-        recipientName: partner.contactName,
-        params: {
-          partnerName: partner.contactName,
-          businessName: partner.businessName,
-          inviteLink,
-          actionNotice: "Invitation Resent by Administrator"
-        }
-      });
-
-      db.addNotification("SUCCESS", `Invitation email resent to ${partner.email}.`);
-      return NextResponse.json({ success: true, message: `Invitation resent successfully to ${partner.email}.` });
+      db.addNotification("SUCCESS", `Clerk invitation resent to ${partner.email}.`);
+      return NextResponse.json({ success: true, message: `Clerk invitation resent successfully to ${partner.email}.` });
 
     } else if (action === "RESET_PASSWORD") {
-      await sendTransactionalEmail({
-        eventType: "WELCOME",
-        recipientEmail: partner.email,
-        recipientName: partner.contactName,
-        params: {
-          partnerName: partner.contactName,
-          businessName: partner.businessName,
-          resetNotice: "Password Reset Request from Administrator"
-        }
-      });
-
-      db.addNotification("INFO", `Password reset email issued for ${partner.email}.`);
-      return NextResponse.json({ success: true, message: `Password reset email sent to ${partner.email}.` });
+      db.addNotification("INFO", `Password reset request logged for ${partner.email}.`);
+      return NextResponse.json({ success: true, message: `Password reset request logged for ${partner.email}.` });
 
     } else if (action === "SUSPEND") {
       partner.status = "SUSPENDED";
       if (user) user.status = "SUSPENDED";
-      db.addNotification("WARNING", `Access suspended for partner ${partner.businessName}.`);
-      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} suspended.` });
+
+      // Disable login & revoke sessions in Clerk
+      if (clerkUserId) {
+        await banClerkUser(clerkUserId);
+        await revokeClerkUserSessions(clerkUserId);
+      }
+
+      db.addNotification("WARNING", `Access suspended and Clerk login disabled for partner ${partner.businessName}.`);
+      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} suspended and Clerk login disabled.` });
 
     } else if (action === "ACTIVATE") {
+      // Manual activation used for reactivating a suspended account
       partner.status = "ACTIVE";
       if (user) user.status = "ACTIVE";
-      db.addNotification("SUCCESS", `Access activated for partner ${partner.businessName}.`);
-      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} activated.` });
+
+      // Unban in Clerk
+      if (clerkUserId) {
+        await unbanClerkUser(clerkUserId);
+      }
+
+      db.addNotification("SUCCESS", `Access reactivated for partner ${partner.businessName}.`);
+      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} reactivated.` });
 
     } else if (action === "ARCHIVE") {
       partner.status = "ARCHIVED";
       if (user) user.status = "SUSPENDED";
-      db.addNotification("WARNING", `Partner ${partner.businessName} archived.`);
-      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} archived.` });
+
+      // Revoke sessions & disable login in Clerk
+      if (clerkUserId) {
+        await banClerkUser(clerkUserId);
+        await revokeClerkUserSessions(clerkUserId);
+      }
+
+      db.addNotification("WARNING", `Partner ${partner.businessName} archived and access revoked in Clerk.`);
+      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} archived and access revoked.` });
 
     } else {
       return NextResponse.json({ success: false, error: `Invalid action: ${action}` }, { status: 400 });
