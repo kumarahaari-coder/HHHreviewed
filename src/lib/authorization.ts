@@ -68,7 +68,12 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
     if (!matchedDbUser && primaryEmail) {
       matchedDbUser = await findUserByEmail(primaryEmail);
       if (matchedDbUser) {
-        await mapClerkUser(matchedDbUser.id, userId);
+        await mapClerkUser({
+          internalUserId: matchedDbUser.id,
+          email: primaryEmail,
+          clerkUserId: userId,
+          source: "AUTH_RESOLVER"
+        });
       }
     }
 

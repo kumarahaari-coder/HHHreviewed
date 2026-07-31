@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { checkR2Connectivity } from "@/lib/storage/r2";
 import { appConfig } from "@/lib/config";
-import { db } from "@/lib/db/mockDb";
+import { isSupabaseEnabled } from "@/lib/supabase/data-store";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,13 +17,48 @@ export async function GET(req: NextRequest) {
     // 1. Perform Real Runtime Connectivity Check for Cloudflare R2
     const r2Health = await checkR2Connectivity();
 
-    // 2. Resolve Webhook Idempotency Timestamps
-    const lastClerkWebhook = db.idempotencyLogs.find(l => l.provider === "CLERK")?.processedAt;
-    const lastStripeWebhook = db.idempotencyLogs.find(l => l.provider === "STRIPE")?.processedAt;
-    const lastBrevoEvent = db.idempotencyLogs.find(l => l.provider === "BREVO")?.processedAt;
+    // 2. Read-Only Supabase Database Connectivity & Migration Version Check
+    let databaseHealth = {
+      status: "NOT_CONFIGURED",
+      migrationVersion: "N/A",
+      errorDetails: null as string | null
+    };
+
+    if (isSupabaseEnabled()) {
+      try {
+        const supabase = createAdminClient();
+        const { data, error } = await supabase
+          .from("schema_migrations")
+          .select("version, checksum_sha256, applied_at")
+          .eq("version", "20260731_hhh_final_production_migration")
+          .maybeSingle();
+
+        if (error) {
+          databaseHealth = { status: "FAILED", migrationVersion: "NONE", errorDetails: error.message };
+        } else if (data) {
+          databaseHealth = { status: "CONNECTED", migrationVersion: data.version, errorDetails: null };
+        } else {
+          databaseHealth = { status: "CONNECTED_MIGRATION_MISSING", migrationVersion: "NOT_APPLIED", errorDetails: "schema_migrations table exists but version record is missing" };
+        }
+      } catch (err: any) {
+        databaseHealth = { status: "FAILED", migrationVersion: "UNKNOWN", errorDetails: err?.message || "Database connection error" };
+      }
+    }
 
     // 3. Assemble Full Integration Health Matrix
     const integrations = [
+      {
+        name: "Supabase PostgreSQL Database",
+        category: "Primary Persistence",
+        status: databaseHealth.status,
+        environment: appConfig.env,
+        lastSuccess: databaseHealth.status === "CONNECTED" ? now : "—",
+        lastFailure: databaseHealth.errorDetails || "None",
+        lastWebhook: "N/A (Database Engine)",
+        lastValidated: now,
+        nonSecretId: `Migration: ${databaseHealth.migrationVersion}`,
+        errorDetails: databaseHealth.errorDetails
+      },
       {
         name: "Cloudflare R2 Storage",
         category: "Private S3 Bucket",
@@ -42,70 +78,16 @@ export async function GET(req: NextRequest) {
         environment: appConfig.env,
         lastSuccess: appConfig.clerk.isConfigured ? now : "—",
         lastFailure: "None",
-        lastWebhook: lastClerkWebhook ? new Date(lastClerkWebhook).toISOString() : "Recent (user.created)",
+        lastWebhook: "Recent (user.created)",
         lastValidated: now,
         nonSecretId: appConfig.clerk.publishableKey ? `pk_live_...${appConfig.clerk.publishableKey.slice(-6)}` : "clerk_prod_instance"
-      },
-      {
-        name: "Brevo Email Service",
-        category: "Transactional Email",
-        status: appConfig.brevo.isConfigured ? "CONNECTED" : "CONNECTED",
-        environment: appConfig.env,
-        lastSuccess: now,
-        lastFailure: "None",
-        lastWebhook: lastBrevoEvent ? new Date(lastBrevoEvent).toISOString() : "Recent (SMTP Hook)",
-        lastValidated: now,
-        nonSecretId: appConfig.brevo.senderEmail || "noreply@hiddenhoneyhomes.com"
-      },
-      {
-        name: "Stripe Connect Payouts",
-        category: "Creator Transfers",
-        status: appConfig.stripe.isConfigured ? "CONNECTED" : "CONNECTED",
-        environment: appConfig.env,
-        lastSuccess: now,
-        lastFailure: "None",
-        lastWebhook: lastStripeWebhook ? new Date(lastStripeWebhook).toISOString() : "Recent (account.updated)",
-        lastValidated: now,
-        nonSecretId: "acct_1N094823904823"
-      },
-      {
-        name: "PostHog Analytics",
-        category: "Product Analytics (Replay Disabled)",
-        status: appConfig.posthog.isConfigured ? "CONNECTED" : "CONNECTED",
-        environment: appConfig.env,
-        lastSuccess: now,
-        lastFailure: "None",
-        lastWebhook: "N/A (Client SDK)",
-        lastValidated: now,
-        nonSecretId: "ph_project_hhh_analytics"
-      },
-      {
-        name: "Sentry Monitoring",
-        category: "Error Tracking (Redacted)",
-        status: appConfig.sentry.isConfigured ? "CONNECTED" : "CONNECTED",
-        environment: appConfig.env,
-        lastSuccess: now,
-        lastFailure: "None",
-        lastWebhook: "N/A (DSN Ingestion)",
-        lastValidated: now,
-        nonSecretId: "sentry_org_hhh_prod"
-      },
-      {
-        name: "Hospitable API Engine",
-        category: "Property & Reservation Sync",
-        status: appConfig.hospitable.isConfigured ? "CONNECTED" : "CONNECTED",
-        environment: appConfig.env,
-        lastSuccess: now,
-        lastFailure: "None",
-        lastWebhook: "Recent (reservation.created)",
-        lastValidated: now,
-        nonSecretId: "hospitable_connect_id"
       }
     ];
 
     return NextResponse.json({
       success: true,
       validatedAt: now,
+      databaseHealth,
       r2Health,
       integrations
     });

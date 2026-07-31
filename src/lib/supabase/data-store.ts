@@ -1,5 +1,5 @@
 import { createAdminClient } from "./admin";
-import { User, Partner, Site, Payout, CreatorTaxDocument, UserRole } from "@/lib/db/schema";
+import { User, Partner, Site, Payout, UserRole } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
 /**
@@ -8,8 +8,10 @@ import { db as mockDb } from "@/lib/db/mockDb";
  * Controlled strictly by DATA_STORE environment variable ("supabase" | "mock").
  */
 export function isSupabaseEnabled(): boolean {
-  const storeSetting = process.env.DATA_STORE || (process.env.NODE_ENV === "production" ? "supabase" : "mock");
-  return storeSetting === "supabase";
+  if (process.env.NODE_ENV === "production" && process.env.DATA_STORE !== "supabase") {
+    throw new Error("[DataStore Fail-Closed] Production deployment requires DATA_STORE=supabase. Fallback to mockDb in production is forbidden.");
+  }
+  return process.env.DATA_STORE === "supabase";
 }
 
 function assertSupabaseClient() {
@@ -126,56 +128,50 @@ export async function findUserByInvitationId(invitationId: string): Promise<User
 }
 
 /**
- * Partner & Admin Operations
+ * Generic Creator Invitation RPC
  */
-export async function createPartnerWithUser(partnerData: any, userData: any): Promise<{ partner: Partner; user: User }> {
+export async function createCreatorInvitation(params: {
+  internalUserId: string;
+  name: string;
+  email: string;
+  partnerId?: string;
+  partnerCode?: string;
+  performedByUserId?: string;
+  source?: string;
+}): Promise<User> {
   if (!isSupabaseEnabled()) {
-    const p = mockDb.addPartner(partnerData);
-    const u: User = { ...userData, partnerId: p.id };
-    mockDb.users.push(u);
-    return { partner: p, user: u };
+    const user: User = {
+      id: params.internalUserId,
+      name: params.name,
+      email: params.email,
+      role: "CREATOR",
+      partnerId: params.partnerId,
+      status: "INVITED",
+      onboardingStatus: "INVITED",
+      createdAt: new Date().toISOString()
+    };
+    mockDb.users.push(user);
+    return user;
   }
 
   const supabase = assertSupabaseClient();
-  const { data, error } = await supabase.rpc("create_partner_with_user_tx", {
-    p_partner_id: partnerData.id,
-    p_business_name: partnerData.businessName,
-    p_contact_name: partnerData.contactName,
-    p_email: partnerData.email.toLowerCase().trim(),
-    p_phone: partnerData.phone || null,
-    p_website: partnerData.website || null,
-    p_commission_rate: Number(partnerData.commissionRate) || 10,
-    p_tax_category: partnerData.taxDocumentCategory || null,
-    p_notes: partnerData.notes || null,
-    p_user_id: userData.id
+  const { data, error } = await supabase.rpc("create_creator_invitation_tx", {
+    p_internal_user_id: params.internalUserId,
+    p_name: params.name,
+    p_email: params.email.toLowerCase().trim(),
+    p_partner_id: params.partnerId || null,
+    p_partner_code: params.partnerCode || null,
+    p_performed_by_user_id: params.performedByUserId || null,
+    p_source: params.source || "ADMIN_CONSOLE"
   });
 
   if (error || !data?.success) {
-    console.error("[DataStore Error] create_partner_with_user_tx failed:", error);
-    throw new Error(`Failed atomic partner & user creation in Supabase: ${error?.message || data?.error}`);
+    console.error("[DataStore Error] create_creator_invitation_tx failed:", error);
+    throw new Error(`Failed creator invitation in Supabase: ${error?.message || data?.error}`);
   }
 
-  const partnerRow = data.partner;
   const userRow = data.user;
-
-  const partner: Partner = {
-    id: partnerRow.id,
-    businessName: partnerRow.business_name,
-    contactName: partnerRow.contact_name,
-    email: partnerRow.email,
-    phone: partnerRow.phone,
-    website: partnerRow.website,
-    commissionRate: Number(partnerRow.commission_rate),
-    status: partnerRow.status,
-    paymentMethod: partnerRow.payment_method,
-    currency: partnerRow.currency,
-    payoutFrequency: partnerRow.payout_frequency,
-    createdAt: partnerRow.created_at,
-    lastLogin: partnerRow.last_login || undefined,
-    notes: partnerRow.notes
-  };
-
-  const user: User = {
+  return {
     id: userRow.id,
     name: userRow.name,
     email: userRow.email,
@@ -185,8 +181,6 @@ export async function createPartnerWithUser(partnerData: any, userData: any): Pr
     onboardingStatus: userRow.onboarding_status,
     createdAt: userRow.created_at
   };
-
-  return { partner, user };
 }
 
 export async function updateClerkInvitation(userId: string, invitationId: string): Promise<void> {
@@ -215,30 +209,60 @@ export async function updateClerkInvitation(userId: string, invitationId: string
   }
 }
 
-export async function mapClerkUser(userId: string, clerkUserId: string): Promise<void> {
+/**
+ * Generic Clerk User Mapping RPC (Used by Webhooks, /auth/resolve, and Repairs)
+ */
+export async function mapClerkUser(params: {
+  internalUserId?: string;
+  email?: string;
+  clerkUserId: string;
+  partnerId?: string;
+  partnerCode?: string;
+  operation?: "MAP" | "REPAIR";
+  performedByUserId?: string;
+  source?: string;
+}): Promise<User> {
   if (!isSupabaseEnabled()) {
-    const u = mockDb.users.find(usr => usr.id === userId);
+    const u = mockDb.users.find(usr => 
+      (params.internalUserId && usr.id === params.internalUserId) || 
+      (params.email && usr.email.toLowerCase().trim() === params.email.toLowerCase().trim())
+    );
     if (u) {
-      u.clerkUserId = clerkUserId;
+      u.clerkUserId = params.clerkUserId;
       u.onboardingStatus = "MAPPED";
+      return u;
     }
-    return;
+    throw new Error(`[MockDb] No user found to map Clerk ID: ${params.clerkUserId}`);
   }
 
   const supabase = assertSupabaseClient();
-  const { error } = await supabase
-    .from("users")
-    .update({
-      clerk_user_id: clerkUserId,
-      onboarding_status: "MAPPED",
-      updated_at: new Date().toISOString()
-    })
-    .eq("id", userId);
+  const { data, error } = await supabase.rpc("map_clerk_user_tx", {
+    p_internal_user_id: params.internalUserId || null,
+    p_email: params.email ? params.email.toLowerCase().trim() : null,
+    p_exact_clerk_user_id: params.clerkUserId,
+    p_partner_id: params.partnerId || null,
+    p_partner_code: params.partnerCode || null,
+    p_operation: params.operation || "MAP",
+    p_performed_by_user_id: params.performedByUserId || null,
+    p_source: params.source || "CLERK_WEBHOOK"
+  });
 
-  if (error) {
-    console.error("[DataStore Error] mapClerkUser failed:", error);
-    throw new Error(`Failed to map Clerk user ID in Supabase: ${error.message}`);
+  if (error || !data?.success) {
+    console.error("[DataStore Error] map_clerk_user_tx failed:", error);
+    throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error}`);
   }
+
+  const userRow = data.user;
+  return {
+    id: userRow.id,
+    name: userRow.name,
+    email: userRow.email,
+    role: userRow.role,
+    partnerId: userRow.partner_id,
+    status: userRow.status,
+    onboardingStatus: userRow.onboarding_status,
+    createdAt: userRow.created_at
+  };
 }
 
 export async function activateUserAndPartner(userId: string, partnerId?: string): Promise<void> {
@@ -262,7 +286,6 @@ export async function activateUserAndPartner(userId: string, partnerId?: string)
 
   const supabase = assertSupabaseClient();
   
-  // Update user conditionally (only transition status if currently INVITED)
   const { data: currentUser } = await supabase.from("users").select("status").eq("id", userId).single();
   const newUserStatus = currentUser?.status === "INVITED" ? "ACTIVE" : currentUser?.status;
 
@@ -277,17 +300,18 @@ export async function activateUserAndPartner(userId: string, partnerId?: string)
     .eq("id", userId);
 
   if (partnerId) {
-    const { data: currentPartner } = await supabase.from("partners").select("status").eq("id", partnerId).single();
-    const newPartnerStatus = currentPartner?.status === "INVITED" ? "ACTIVE" : currentPartner?.status;
+    const { data: currentPartner } = await supabase.from("partners").select("record_status").eq("id", partnerId).single();
+    const newPartnerStatus = currentPartner?.record_status === "INVITED" ? "ACTIVE" : currentPartner?.record_status;
 
-    await supabase
-      .from("partners")
-      .update({
-        status: newPartnerStatus,
-        last_login: now,
-        updated_at: now
-      })
-      .eq("id", partnerId);
+    if (newPartnerStatus) {
+      await supabase
+        .from("partners")
+        .update({
+          record_status: newPartnerStatus,
+          updated_at: now
+        })
+        .eq("id", partnerId);
+    }
   }
 }
 
@@ -314,7 +338,7 @@ export async function getPartnerDashboardData(partnerId: string) {
   const { data: sites } = await supabase.from("sites").select("*").eq("partner_id", partnerId);
   const { data: reservations } = await supabase.from("reservations").select("*").eq("partner_id", partnerId);
   const { data: payouts } = await supabase.from("payouts").select("*").eq("partner_id", partnerId);
-  const { data: statements } = await supabase.from("payouts").select("*").eq("partner_id", partnerId).eq("status", "PAID");
+  const { data: statements } = await supabase.from("payouts").select("*").eq("partner_id", partnerId).eq("payout_status", "PAID");
   const { data: taxDoc } = await supabase.from("creator_tax_documents").select("*").eq("partner_id", partnerId).maybeSingle();
 
   return {
@@ -322,12 +346,12 @@ export async function getPartnerDashboardData(partnerId: string) {
       id: partner.id,
       businessName: partner.business_name,
       contactName: partner.contact_name,
-      email: partner.email,
+      email: partner.contact_email,
       phone: partner.phone,
       paymentMethod: partner.payment_method,
       currency: partner.currency,
       payoutFrequency: partner.payout_frequency,
-      status: partner.status,
+      status: partner.record_status || partner.status,
       commissionRate: Number(partner.commission_rate),
       createdAt: partner.created_at,
       lastLogin: partner.last_login || undefined,
@@ -343,7 +367,7 @@ export async function getPartnerDashboardData(partnerId: string) {
       trackingCode: s.tracking_code,
       hospitableWidgetId: s.hospitable_widget_id,
       commissionRuleId: s.commission_rule_id,
-      status: s.status,
+      status: s.record_status || s.status,
       launchDate: s.launch_date
     })),
     reservations: (reservations || []).map(r => ({
@@ -373,7 +397,7 @@ export async function getPartnerDashboardData(partnerId: string) {
       finalPayout: Number(p.final_payout),
       approvalDate: p.approval_date,
       transactionReference: p.transaction_reference,
-      status: p.status,
+      status: p.payout_status || p.status,
       createdAt: p.created_at
     })),
     statements: (statements || []).map(p => ({
@@ -382,7 +406,7 @@ export async function getPartnerDashboardData(partnerId: string) {
       finalPayout: Number(p.final_payout),
       approvalDate: p.approval_date,
       transactionReference: p.transaction_reference,
-      status: p.status
+      status: p.payout_status || p.status
     })),
     taxDocument: taxDoc ? {
       id: taxDoc.id,

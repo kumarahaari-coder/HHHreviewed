@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { createClerkPartnerInvitation } from "@/lib/auth/clerk-admin";
-import { createPartnerWithUser, updateClerkInvitation, findUserByEmail } from "@/lib/supabase/data-store";
+import { createCreatorInvitation, updateClerkInvitation, findUserByEmail } from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -10,8 +10,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }
 
-    const { getPartnerDashboardData } = await import("@/lib/supabase/data-store");
-    // Return partner list
     return NextResponse.json({
       success: true,
       message: "Admin partner endpoint"
@@ -33,13 +31,8 @@ export async function POST(req: NextRequest) {
       contactName,
       businessName,
       email,
-      phone,
-      website,
-      taxDocumentCategory,
-      commissionRate,
-      notes,
-      paymentMethod = "BANK_TRANSFER",
-      payoutFrequency = "MONTHLY"
+      partnerId,
+      partnerCode
     } = body;
 
     if (!contactName || !businessName || !email) {
@@ -48,56 +41,40 @@ export async function POST(req: NextRequest) {
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check duplicate email in DataStore
     const existingUser = await findUserByEmail(normalizedEmail);
     if (existingUser) {
       return NextResponse.json({ success: false, error: `A partner account with email ${email} already exists.` }, { status: 409 });
     }
 
-    const partnerId = `partner-${Date.now().toString(36)}`;
-    const userId = `user-partner-${partnerId}`;
+    const internalUserId = `user-partner-${Date.now().toString(36)}`;
 
-    // STEP 1 & 2: Create Partner & User in DataStore via Atomic PostgreSQL Transaction RPC (Status = INVITED, Onboarding = PENDING)
-    console.log(`[Admin Partner Create] Creating Partner & User in DataStore for ${normalizedEmail}...`);
-    const { partner, user } = await createPartnerWithUser(
-      {
-        id: partnerId,
-        businessName,
-        contactName,
-        email: normalizedEmail,
-        phone: phone || "555-0100",
-        paymentMethod,
-        currency: "USD",
-        payoutFrequency,
-        notes: notes || `Created by ${session.email}`,
-        website,
-        commissionRate: Number(commissionRate) || 10,
-        taxDocumentCategory
-      },
-      {
-        id: userId
-      }
-    );
+    // STEP 1: Create Creator User Invitation via DataStore RPC
+    const user = await createCreatorInvitation({
+      internalUserId,
+      name: contactName,
+      email: normalizedEmail,
+      partnerId,
+      partnerCode,
+      performedByUserId: session.userId,
+      source: "ADMIN_CONSOLE"
+    });
 
-    // STEP 3: Issue Clerk Invitation via Clerk Backend API
-    console.log(`[Admin Partner Create] Issuing Clerk Invitation for ${normalizedEmail}...`);
-    const clerkResult = await createClerkPartnerInvitation(normalizedEmail, partner.id, user.id, "CREATOR");
+    // STEP 2: Issue Clerk Invitation
+    const clerkResult = await createClerkPartnerInvitation(normalizedEmail, user.partnerId || "", user.id, "CREATOR");
 
     if (!clerkResult.success || !clerkResult.invitationId) {
-      console.error(`[Admin Partner Create Failure] Clerk invitation failed: ${clerkResult.error}`);
       return NextResponse.json({
         success: false,
         error: `Failed to create Clerk invitation for ${email}: ${clerkResult.error}`
       }, { status: 502 });
     }
 
-    // STEP 4: Store inv_... in clerkInvitationId & set onboardingStatus = INVITED
+    // STEP 3: Store invitation ID
     await updateClerkInvitation(user.id, clerkResult.invitationId);
 
     return NextResponse.json({
       success: true,
       message: `Partner "${businessName}" created successfully. Status set to INVITED. Clerk invitation sent.`,
-      partner,
       user,
       clerkInvitationId: clerkResult.invitationId
     });

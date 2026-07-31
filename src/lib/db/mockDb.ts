@@ -660,8 +660,17 @@ const isBrowser = () => typeof window !== "undefined";
 
 // State Management Wrapper
 class MockDatabase {
+  private inMemoryStore: Record<string, string> = {};
+
   private getStorage = <T>(key: string, defaultValue: T): T => {
-    if (!isBrowser()) return defaultValue;
+    if (!isBrowser()) {
+      const memData = this.inMemoryStore[key];
+      if (!memData) {
+        this.inMemoryStore[key] = JSON.stringify(defaultValue);
+        return defaultValue;
+      }
+      return JSON.parse(memData);
+    }
     const data = localStorage.getItem(key);
     if (!data) {
       localStorage.setItem(key, JSON.stringify(defaultValue));
@@ -675,7 +684,10 @@ class MockDatabase {
   };
 
   private setStorage = <T>(key: string, value: T): void => {
-    if (!isBrowser()) return;
+    if (!isBrowser()) {
+      this.inMemoryStore[key] = JSON.stringify(value);
+      return;
+    }
     localStorage.setItem(key, JSON.stringify(value));
   };
 
