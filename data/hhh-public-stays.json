@@ -1,0 +1,54 @@
+[
+  {
+    "id": "hhh-uptown-st-augustine",
+    "name": "Uptown St. Augustine",
+    "location": "St. Augustine, FL",
+    "timezone": "America/New_York",
+    "mood": "Indulgent · Restorative · Immersive",
+    "summary": "A private spa-inspired retreat designed for couples to unplug, slow down, and reconnect.",
+    "minimumAge": 25,
+    "maximumOccupancy": 2,
+    "websiteUrl": "https://hiddenhoneyhomes.com/retreats/uptown-st-augustine-fl",
+    "bookingUrl": "https://hiddenhoneyhomes.com/book-now/uptown-retreat/reserve",
+    "verifiedAt": "2026-07-28"
+  },
+  {
+    "id": "hhh-downtown-st-augustine",
+    "name": "Downtown St. Augustine",
+    "location": "St. Augustine, FL",
+    "timezone": "America/New_York",
+    "mood": "Bold · Dramatic · Unapologetic",
+    "summary": "An adults-only retreat in the historic district, combining city access with a private, dramatic interior.",
+    "minimumAge": 25,
+    "maximumOccupancy": 2,
+    "websiteUrl": "https://hiddenhoneyhomes.com/retreats/downtown-st-augustine-fl",
+    "bookingUrl": "https://hiddenhoneyhomes.com/book-now/downtown-retreat",
+    "verifiedAt": "2026-07-28"
+  },
+  {
+    "id": "hhh-ellsworth-maine",
+    "name": "Ellsworth, Maine",
+    "location": "Ellsworth, ME",
+    "timezone": "America/New_York",
+    "mood": "Grounded · Secluded · Wild",
+    "summary": "A secluded couples retreat near Acadia National Park, balancing coastal adventure with privacy and stillness.",
+    "minimumAge": 25,
+    "maximumOccupancy": 2,
+    "websiteUrl": "https://hiddenhoneyhomes.com/retreats/ellsworth-me",
+    "bookingUrl": "https://hiddenhoneyhomes.com/book-now/ellsworth-retreat",
+    "verifiedAt": "2026-07-28"
+  },
+  {
+    "id": "hhh-beech-mountain",
+    "name": "Beech Mountain, North Carolina",
+    "location": "Beech Mountain, NC",
+    "timezone": "America/New_York",
+    "mood": "Cozy · Romantic · Unhurried",
+    "summary": "A warm mountain retreat near the ski resort, designed for slow mornings, long evenings, and intentional time together.",
+    "minimumAge": 25,
+    "maximumOccupancy": 2,
+    "websiteUrl": "https://hiddenhoneyhomes.com/retreats/beech-mountain-nc",
+    "bookingUrl": "https://hiddenhoneyhomes.com/book-now/beech-mountain-retreat",
+    "verifiedAt": "2026-07-28"
+  }
+]
