@@ -202,10 +202,11 @@ const INITIAL_USERS: User[] = [
   {
     id: "user-admin-1",
     name: "HHH Super Admin",
-    email: "admin@hiddenhoneyhomes.com",
+    email: "hiddenhoneyace@gmail.com",
     role: "SUPER_ADMIN",
     status: "ACTIVE",
-    lastLogin: "2026-07-28T12:00:00Z",
+    clerkUserId: "user_3HGIul5Zwc031uj94utBUUSLE7s",
+    lastLogin: "2026-07-31T12:00:00Z",
     createdAt: "2026-01-10"
   },
   {
