@@ -11,7 +11,23 @@ export default function LoginPage() {
   useEffect(() => {
     if (isLoaded) {
       if (userId) {
-        router.replace("/partner");
+        fetch("/api/auth/session")
+          .then(res => res.json())
+          .then(data => {
+            if (data.status === "PENDING_ACCESS") {
+              router.replace("/pending-access");
+            } else if (data.status === "APPROVED" && data.user) {
+              const role = data.user.role;
+              if (role === "SUPER_ADMIN" || role === "FINANCE_ADMIN" || role === "ADMIN") {
+                router.replace("/admin");
+              } else {
+                router.replace("/partner");
+              }
+            } else {
+              router.replace("/pending-access");
+            }
+          })
+          .catch(() => router.replace("/pending-access"));
       } else {
         router.replace("/sign-in");
       }

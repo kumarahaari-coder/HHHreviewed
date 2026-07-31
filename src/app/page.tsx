@@ -19,16 +19,23 @@ export default function EntryPortal() {
     setMounted(true);
     setUsers(db.users);
 
-    if (!isDevMockMode && isLoaded) {
-      if (isSignedIn) {
-        // Redirect authenticated user to appropriate dashboard
-        const current = db.currentUser;
-        if (current && (current.role === "SUPER_ADMIN" || current.role === "FINANCE_ADMIN" || current.role === "ADMIN")) {
-          router.push("/admin");
-        } else {
-          router.push("/partner");
-        }
-      }
+    if (!isDevMockMode && isLoaded && isSignedIn) {
+      fetch("/api/auth/session")
+        .then(res => res.json())
+        .then(data => {
+          console.log(`[Entry Portal Debug] Session:`, data);
+          if (data.status === "PENDING_ACCESS") {
+            router.replace("/pending-access");
+          } else if (data.status === "APPROVED" && data.user) {
+            const role = data.user.role;
+            if (role === "SUPER_ADMIN" || role === "FINANCE_ADMIN" || role === "ADMIN") {
+              router.replace("/admin");
+            } else {
+              router.replace("/partner");
+            }
+          }
+        })
+        .catch(err => console.error("[Entry Portal Error]", err));
     }
   }, [isLoaded, isSignedIn, isDevMockMode, router]);
 

@@ -12,7 +12,8 @@ import {
   User,
   LogOut,
   ChevronDown,
-  ArrowLeft
+  ArrowLeft,
+  Loader2
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
@@ -24,31 +25,65 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
   const pathname = usePathname();
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [partner, setPartner] = useState<Partner | null>(null);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    let user = db.currentUser;
-    // Fallback partner mapping if user has no partnerId
-    if (user && !user.partnerId) {
-      user = { ...user, partnerId: "partner-001" };
-      db.currentUser = user;
-    }
-    // Role protection for creator portal
-    if (!user || (user.role !== "PARTNER_OWNER" && user.role !== "CREATOR" && user.role !== "SUPER_ADMIN" && user.role !== "ADMIN")) {
-      router.push("/sign-in");
-      return;
-    }
-    setCurrentUser(user);
-
-    const partnerIdToUse = user.partnerId || "partner-001";
-    const partnerData = db.partners.find(p => p.id === partnerIdToUse) || db.partners[0];
-    if (partnerData) {
-      setPartner(partnerData);
-    }
-  }, [router]);
+  const [loading, setLoading] = useState(true);
 
   const { signOut } = useClerk();
+
+  useEffect(() => {
+    let isSubscribed = true;
+
+    async function checkAuthSession() {
+      try {
+        console.log(`[Partner Layout Debug] Checking session for path: ${pathname}...`);
+        const res = await fetch("/api/auth/session");
+        const data = await res.json();
+
+        if (!isSubscribed) return;
+
+        console.log(`[Partner Layout Debug] Session result:`, data);
+
+        if (data.status === "PENDING_ACCESS") {
+          console.log(`[Partner Layout Debug] User pending approval. Redirecting to /pending-access.`);
+          router.replace("/pending-access");
+          return;
+        }
+
+        if (data.status === "UNAUTHENTICATED" || !data.authenticated) {
+          console.log(`[Partner Layout Debug] Unauthenticated. Redirecting to /sign-in.`);
+          router.replace("/sign-in");
+          return;
+        }
+
+        if (data.status === "APPROVED" && data.user) {
+          const authUser = data.user as UserType;
+          db.currentUser = authUser;
+          setCurrentUser(authUser);
+
+          const partnerIdToUse = authUser.partnerId || "partner-001";
+          const partnerData = db.partners.find(p => p.id === partnerIdToUse) || db.partners[0];
+          if (partnerData) {
+            setPartner(partnerData);
+          }
+          setLoading(false);
+          return;
+        }
+
+        // Fallback safety
+        router.replace("/pending-access");
+      } catch (err) {
+        console.error(`[Partner Layout Error]`, err);
+        if (isSubscribed) {
+          setLoading(false);
+        }
+      }
+    }
+
+    checkAuthSession();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [pathname, router]);
 
   const handleLogout = async () => {
     db.currentUser = null;
@@ -56,17 +91,25 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
   };
 
   const handleReturnToAdmin = () => {
-    // Return to the first admin user in db
     const admin = db.users.find(u => u.role === "SUPER_ADMIN");
     if (admin) {
       db.currentUser = admin;
       router.push("/admin");
     } else {
-      router.push("/");
+      router.push("/sign-in");
     }
   };
 
-  if (!mounted || !currentUser || !partner) return null;
+  if (loading || !currentUser || !partner) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-brand-bg">
+        <div className="flex flex-col items-center space-y-3">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-plum" />
+          <span className="text-xs font-serif italic text-zinc-500">Loading Partner Portal...</span>
+        </div>
+      </div>
+    );
+  }
 
   const menuItems = [
     { name: "Dashboard", href: "/partner", icon: LayoutDashboard },
@@ -107,71 +150,69 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-brand-plum ${
+                className={`flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 ${
                   isActive
-                    ? "bg-brand-plum text-brand-cream"
-                    : "text-zinc-600 hover:text-brand-plum hover:bg-brand-blush/30"
+                    ? "bg-brand-plum text-brand-cream shadow-sm"
+                    : "text-zinc-600 hover:bg-brand-blush/30 hover:text-brand-plum"
                 }`}
               >
-                <Icon size={18} className={isActive ? "text-brand-cream" : "text-zinc-400"} />
+                <Icon size={16} />
                 <span>{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
-        {/* Return to Admin switch (Evaluation Aid) */}
-        <div className="p-4 border-t border-brand-blush bg-brand-blush/10 space-y-3">
-          <button
-            onClick={handleReturnToAdmin}
-            className="w-full flex items-center justify-center space-x-1.5 px-3 py-2 border border-brand-blush hover:border-brand-plum hover:bg-brand-cream text-xs font-bold text-brand-wine rounded-lg transition-colors"
-          >
-            <ArrowLeft size={12} />
-            <span>Return to Admin View</span>
-          </button>
-
-          <div className="flex items-center space-x-3 pt-2">
-            <div className="w-9 h-9 rounded-full bg-brand-blush flex items-center justify-center text-brand-wine font-bold text-sm border border-brand-blush">
-              {partner.contactName[0]}
+        {/* Partner Info Footer */}
+        <div className="p-4 border-t border-brand-blush space-y-3">
+          <div className="p-3 bg-brand-bg/60 rounded-xl border border-brand-blush/60">
+            <div className="text-[10px] uppercase font-bold text-brand-wine tracking-wider">
+              {partner.businessName}
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold truncate text-brand-plum leading-none mb-1">
-                {partner.contactName}
-              </p>
-              <span className="text-[10px] text-zinc-400 font-bold uppercase truncate block">
-                {partner.businessName}
-              </span>
+            <div className="text-xs font-bold text-brand-plum truncate mt-0.5">
+              {currentUser.name}
+            </div>
+            <div className="text-[10px] text-zinc-400 font-mono truncate mt-0.5">
+              {currentUser.email}
             </div>
           </div>
+
           <button
             onClick={handleLogout}
-            className="w-full flex items-center justify-center space-x-2 px-3 py-2 border border-brand-blush hover:border-brand-plum/40 hover:bg-brand-cream text-xs font-semibold text-zinc-500 rounded-lg transition-colors"
+            className="w-full flex items-center justify-center space-x-2 p-2 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 transition-colors"
           >
-            <LogOut size={12} />
+            <LogOut size={14} />
             <span>Sign Out</span>
           </button>
         </div>
       </aside>
 
-      {/* MAIN CONTAINER */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* HEADER */}
-        <header className="h-16 border-b border-brand-blush bg-brand-cream flex items-center justify-between px-8 z-10 no-print">
-          <div className="flex items-center space-x-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-brand-wine font-serif">
-              {partner.businessName}
+      {/* MAIN CONTENT AREA */}
+      <main className="flex-1 flex flex-col min-w-0">
+        {/* Top Header */}
+        <header className="h-16 border-b border-brand-blush bg-brand-cream/80 backdrop-blur-md px-6 flex items-center justify-between shrink-0 no-print">
+          <div className="flex items-center space-x-3">
+            <span className="text-xs font-bold text-brand-wine uppercase tracking-widest bg-brand-blush/40 px-2.5 py-1 rounded-full">
+              Partner Portal
             </span>
           </div>
 
-          <div className="flex items-center space-x-3 text-xs text-zinc-500 font-serif">
-            <span>Secure Partner Access</span>
-            <Badge type="sage">RLS Active</Badge>
+          <div className="flex items-center space-x-4">
+            {(currentUser.role === "SUPER_ADMIN" || currentUser.role === "ADMIN") && (
+              <button
+                onClick={handleReturnToAdmin}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-brand-plum text-brand-cream hover:bg-brand-wine transition-all"
+              >
+                <ArrowLeft size={14} />
+                <span>Return to Admin</span>
+              </button>
+            )}
           </div>
         </header>
 
-        {/* CONTENT BODY */}
-        <main className="flex-1 p-8">{children}</main>
-      </div>
+        {/* Dynamic Children */}
+        <div className="flex-1 p-6 sm:p-8 overflow-y-auto">{children}</div>
+      </main>
     </div>
   );
 }

@@ -7,31 +7,29 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   "/pending-access(.*)",
   "/login(.*)",
+  "/api/auth/session(.*)",
   "/api/webhooks(.*)",
   "/api/cron(.*)",
   "/api/hospitable(.*)"
 ]);
 
-const isAdminRoute = createRouteMatcher([
-  "/admin(.*)",
-  "/api/admin(.*)"
-]);
-
-const isPartnerRoute = createRouteMatcher([
-  "/partner(.*)"
-]);
-
 export default clerkMiddleware(async (auth, req) => {
-  // Allow mock dev auth mode only in non-production when explicitly configured
   const isDevMockMode = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
   if (isDevMockMode) {
     return;
   }
 
+  const { userId } = await auth();
+  const path = req.nextUrl.pathname;
+
+  console.log(`[Middleware Debug] Path: "${path}" | Clerk userId: ${userId || "UNAUTHENTICATED"}`);
+
+  // Unauthenticated user requesting protected route -> redirect to sign-in ONCE
   if (!isPublicRoute(req)) {
-    const session = await auth();
-    if (!session.userId) {
-      return session.redirectToSignIn({ returnBackUrl: req.url });
+    if (!userId) {
+      console.log(`[Middleware Debug] Unauthenticated user requesting "${path}". Redirecting to sign-in.`);
+      const signInUrl = new URL("/sign-in", req.url);
+      return NextResponse.redirect(signInUrl);
     }
   }
 });

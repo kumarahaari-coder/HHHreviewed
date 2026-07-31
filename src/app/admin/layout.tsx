@@ -15,7 +15,8 @@ import {
   Bell,
   LogOut,
   ChevronDown,
-  Activity
+  Activity,
+  Loader2
 } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
@@ -28,37 +29,68 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    // Role protection
-    const user = db.currentUser;
-    const isDevMockMode = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
-
-    if (isDevMockMode) {
-      if (!user || (user.role !== "SUPER_ADMIN" && user.role !== "FINANCE_ADMIN" && user.role !== "ADMIN")) {
-        if (user && (user.role === "CREATOR" || user.role === "PARTNER_OWNER")) {
-          router.push("/partner");
-        } else {
-          router.push("/sign-in");
-        }
-        return;
-      }
-      setCurrentUser(user);
-    } else {
-      // Production mode auth check
-      if (user && (user.role === "SUPER_ADMIN" || user.role === "FINANCE_ADMIN" || user.role === "ADMIN")) {
-        setCurrentUser(user);
-      } else {
-        router.push("/sign-in");
-        return;
-      }
-    }
-    setNotifications(db.notifications);
-  }, [router]);
+  const [loading, setLoading] = useState(true);
 
   const { signOut } = useClerk();
+
+  useEffect(() => {
+    let isSubscribed = true;
+
+    async function checkAdminAuthSession() {
+      try {
+        console.log(`[Admin Layout Debug] Checking session for path: ${pathname}...`);
+        const res = await fetch("/api/auth/session");
+        const data = await res.json();
+
+        if (!isSubscribed) return;
+
+        console.log(`[Admin Layout Debug] Session result:`, data);
+
+        if (data.status === "PENDING_ACCESS") {
+          console.log(`[Admin Layout Debug] User pending access. Redirecting to /pending-access.`);
+          router.replace("/pending-access");
+          return;
+        }
+
+        if (data.status === "UNAUTHENTICATED" || !data.authenticated) {
+          console.log(`[Admin Layout Debug] Unauthenticated. Redirecting to /sign-in.`);
+          router.replace("/sign-in");
+          return;
+        }
+
+        if (data.status === "APPROVED" && data.user) {
+          const authUser = data.user as User;
+          const role = authUser.role;
+
+          if (role === "SUPER_ADMIN" || role === "FINANCE_ADMIN" || role === "ADMIN") {
+            db.currentUser = authUser;
+            setCurrentUser(authUser);
+            setNotifications(db.notifications);
+            setLoading(false);
+            return;
+          } else {
+            // Non-admin creator trying to access /admin -> Redirect to /partner (NEVER /sign-in!)
+            console.log(`[Admin Layout Debug] Creator user (${authUser.email}) denied access to /admin. Redirecting to /partner.`);
+            router.replace("/partner");
+            return;
+          }
+        }
+
+        router.replace("/pending-access");
+      } catch (err) {
+        console.error(`[Admin Layout Error]`, err);
+        if (isSubscribed) {
+          setLoading(false);
+        }
+      }
+    }
+
+    checkAdminAuthSession();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [pathname, router]);
 
   const handleLogout = async () => {
     db.currentUser = null;
@@ -70,8 +102,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (targetUser) {
       db.currentUser = targetUser;
       setCurrentUser(targetUser);
-      // If switched to a partner, route to partner portal
-      if (targetUser.role === "PARTNER_OWNER") {
+      if (targetUser.role === "PARTNER_OWNER" || targetUser.role === "CREATOR") {
         router.push("/partner");
       } else {
         router.refresh();
@@ -84,7 +115,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setNotifications(db.notifications);
   };
 
-  if (!mounted || !currentUser) return null;
+  if (loading || !currentUser) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-brand-bg">
+        <div className="flex flex-col items-center space-y-3">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-plum" />
+          <span className="text-xs font-serif italic text-zinc-500">Loading Admin Portal...</span>
+        </div>
+      </div>
+    );
+  }
 
   const menuItems = [
     { name: "Overview", href: "/admin", icon: LayoutDashboard },
@@ -120,7 +160,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </div>
 
-        {/* Navigation */}
+        {/* Menu Items */}
         <nav className="flex-1 p-4 space-y-1">
           {menuItems.map(item => {
             const isActive = pathname === item.href;
@@ -129,37 +169,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-brand-plum ${
+                className={`flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 ${
                   isActive
-                    ? "bg-brand-plum text-brand-cream"
-                    : "text-zinc-600 hover:text-brand-plum hover:bg-brand-blush/30"
+                    ? "bg-brand-plum text-brand-cream shadow-sm"
+                    : "text-zinc-600 hover:bg-brand-blush/30 hover:text-brand-plum"
                 }`}
               >
-                <Icon size={18} className={isActive ? "text-brand-cream" : "text-zinc-400 group-hover:text-brand-plum"} />
+                <Icon size={16} />
                 <span>{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
-        {/* User profile / Logout */}
-        <div className="p-4 border-t border-brand-blush bg-brand-blush/10">
-          <div className="flex items-center space-x-3 mb-3">
-            <div className="w-9 h-9 rounded-full bg-brand-blush flex items-center justify-center text-brand-wine font-bold text-sm border border-brand-blush">
-              {currentUser.name[0]}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold truncate text-brand-plum leading-none mb-1">
+        {/* User Info & Switcher */}
+        <div className="p-4 border-t border-brand-blush space-y-3">
+          <div className="p-3 bg-brand-bg/60 rounded-xl border border-brand-blush/60">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-brand-plum truncate">
                 {currentUser.name}
-              </p>
-              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
-                {currentUser.role.replace("_", " ")}
               </span>
+              <Badge type={currentUser.role === "SUPER_ADMIN" ? "success" : "info"}>
+                {currentUser.role}
+              </Badge>
+            </div>
+            <div className="text-[10px] text-zinc-400 font-mono truncate mt-0.5">
+              {currentUser.email}
             </div>
           </div>
+
           <button
             onClick={handleLogout}
-            className="w-full flex items-center justify-center space-x-2 px-3 py-2 border border-brand-blush hover:border-brand-plum/40 hover:bg-brand-cream text-xs font-semibold text-zinc-600 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-brand-plum"
+            className="w-full flex items-center justify-center space-x-2 p-2 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 transition-colors"
           >
             <LogOut size={14} />
             <span>Sign Out</span>
@@ -167,122 +208,62 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </aside>
 
-      {/* MAIN CONTAINER */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* HEADER */}
-        <header className="h-16 border-b border-brand-blush bg-brand-cream flex items-center justify-between px-8 z-10 no-print">
-          {/* Dashboard Title or Context */}
-          <div className="flex items-center space-x-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-serif">
-              Hidden Honey Homes × Megs Brass
+      {/* MAIN CONTENT AREA */}
+      <main className="flex-1 flex flex-col min-w-0">
+        {/* Top Header */}
+        <header className="h-16 border-b border-brand-blush bg-brand-cream/80 backdrop-blur-md px-6 flex items-center justify-between shrink-0 no-print">
+          <div className="flex items-center space-x-3">
+            <span className="text-xs font-bold text-brand-wine uppercase tracking-widest bg-brand-blush/40 px-2.5 py-1 rounded-full">
+              HHH Admin Management
             </span>
           </div>
 
-          {/* Quick Actions */}
-          <div className="flex items-center space-x-6">
-            {/* Simulator Persona Switcher */}
-            <div className="flex items-center space-x-2">
-              <span className="text-xs text-zinc-500 font-serif italic flex items-center gap-1">
-                <Activity size={12} className="text-brand-plum animate-pulse" />
-                Simulate role:
-              </span>
-              <div className="relative">
-                <select
-                  value={currentUser.id}
-                  onChange={e => handlePersonaSwitch(e.target.value)}
-                  className="bg-brand-bg border border-brand-blush rounded-lg text-xs font-bold text-brand-plum py-1.5 pl-3 pr-8 focus:outline-none focus:border-brand-plum focus:ring-1 focus:ring-brand-plum appearance-none cursor-pointer"
-                >
-                  <optgroup label="Administrators">
-                    {db.users
-                      .filter(u => u.role !== "PARTNER_OWNER")
-                      .map(u => (
-                        <option key={u.id} value={u.id}>
-                          {u.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="Partners">
-                    {db.users
-                      .filter(u => u.role === "PARTNER_OWNER")
-                      .map(u => (
-                        <option key={u.id} value={u.id}>
-                          {u.name} (Partner)
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
-                <ChevronDown
-                  size={12}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-brand-plum pointer-events-none"
-                />
-              </div>
-            </div>
-
-            {/* Notifications Dropdown */}
+          <div className="flex items-center space-x-4">
+            {/* Notification Bell */}
             <div className="relative">
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
-                className="relative p-2 text-zinc-500 hover:text-brand-plum hover:bg-brand-blush/30 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-brand-plum"
-                aria-label="Toggle notifications"
+                className="p-2 rounded-xl border border-brand-blush hover:bg-brand-blush/20 text-zinc-600 relative transition-colors"
               >
-                <Bell size={20} />
+                <Bell size={18} />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-brand-wine text-white rounded-full flex items-center justify-center text-[9px] font-bold">
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center">
                     {unreadCount}
                   </span>
                 )}
               </button>
 
               {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 bg-brand-cream border border-brand-blush rounded-xl shadow-xl z-20 py-2 animate-scale-up">
-                  <div className="flex items-center justify-between px-4 pb-2 border-b border-brand-blush mb-2">
-                    <span className="text-xs font-bold text-brand-plum uppercase tracking-wider">
-                      System Notifications
-                    </span>
-                    {unreadCount > 0 && (
-                      <button
-                        onClick={markAllRead}
-                        className="text-[10px] text-brand-wine hover:underline font-semibold"
-                      >
-                        Mark all read
-                      </button>
-                    )}
+                <div className="absolute right-0 mt-2 w-80 bg-brand-cream border border-brand-blush shadow-2xl rounded-2xl p-4 z-50">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-bold text-sm text-brand-plum">Notifications</h4>
+                    <button
+                      onClick={markAllRead}
+                      className="text-[10px] text-brand-wine font-bold hover:underline"
+                    >
+                      Mark all read
+                    </button>
                   </div>
-                  <div className="max-h-60 overflow-y-auto px-2 space-y-1">
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
                     {notifications.length === 0 ? (
-                      <p className="text-center py-6 text-xs text-zinc-400 italic">
-                        No notifications
-                      </p>
+                      <p className="text-xs text-zinc-400 italic text-center py-4">No notifications</p>
                     ) : (
-                      notifications.map(notif => (
+                      notifications.map(n => (
                         <div
-                          key={notif.id}
-                          className={`p-2.5 rounded-lg border text-xs transition-colors ${
-                            notif.read
-                              ? "bg-transparent border-transparent text-zinc-500"
-                              : "bg-brand-blush/20 border-brand-blush/40 text-brand-text font-medium"
+                          key={n.id}
+                          className={`p-2.5 rounded-xl border text-xs ${
+                            n.read
+                              ? "bg-brand-bg/30 border-brand-blush/40 text-zinc-500"
+                              : "bg-brand-cream border-brand-blush text-brand-plum font-medium"
                           }`}
                         >
-                          <div className="flex justify-between items-start mb-1">
-                            <Badge
-                              type={
-                                notif.type === "WARNING"
-                                  ? "danger"
-                                  : notif.type === "SUCCESS"
-                                  ? "success"
-                                  : "plum"
-                              }
-                            >
-                              {notif.type}
-                            </Badge>
-                            <span className="text-[9px] text-zinc-400">
-                              {new Date(notif.createdAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit"
-                              })}
+                          <div className="flex justify-between items-start">
+                            <span className="font-bold uppercase text-[9px] text-brand-wine">
+                              {n.type}
                             </span>
+                            <span className="text-[9px] text-zinc-400">{n.createdAt ? n.createdAt.split("T")[1]?.slice(0, 5) : "Just now"}</span>
                           </div>
-                          <p>{notif.message}</p>
+                          <p className="mt-1 leading-snug">{n.message}</p>
                         </div>
                       ))
                     )}
@@ -293,9 +274,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </header>
 
-        {/* CONTENT BODY */}
-        <main className="flex-1 p-8">{children}</main>
-      </div>
+        {/* Dynamic Children */}
+        <div className="flex-1 p-6 sm:p-8 overflow-y-auto">{children}</div>
+      </main>
     </div>
   );
 }
