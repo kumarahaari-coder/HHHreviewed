@@ -1,5 +1,5 @@
 export type UserRole = "SUPER_ADMIN" | "FINANCE_ADMIN" | "PARTNER_OWNER" | "ADMIN" | "CREATOR";
-export type PartnerStatus = "ACTIVE" | "SUSPENDED" | "INACTIVE";
+export type PartnerStatus = "INVITED" | "ACTIVE" | "SUSPENDED" | "ARCHIVED" | "INACTIVE";
 export type SiteStatus = "ACTIVE" | "PAUSED" | "SUSPENDED" | "ARCHIVED";
 export type ReservationStatus = "PENDING" | "CONFIRMED" | "CHECKED_IN" | "CHECKED_OUT" | "CANCELLED" | "COMPLETED" | "UNKNOWN";
 export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID" | "REFUNDED" | "PARTIALLY_REFUNDED" | "DISPUTED" | "UNKNOWN";
@@ -37,6 +37,10 @@ export interface Partner {
   status: PartnerStatus;
   createdAt: string;
   notes?: string;
+  website?: string;
+  commissionRate?: number;
+  taxDocumentCategory?: TaxDocumentType;
+  lastLogin?: string;
   stripeCustomerId?: string;
   stripeConnectAccountId?: string;
   stripeOnboardingStatus?: "NOT_CONNECTED" | "PENDING" | "CONNECTED";
