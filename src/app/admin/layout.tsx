@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Activity
 } from "lucide-react";
+import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
 import { User, SystemNotification } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/custom";
@@ -41,9 +42,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setNotifications(db.notifications);
   }, [router]);
 
-  const handleLogout = () => {
+  const { signOut } = useClerk();
+
+  const handleLogout = async () => {
     db.currentUser = null;
-    router.push("/");
+    await signOut({ redirectUrl: "/sign-in" });
   };
 
   const handlePersonaSwitch = (userId: string) => {

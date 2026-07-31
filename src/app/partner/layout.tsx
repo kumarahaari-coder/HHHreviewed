@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ArrowLeft
 } from "lucide-react";
+import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
 import { User as UserType, Partner } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/custom";
@@ -41,9 +42,11 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
     }
   }, [router]);
 
-  const handleLogout = () => {
+  const { signOut } = useClerk();
+
+  const handleLogout = async () => {
     db.currentUser = null;
-    router.push("/");
+    await signOut({ redirectUrl: "/sign-in" });
   };
 
   const handleReturnToAdmin = () => {

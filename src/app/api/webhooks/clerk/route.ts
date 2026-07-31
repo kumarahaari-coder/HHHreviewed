@@ -37,15 +37,18 @@ export async function POST(req: NextRequest) {
         existingUser.clerkUserId = clerkUserId;
         existingUser.onboardingStatus = "COMPLETED";
       } else {
-        const isPartner = email.includes("escapes") || email.includes("megs");
-        const partner = isPartner ? db.partners.find(p => p.email.toLowerCase() === email.toLowerCase()) : null;
+        const publicMetadata = userData.public_metadata || {};
+        const metaRole = publicMetadata.role as string | undefined;
+        // Default strictly to CREATOR. Admin roles require explicit assignment by an administrator.
+        const assignedRole = (metaRole === "SUPER_ADMIN" || metaRole === "FINANCE_ADMIN" || metaRole === "ADMIN") ? metaRole : "CREATOR";
+        const partner = db.partners.find(p => p.email.toLowerCase() === email.toLowerCase());
 
         db.users.push({
           id: `user-${Date.now()}`,
           name,
           email,
-          role: isPartner ? "CREATOR" : "ADMIN",
-          partnerId: partner?.id,
+          role: assignedRole,
+          partnerId: partner?.id || "partner-001",
           status: "ACTIVE",
           clerkUserId,
           onboardingStatus: "COMPLETED",

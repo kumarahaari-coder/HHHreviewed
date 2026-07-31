@@ -9,14 +9,14 @@ export default function SignInPage() {
           Hidden Honey Homes
         </span>
         <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight mt-3">
-          Sign In to Your Portal
+          Partner & Creator Portal
         </h1>
         <p className="text-zinc-500 font-serif italic text-sm mt-2">
-          Secure access for creators, partners, and administrators.
+          Secure sign in for approved creators, partners, and administrators.
         </p>
       </div>
 
-      {/* Clerk SignIn Component */}
+      {/* Clerk SignIn Component (Sign up disabled) */}
       <div className="w-full max-w-md flex justify-center">
         <SignIn
           appearance={{
@@ -26,12 +26,14 @@ export default function SignInPage() {
               headerSubtitle: "text-xs text-zinc-500",
               formButtonPrimary: "bg-brand-plum hover:bg-brand-wine text-brand-cream text-xs uppercase tracking-wider font-bold py-2.5 rounded-lg transition-all shadow-md",
               formFieldInput: "bg-brand-bg/50 border border-brand-blush text-sm text-brand-text rounded-lg focus:border-brand-plum focus:ring-1 focus:ring-brand-plum/20",
-              footerActionLink: "text-brand-plum hover:text-brand-wine font-semibold text-xs",
+              footerAction: "hidden", // Hide "Don't have an account? Sign up"
+              footerActionLink: "hidden",
+              footer: "hidden"
             }
           }}
           routing="path"
           path="/sign-in"
-          signUpUrl="/sign-up"
+          signUpUrl={undefined}
           fallbackRedirectUrl="/partner"
         />
       </div>

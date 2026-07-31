@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth, UserButton } from "@clerk/nextjs";
+import { useAuth } from "@clerk/nextjs";
 import { ShieldCheck, Landmark, Users, ArrowRight, Heart, LogIn } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { User } from "@/lib/db/schema";
 
 export default function EntryPortal() {
   const router = useRouter();
-  const { isLoaded, userId, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [mounted, setMounted] = useState(false);
 
@@ -64,25 +64,19 @@ export default function EntryPortal() {
           /* Clerk Production Auth Entry */
           <div className="text-center space-y-6">
             <h2 className="text-2xl font-extrabold text-brand-plum tracking-tight">
-              Welcome to HHH Portal
+              Approved Partner Sign In
             </h2>
             <p className="text-zinc-600 text-sm font-serif italic">
-              Sign in with your verified Clerk account to access creator earnings, tax documents, and property bookings.
+              Sign in with your approved email address to access creator earnings, tax documents, and property bookings.
             </p>
 
-            <div className="pt-4 flex flex-col sm:flex-row gap-4 justify-center">
+            <div className="pt-4 flex justify-center">
               <button
                 onClick={() => router.push("/sign-in")}
-                className="flex-1 bg-brand-plum hover:bg-brand-wine text-brand-cream py-3 px-6 rounded-xl font-bold text-sm transition-all shadow-md flex items-center justify-center space-x-2"
+                className="w-full max-w-xs bg-brand-plum hover:bg-brand-wine text-brand-cream py-3 px-6 rounded-xl font-bold text-sm transition-all shadow-md flex items-center justify-center space-x-2"
               >
                 <LogIn size={18} />
-                <span>Sign In via Clerk</span>
-              </button>
-              <button
-                onClick={() => router.push("/sign-up")}
-                className="flex-1 bg-brand-cream border border-brand-plum hover:bg-brand-blush/30 text-brand-plum py-3 px-6 rounded-xl font-bold text-sm transition-all shadow-sm flex items-center justify-center space-x-2"
-              >
-                <span>Register New Creator</span>
+                <span>Sign In to Your Account</span>
               </button>
             </div>
           </div>
