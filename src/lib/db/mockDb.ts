@@ -130,6 +130,19 @@ const INITIAL_PARTNERS: Partner[] = [
     status: "SUSPENDED",
     createdAt: "2026-04-10",
     notes: "Account temporarily suspended due to administrative review."
+  },
+  {
+    id: "partner-hema",
+    businessName: "Hema Ace Escapes",
+    contactName: "Hema",
+    email: "hema@aceassured.com",
+    phone: "555-0199",
+    paymentMethod: "BANK_TRANSFER",
+    currency: "USD",
+    payoutFrequency: "MONTHLY",
+    status: "ACTIVE",
+    createdAt: "2026-07-31",
+    notes: "Verified partner account for hema@aceassured.com."
   }
 ];
 
@@ -246,6 +259,16 @@ const INITIAL_USERS: User[] = [
     partnerId: "partner-001",
     status: "ACTIVE",
     clerkUserId: "user_3HGDykF71AqhxNuqdtbsMvuP1Xv",
+    onboardingStatus: "COMPLETED",
+    createdAt: "2026-07-31"
+  },
+  {
+    id: "user-partner-hema",
+    name: "Hema",
+    email: "hema@aceassured.com",
+    role: "CREATOR",
+    partnerId: "partner-hema",
+    status: "ACTIVE",
     onboardingStatus: "COMPLETED",
     createdAt: "2026-07-31"
   }
