@@ -3,9 +3,14 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://nxwxcmnulagcoirzkhvc.supabase.co";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+if (!serviceRoleKey) {
+  throw new Error("Missing required SUPABASE_SERVICE_ROLE_KEY environment variable.");
+}
+
+const supabase = createClient(supabaseUrl, serviceRoleKey);
+
 async function runDatabaseTests() {
   console.log("=== STARTING LIVE DATABASE INTEGRATION TESTS (DRY RUN / VERIFICATION) ===");
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
 
   console.log("1. Checking connection to Supabase...");
   const { data: partnerData, error: partnerErr } = await supabase.from("partners").select("id").limit(1);
