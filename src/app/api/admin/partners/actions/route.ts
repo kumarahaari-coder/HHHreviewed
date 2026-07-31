@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/mockDb";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
-import { createClerkPartnerInvitation, banClerkUser, unbanClerkUser, revokeClerkUserSessions } from "@/lib/auth/clerk-admin";
+import { createClerkPartnerInvitation, revokeClerkInvitation, banClerkUser, unbanClerkUser } from "@/lib/auth/clerk-admin";
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,16 +24,27 @@ export async function POST(req: NextRequest) {
 
     const user = db.users.find(u => u.partnerId === partnerId || u.email.toLowerCase() === partner.email.toLowerCase());
     const clerkUserId = user?.clerkUserId || "";
+    const clerkInvitationId = user?.clerkInvitationId || "";
 
     if (action === "RESEND_INVITE") {
       partner.status = "INVITED";
-      // Resend invitation via Clerk Backend SDK so invitation state remains consistent
-      const clerkRes = await createClerkPartnerInvitation(partner.email, partner.id, "CREATOR");
-      if (!clerkRes.success) {
+
+      // Revoke old pending invitation if present
+      if (clerkInvitationId) {
+        await revokeClerkInvitation(clerkInvitationId);
+      }
+
+      // Create fresh invitation via Clerk
+      const clerkRes = await createClerkPartnerInvitation(partner.email, partner.id, user?.id || `user-partner-${partner.id}`, "CREATOR");
+      if (!clerkRes.success || !clerkRes.invitationId) {
         return NextResponse.json({ success: false, error: `Clerk resend failed: ${clerkRes.error}` }, { status: 502 });
       }
 
-      db.addNotification("SUCCESS", `Clerk invitation resent to ${partner.email}.`);
+      if (user) {
+        user.clerkInvitationId = clerkRes.invitationId;
+      }
+
+      db.addNotification("SUCCESS", `Fresh Clerk invitation issued to ${partner.email}. Invitation ID: ${clerkRes.invitationId}`);
       return NextResponse.json({ success: true, message: `Clerk invitation resent successfully to ${partner.email}.` });
 
     } else if (action === "RESET_PASSWORD") {
@@ -44,22 +55,21 @@ export async function POST(req: NextRequest) {
       partner.status = "SUSPENDED";
       if (user) user.status = "SUSPENDED";
 
-      // Disable login & revoke sessions in Clerk
-      if (clerkUserId) {
+      // Disable login in Clerk if user has completed sign up
+      if (clerkUserId && clerkUserId.startsWith("user_")) {
         await banClerkUser(clerkUserId);
-        await revokeClerkUserSessions(clerkUserId);
       }
 
-      db.addNotification("WARNING", `Access suspended and Clerk login disabled for partner ${partner.businessName}.`);
-      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} suspended and Clerk login disabled.` });
+      db.addNotification("WARNING", `Access suspended for partner ${partner.businessName}.`);
+      return NextResponse.json({ success: true, message: `Partner ${partner.businessName} suspended.` });
 
     } else if (action === "ACTIVATE") {
       // Manual activation used for reactivating a suspended account
       partner.status = "ACTIVE";
       if (user) user.status = "ACTIVE";
 
-      // Unban in Clerk
-      if (clerkUserId) {
+      // Unban in Clerk if user ID exists
+      if (clerkUserId && clerkUserId.startsWith("user_")) {
         await unbanClerkUser(clerkUserId);
       }
 
@@ -70,10 +80,12 @@ export async function POST(req: NextRequest) {
       partner.status = "ARCHIVED";
       if (user) user.status = "SUSPENDED";
 
-      // Revoke sessions & disable login in Clerk
-      if (clerkUserId) {
+      // Ban Clerk user if user ID exists
+      if (clerkUserId && clerkUserId.startsWith("user_")) {
         await banClerkUser(clerkUserId);
-        await revokeClerkUserSessions(clerkUserId);
+      } else if (clerkInvitationId && clerkInvitationId.startsWith("inv_")) {
+        // If invite is still pending and no Clerk user exists, revoke invitation
+        await revokeClerkInvitation(clerkInvitationId);
       }
 
       db.addNotification("WARNING", `Partner ${partner.businessName} archived and access revoked in Clerk.`);

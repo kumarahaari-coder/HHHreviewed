@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `A partner with email ${email} already exists.` }, { status: 409 });
     }
 
-    // STEP 1: Create Partner record in DB (Status ALWAYS defaults to INVITED)
+    // STEP 1: Create Partner record in DB (Status ALWAYS set to INVITED)
     const newPartner: Partner = db.addPartner({
       businessName,
       contactName,
@@ -83,16 +83,17 @@ export async function POST(req: NextRequest) {
       status: "ACTIVE",
       onboardingStatus: "PENDING",
       createdAt: new Date().toISOString()
+      // clerkUserId left undefined until user.created webhook fires upon sign up!
     };
     db.users.push(newUser);
     createdUserId = userId;
 
-    // STEP 3: Issue Clerk Invitation via Clerk Backend API (ID returned by Clerk)
+    // STEP 3: Issue Clerk Invitation via Clerk Backend API
     console.log(`[Admin Partner Create] Issuing Clerk Invitation for ${email}...`);
-    const clerkResult = await createClerkPartnerInvitation(email, newPartner.id, "CREATOR");
+    const clerkResult = await createClerkPartnerInvitation(email, newPartner.id, newUser.id, "CREATOR");
 
-    if (!clerkResult.success) {
-      // STEP 6: Transactional Rollback: Remove Partner & User records if Clerk invitation fails!
+    if (!clerkResult.success || !clerkResult.invitationId) {
+      // Transactional Rollback: Delete Partner & User records if invitation creation fails
       console.error(`[Admin Partner Create Failure] Clerk invitation failed: ${clerkResult.error}. Rolling back DB records.`);
       if (createdPartnerId) {
         db.partners = db.partners.filter(p => p.id !== createdPartnerId);
@@ -106,18 +107,18 @@ export async function POST(req: NextRequest) {
       }, { status: 502 });
     }
 
-    // STEP 4: Store authentic clerkUserId / invitationId returned by Clerk
-    newUser.clerkUserId = clerkResult.clerkUserId;
+    // STEP 4: Store inv_... in clerkInvitationId (leave clerkUserId undefined)
+    newUser.clerkInvitationId = clerkResult.invitationId;
 
     // Record system notification
-    db.addNotification("SUCCESS", `Partner "${businessName}" created. Status set to INVITED. Clerk Invitation issued (ID: ${clerkResult.clerkUserId}).`);
+    db.addNotification("SUCCESS", `Partner "${businessName}" created. Status set to INVITED. Clerk Invitation issued (Invitation ID: ${clerkResult.invitationId}).`);
 
     return NextResponse.json({
       success: true,
       message: `Partner "${businessName}" created successfully. Status set to INVITED. Clerk invitation sent.`,
       partner: newPartner,
       user: newUser,
-      clerkUserId: clerkResult.clerkUserId
+      clerkInvitationId: clerkResult.invitationId
     });
 
   } catch (error: any) {

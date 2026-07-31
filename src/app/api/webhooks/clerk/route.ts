@@ -24,33 +24,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: "Event already processed (idempotent)." }, { status: 200 });
     }
 
-    // Process user & session events
-    if (eventType === "user.created" || eventType === "user.updated" || eventType === "session.created") {
+    // Process user.created: Resolve partner/user via trusted invitation publicMetadata and store real user_... in clerkUserId
+    if (eventType === "user.created") {
+      const userData = payload.data || {};
+      const realClerkUserId = userData.id; // Guaranteed to be user_...
+      const email = userData.email_addresses?.[0]?.email_address || userData.email || "";
+      const publicMetadata = userData.public_metadata || {};
+      const targetPartnerId = publicMetadata.partnerId;
+      const targetAppUserId = publicMetadata.applicationUserId;
+
+      // Find user using trusted publicMetadata applicationUserId/partnerId, or exact email match
+      let user = db.users.find(u => (targetAppUserId && u.id === targetAppUserId) || (targetPartnerId && u.partnerId === targetPartnerId) || (email && u.email.toLowerCase() === email.toLowerCase()));
+
+      if (user) {
+        // Store real user_... in clerkUserId (never inv_...)
+        if (realClerkUserId && realClerkUserId.startsWith("user_")) {
+          user.clerkUserId = realClerkUserId;
+        }
+        user.onboardingStatus = "COMPLETED";
+      }
+
+    // Process session.created: Change Partner status from INVITED to ACTIVE on first login & sync lastLogin
+    } else if (eventType === "session.created" || eventType === "user.updated") {
       const userData = payload.data?.user || payload.data || {};
       const clerkUserId = userData.id || userData.user_id;
       const email = userData.email_addresses?.[0]?.email_address || userData.email || "";
       const lastSignInAt = userData.last_sign_in_at ? new Date(userData.last_sign_in_at).toISOString() : new Date().toISOString();
 
-      // Find database user by clerkUserId or email
-      let user = db.users.find(u => u.clerkUserId === clerkUserId || (email && u.email.toLowerCase() === email.toLowerCase()));
+      let user = db.users.find(u => (clerkUserId && u.clerkUserId === clerkUserId) || (email && u.email.toLowerCase() === email.toLowerCase()));
 
       if (user) {
-        user.clerkUserId = clerkUserId;
-        user.onboardingStatus = "COMPLETED";
+        if (clerkUserId && clerkUserId.startsWith("user_")) {
+          user.clerkUserId = clerkUserId;
+        }
         user.lastLogin = lastSignInAt;
 
-        // AUTOMATIC STATUS PROGRESSION: INVITED -> ACTIVE on first login
         if (user.partnerId) {
           const partner = db.partners.find(p => p.id === user.partnerId);
           if (partner) {
             partner.lastLogin = lastSignInAt;
+            // Transition status INVITED -> ACTIVE on first login / session creation
             if (partner.status === "INVITED") {
               partner.status = "ACTIVE";
-              console.log(`[Status Progression] Partner ${partner.businessName} (${partner.id}) transitioned from INVITED to ACTIVE upon first successful sign in.`);
+              console.log(`[Status Progression] Partner ${partner.businessName} (${partner.id}) transitioned from INVITED to ACTIVE on session creation.`);
             }
           }
         }
       }
+
     } else if (eventType === "user.deleted") {
       const clerkUserId = payload.data?.id;
       if (clerkUserId) {

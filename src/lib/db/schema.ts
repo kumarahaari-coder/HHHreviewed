@@ -22,6 +22,7 @@ export interface User {
   lastLogin?: string;
   createdAt: string;
   clerkUserId?: string;
+  clerkInvitationId?: string;
   onboardingStatus?: "PENDING" | "IN_PROGRESS" | "COMPLETED";
 }
 
