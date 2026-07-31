@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadBucketCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { appConfig } from "../config";
 
 export interface ValidationResult {
@@ -15,6 +16,34 @@ export interface R2HealthCheckResult {
   lastFailure?: string;
   lastValidated: string;
   errorDetails?: string;
+}
+
+export interface R2UploadResult {
+  success: boolean;
+  r2Key: string;
+  eTag?: string;
+  httpStatusCode?: number;
+}
+
+/**
+ * Creates and returns an S3Client instance configured for Cloudflare R2.
+ */
+export function getR2Client(): S3Client {
+  const accountId = appConfig.r2.accountId;
+  const endpoint = appConfig.r2.endpoint || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+
+  if (!appConfig.r2.accessKeyId || !appConfig.r2.secretAccessKey || !endpoint) {
+    throw new Error("Cloudflare R2 configuration is incomplete. Missing R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, or R2_ENDPOINT.");
+  }
+
+  return new S3Client({
+    region: appConfig.r2.region || "auto",
+    endpoint,
+    credentials: {
+      accessKeyId: appConfig.r2.accessKeyId,
+      secretAccessKey: appConfig.r2.secretAccessKey
+    }
+  });
 }
 
 /**
@@ -103,6 +132,77 @@ export function generateOpaqueR2Key(documentUuid?: string): { documentUuid: stri
 export const generateOpaqueS3Key = generateOpaqueR2Key;
 
 /**
+ * Executes a PutObjectCommand to upload a binary buffer to Cloudflare R2 bucket.
+ * Logs response details and propagates any authentication or connectivity errors.
+ */
+export async function putObjectToR2(
+  buffer: Buffer,
+  r2Key: string,
+  contentType: string = "application/pdf"
+): Promise<R2UploadResult> {
+  const bucket = appConfig.r2.bucket || "hhh-private-tax-documents";
+
+  try {
+    const client = getR2Client();
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: r2Key,
+      Body: buffer,
+      ContentType: contentType
+    });
+
+    const response = await client.send(command);
+
+    console.log("[R2 Upload Success]", {
+      r2Key,
+      bucket,
+      eTag: response.ETag,
+      httpStatusCode: response.$metadata?.httpStatusCode
+    });
+
+    return {
+      success: true,
+      r2Key,
+      eTag: response.ETag,
+      httpStatusCode: response.$metadata?.httpStatusCode
+    };
+  } catch (err: any) {
+    console.error("[R2 Upload Error]", {
+      r2Key,
+      bucket,
+      errorName: err?.name,
+      errorMessage: err?.message,
+      httpStatusCode: err?.$metadata?.httpStatusCode
+    });
+    throw new Error(`Cloudflare R2 Upload Failed [${err?.name || "R2Error"}]: ${err?.message || "Storage error"}`);
+  }
+}
+
+/**
+ * Rollback Cleanup Helper:
+ * Deletes an uploaded Cloudflare R2 storage object if a subsequent database transaction fails,
+ * preventing orphaned storage files.
+ */
+export async function deleteR2Object(r2Key: string): Promise<boolean> {
+  const bucket = appConfig.r2.bucket || "hhh-private-tax-documents";
+
+  try {
+    const client = getR2Client();
+    const command = new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: r2Key
+    });
+
+    await client.send(command);
+    console.log(`[R2 Rollback Cleanup] Successfully deleted object: ${r2Key} from bucket ${bucket}`);
+    return true;
+  } catch (err: any) {
+    console.error(`[R2 Rollback Cleanup Failure] Error deleting key ${r2Key}:`, err?.message);
+    return false;
+  }
+}
+
+/**
  * Generates a short-lived server-signed authorization URL with 15-minute tokenized access.
  * Compatible with Cloudflare R2 private bucket presigned URLs.
  */
@@ -113,22 +213,6 @@ export async function generateSignedDownloadUrl(
   const token = crypto.randomBytes(24).toString("hex");
   const expiresAt = Date.now() + expiresInSeconds * 1000;
   return `/api/admin/tax-documents/download?key=${encodeURIComponent(r2Key)}&token=${token}&expires=${expiresAt}`;
-}
-
-/**
- * Rollback Cleanup Helper:
- * Deletes an uploaded Cloudflare R2 storage object if a subsequent database transaction fails,
- * preventing orphaned storage files.
- */
-export async function deleteR2Object(r2Key: string): Promise<boolean> {
-  try {
-    // In production with S3 client SDK, this executes DeleteObjectCommand({ Bucket, Key })
-    console.log(`[R2 Rollback Cleanup] Successfully deleted orphaned object: ${r2Key}`);
-    return true;
-  } catch (err: any) {
-    console.error(`[R2 Rollback Cleanup Failure] Error deleting key ${r2Key}:`, err?.message);
-    return false;
-  }
 }
 
 /**
@@ -151,67 +235,53 @@ export function isSignedUrlExpired(expiresTimestamp: number): boolean {
  */
 export async function checkR2Connectivity(): Promise<R2HealthCheckResult> {
   const now = new Date().toISOString();
+  const bucket = appConfig.r2.bucket || "hhh-private-tax-documents";
 
   if (!appConfig.r2.isConfigured) {
     return {
       status: "NOT_CONFIGURED",
-      bucket: appConfig.r2.bucket || "hhh-private-tax-documents",
+      bucket,
       lastValidated: now,
       errorDetails: "Missing R2_ACCESS_KEY_ID or R2_SECRET_ACCESS_KEY or R2_ACCOUNT_ID."
     };
   }
 
   try {
-    const endpoint = appConfig.r2.endpoint || `https://${appConfig.r2.accountId}.r2.cloudflarestorage.com`;
-    const targetUrl = `${endpoint}/${appConfig.r2.bucket}?list-type=2&prefix=tax-documents/&max-keys=1`;
+    const client = getR2Client();
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(targetUrl, {
-      method: "HEAD",
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "HHH-Tracker-R2-HealthCheck/1.0"
-      }
-    }).catch(() => null);
-
-    clearTimeout(timeout);
-
-    if (response) {
-      if (response.status === 200 || response.status === 403) {
-        return {
-          status: "CONNECTED",
-          bucket: appConfig.r2.bucket,
-          lastSuccess: now,
-          lastFailure: "None",
-          lastValidated: now
-        };
-      } else if (response.status === 404) {
-        return {
-          status: "DEGRADED",
-          bucket: appConfig.r2.bucket,
-          lastFailure: now,
-          lastValidated: now,
-          errorDetails: "Target R2 bucket not found (404)."
-        };
-      }
-    }
+    // Perform lightweight authenticated ListObjectsV2 request with MaxKeys=1
+    await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: "tax-documents/",
+      MaxKeys: 1
+    }));
 
     return {
       status: "CONNECTED",
-      bucket: appConfig.r2.bucket,
+      bucket,
       lastSuccess: now,
       lastFailure: "None",
       lastValidated: now
     };
   } catch (err: any) {
+    const errCode = err?.name || err?.code || "";
+    const httpStatus = err?.$metadata?.httpStatusCode;
+
+    const isDegraded = errCode === "NoSuchBucket" || httpStatus === 404;
+
+    console.error("[R2 Connectivity Health Check Error]", {
+      bucket,
+      errCode,
+      httpStatus,
+      message: err?.message
+    });
+
     return {
-      status: "ERROR",
-      bucket: appConfig.r2.bucket,
+      status: isDegraded ? "DEGRADED" : "ERROR",
+      bucket,
       lastFailure: now,
       lastValidated: now,
-      errorDetails: err?.message || "R2 connectivity API check failed."
+      errorDetails: `[${errCode || "R2Error"}]: ${err?.message || "R2 connectivity check failed."}`
     };
   }
 }
