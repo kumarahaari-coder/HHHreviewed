@@ -37,15 +37,15 @@ BEGIN
         RAISE EXCEPTION 'Preflight Failure: Expected 8 UUID relationship columns; found %.', v_valid_uuid_count;
     END IF;
 
-    -- Assert Partner Business Columns & Enum-Based Status Exist (Item 1: Confirmed record_status)
+    -- Assert Partner Business Columns & Enum-Based Status Exist (Confirmed status column with record_status UDT)
     SELECT 
         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'partners' AND column_name = 'contact_email'),
         EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'partners' AND column_name = 'partner_code'),
-        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'partners' AND column_name = 'record_status')
+        EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'partners' AND column_name = 'status')
     INTO v_has_contact_email, v_has_partner_code, v_has_record_status;
 
     IF NOT v_has_contact_email OR NOT v_has_partner_code OR NOT v_has_record_status THEN
-        RAISE EXCEPTION 'Preflight Failure: Missing required partner columns (contact_email: %, partner_code: %, record_status: %).', v_has_contact_email, v_has_partner_code, v_has_record_status;
+        RAISE EXCEPTION 'Preflight Failure: Missing required partner columns (contact_email: %, partner_code: %, status: %).', v_has_contact_email, v_has_partner_code, v_has_record_status;
     END IF;
 
     -- Item 9: Preflight Partial Table Creation Check
@@ -456,8 +456,8 @@ BEGIN
         IF v_partner_by_id.id IS NULL THEN
             RAISE EXCEPTION 'Invitation Aborted: Partner ID % does not exist.', p_partner_id;
         END IF;
-        IF v_partner_by_id.record_status::text NOT IN ('ACTIVE', 'INVITED') THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner % status is not eligible for creator access (status: %).', p_partner_id, v_partner_by_id.record_status;
+        IF v_partner_by_id.status::text NOT IN ('ACTIVE', 'INVITED') THEN
+            RAISE EXCEPTION 'Invitation Aborted: Partner % status is not eligible for creator access (status: %).', p_partner_id, v_partner_by_id.status;
         END IF;
         v_partner_id := v_partner_by_id.id;
     END IF;
@@ -471,8 +471,8 @@ BEGIN
         END IF;
 
         SELECT * INTO v_partner_by_code FROM public.partners WHERE partner_code = p_partner_code;
-        IF v_partner_by_code.record_status::text NOT IN ('ACTIVE', 'INVITED') THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner code % status is not eligible for creator access (status: %).', p_partner_code, v_partner_by_code.record_status;
+        IF v_partner_by_code.status::text NOT IN ('ACTIVE', 'INVITED') THEN
+            RAISE EXCEPTION 'Invitation Aborted: Partner code % status is not eligible for creator access (status: %).', p_partner_code, v_partner_by_code.status;
         END IF;
 
         IF v_partner_id IS NOT NULL AND v_partner_id IS DISTINCT FROM v_partner_by_code.id THEN
@@ -621,8 +621,8 @@ BEGIN
         RAISE EXCEPTION 'Mapping Aborted: Assigned partner UUID % does not exist.', v_target_user.partner_id;
     END IF;
 
-    IF v_partner_record.record_status::text NOT IN ('ACTIVE', 'INVITED') THEN
-        RAISE EXCEPTION 'Mapping Aborted: Partner % status is not eligible for creator access (status: %).', v_partner_record.id, v_partner_record.record_status;
+    IF v_partner_record.status::text NOT IN ('ACTIVE', 'INVITED') THEN
+        RAISE EXCEPTION 'Mapping Aborted: Partner % status is not eligible for creator access (status: %).', v_partner_record.id, v_partner_record.status;
     END IF;
 
     -- Verify optional partner parameters match assigned partner

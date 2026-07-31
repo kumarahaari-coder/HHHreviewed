@@ -300,14 +300,14 @@ export async function activateUserAndPartner(userId: string, partnerId?: string)
     .eq("id", userId);
 
   if (partnerId) {
-    const { data: currentPartner } = await supabase.from("partners").select("record_status").eq("id", partnerId).single();
-    const newPartnerStatus = currentPartner?.record_status === "INVITED" ? "ACTIVE" : currentPartner?.record_status;
+    const { data: currentPartner } = await supabase.from("partners").select("status").eq("id", partnerId).single();
+    const newPartnerStatus = currentPartner?.status === "INVITED" ? "ACTIVE" : currentPartner?.status;
 
     if (newPartnerStatus) {
       await supabase
         .from("partners")
         .update({
-          record_status: newPartnerStatus,
+          status: newPartnerStatus,
           updated_at: now
         })
         .eq("id", partnerId);
@@ -351,7 +351,7 @@ export async function getPartnerDashboardData(partnerId: string) {
       paymentMethod: partner.payment_method,
       currency: partner.currency,
       payoutFrequency: partner.payout_frequency,
-      status: partner.record_status || partner.status,
+      status: partner.status,
       commissionRate: Number(partner.commission_rate),
       createdAt: partner.created_at,
       lastLogin: partner.last_login || undefined,
@@ -367,7 +367,7 @@ export async function getPartnerDashboardData(partnerId: string) {
       trackingCode: s.tracking_code,
       hospitableWidgetId: s.hospitable_widget_id,
       commissionRuleId: s.commission_rule_id,
-      status: s.record_status || s.status,
+      status: s.status,
       launchDate: s.launch_date
     })),
     reservations: (reservations || []).map(r => ({

@@ -67,11 +67,11 @@ async function runReconciliation() {
       } else {
         let partnerId = user.partnerId;
 
-        // Verify production partner existence & active record_status
+        // Verify production partner existence & active status
         if (partnerId && isCommitMode) {
           const { data: partnerRow, error: partnerErr } = await supabase
             .from("partners")
-            .select("id, record_status")
+            .select("id, status")
             .eq("id", partnerId)
             .maybeSingle();
 
@@ -79,8 +79,8 @@ async function runReconciliation() {
             throw new Error(`Creator ${user.id} partner ID ${partnerId} not found in production partners table.`);
           }
 
-          if (partnerRow.record_status && !["ACTIVE", "INVITED"].includes(partnerRow.record_status)) {
-            throw new Error(`Creator ${user.id} partner ${partnerId} is inactive (status: ${partnerRow.record_status}).`);
+          if (partnerRow.status && !["ACTIVE", "INVITED"].includes(partnerRow.status)) {
+            throw new Error(`Creator ${user.id} partner ${partnerId} is inactive (status: ${partnerRow.status}).`);
           }
         }
 
