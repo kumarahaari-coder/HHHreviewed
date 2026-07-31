@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { User, UserRole } from "./db/schema";
 import { db } from "./db/mockDb";
+import { findUserByClerkUserId, findUserByEmail, mapClerkUser } from "./supabase/data-store";
 
 export interface AuthSession {
   userId: string;
@@ -63,11 +64,11 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
     const publicMetadata = (clerkUser?.publicMetadata || {}) as { role?: UserRole; partnerId?: string };
 
     // Match strictly by Clerk User ID first, then by exact verified email
-    let matchedDbUser = db.users.find(u => u.clerkUserId === userId);
+    let matchedDbUser = await findUserByClerkUserId(userId);
     if (!matchedDbUser && primaryEmail) {
-      matchedDbUser = db.users.find(u => u.email.toLowerCase() === primaryEmail.toLowerCase());
+      matchedDbUser = await findUserByEmail(primaryEmail);
       if (matchedDbUser) {
-        matchedDbUser.clerkUserId = userId;
+        await mapClerkUser(matchedDbUser.id, userId);
       }
     }
 

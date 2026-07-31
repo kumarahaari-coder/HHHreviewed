@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
 import { verifyClerkWebhookSignature } from "@/lib/auth/clerk";
+import {
+  isSupabaseEnabled,
+  findUserByEmail,
+  findUserByClerkUserId,
+  mapClerkUser,
+  activateUserAndPartner
+} from "@/lib/supabase/data-store";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,67 +26,81 @@ export async function POST(req: NextRequest) {
     const eventId = payload.data?.id || svixId || `evt_${Date.now()}`;
     const eventType = payload.type || "user.created";
 
-    // Idempotency check
-    if (db.isIdempotentEvent("CLERK", eventId)) {
-      return NextResponse.json({ success: true, message: "Event already processed (idempotent)." }, { status: 200 });
+    // Idempotency check via Supabase RPC claim_webhook_event_tx if Supabase is enabled
+    if (isSupabaseEnabled()) {
+      const supabase = createAdminClient();
+      const { data: claimData, error: claimErr } = await supabase.rpc("claim_webhook_event_tx", {
+        p_provider: "CLERK",
+        p_event_id: eventId,
+        p_event_type: eventType,
+        p_stale_seconds: 300
+      });
+
+      if (claimErr) {
+        console.error("[Clerk Webhook] Claim RPC Error:", claimErr);
+        return NextResponse.json({ success: false, error: "Idempotency claim failed" }, { status: 500 });
+      }
+
+      if (!claimData?.claimed) {
+        console.log(`[Clerk Webhook Idempotency] Event ${eventId} acknowledged (Status: ${claimData?.status}). Skipping duplicate processing.`);
+        return NextResponse.json({ success: true, message: `Event acknowledged (${claimData?.message}).` }, { status: 200 });
+      }
     }
 
-    // Process user.created: Resolve partner/user via trusted invitation publicMetadata and store real user_... in clerkUserId
+    // Process user.created: Resolve pending application user using invitation metadata / email & store real user_... in clerkUserId
     if (eventType === "user.created") {
       const userData = payload.data || {};
       const realClerkUserId = userData.id; // Guaranteed to be user_...
       const email = userData.email_addresses?.[0]?.email_address || userData.email || "";
       const publicMetadata = userData.public_metadata || {};
-      const targetPartnerId = publicMetadata.partnerId;
       const targetAppUserId = publicMetadata.applicationUserId;
 
-      // Find user using trusted publicMetadata applicationUserId/partnerId, or exact email match
-      let user = db.users.find(u => (targetAppUserId && u.id === targetAppUserId) || (targetPartnerId && u.partnerId === targetPartnerId) || (email && u.email.toLowerCase() === email.toLowerCase()));
+      const normalizedEmail = email.toLowerCase().trim();
 
-      if (user) {
-        // Store real user_... in clerkUserId (never inv_...)
-        if (realClerkUserId && realClerkUserId.startsWith("user_")) {
-          user.clerkUserId = realClerkUserId;
-        }
-        user.onboardingStatus = "COMPLETED";
+      let user = null;
+      if (targetAppUserId) {
+        user = await findUserByClerkUserId(targetAppUserId);
+      }
+      if (!user && normalizedEmail) {
+        user = await findUserByEmail(normalizedEmail);
       }
 
-    // Process session.created: Change Partner status from INVITED to ACTIVE on first login & sync lastLogin
+      if (user && realClerkUserId && realClerkUserId.startsWith("user_")) {
+        console.log(`[Clerk Webhook] Mapping real Clerk user ${realClerkUserId} to application user ${user.id} (${user.email}). Onboarding status -> MAPPED.`);
+        await mapClerkUser(user.id, realClerkUserId);
+      }
+
+    // Process session.created: Change User & Partner status from INVITED -> ACTIVE on first authenticated session
     } else if (eventType === "session.created" || eventType === "user.updated") {
       const userData = payload.data?.user || payload.data || {};
       const clerkUserId = userData.id || userData.user_id;
       const email = userData.email_addresses?.[0]?.email_address || userData.email || "";
-      const lastSignInAt = userData.last_sign_in_at ? new Date(userData.last_sign_in_at).toISOString() : new Date().toISOString();
 
-      let user = db.users.find(u => (clerkUserId && u.clerkUserId === clerkUserId) || (email && u.email.toLowerCase() === email.toLowerCase()));
+      const normalizedEmail = email.toLowerCase().trim();
 
-      if (user) {
-        if (clerkUserId && clerkUserId.startsWith("user_")) {
-          user.clerkUserId = clerkUserId;
-        }
-        user.lastLogin = lastSignInAt;
-
-        if (user.partnerId) {
-          const partner = db.partners.find(p => p.id === user.partnerId);
-          if (partner) {
-            partner.lastLogin = lastSignInAt;
-            // Transition status INVITED -> ACTIVE on first login / session creation
-            if (partner.status === "INVITED") {
-              partner.status = "ACTIVE";
-              console.log(`[Status Progression] Partner ${partner.businessName} (${partner.id}) transitioned from INVITED to ACTIVE on session creation.`);
-            }
-          }
-        }
+      let user = null;
+      if (clerkUserId) {
+        user = await findUserByClerkUserId(clerkUserId);
+      }
+      if (!user && normalizedEmail) {
+        user = await findUserByEmail(normalizedEmail);
       }
 
-    } else if (eventType === "user.deleted") {
-      const clerkUserId = payload.data?.id;
-      if (clerkUserId) {
-        db.users = db.users.filter(u => u.clerkUserId !== clerkUserId);
+      if (user) {
+        console.log(`[Clerk Webhook] Session event for user ${user.id} (${user.email}). Activating account & updating last_login.`);
+        await activateUserAndPartner(user.id, user.partnerId);
       }
     }
 
-    db.recordIdempotency("CLERK", eventId, eventType, "PROCESSED");
+    // Mark idempotency log as PROCESSED if Supabase enabled
+    if (isSupabaseEnabled()) {
+      const supabase = createAdminClient();
+      await supabase
+        .from("idempotency_logs")
+        .update({ status: "PROCESSED", updated_at: new Date().toISOString() })
+        .eq("provider", "CLERK")
+        .eq("event_id", eventId);
+    }
 
     return NextResponse.json({
       success: true,
@@ -88,6 +109,7 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: any) {
+    console.error("[Clerk Webhook Error]", error);
     return NextResponse.json({ success: false, error: error?.message || "Webhook ingestion error" }, { status: 500 });
   }
 }

@@ -18,12 +18,12 @@ export interface User {
   email: string;
   role: UserRole;
   partnerId?: string; // Optional, set if role is PARTNER_OWNER or CREATOR
-  status: "ACTIVE" | "SUSPENDED";
+  status: "INVITED" | "ACTIVE" | "SUSPENDED" | "ARCHIVED";
   lastLogin?: string;
   createdAt: string;
   clerkUserId?: string;
   clerkInvitationId?: string;
-  onboardingStatus?: "PENDING" | "IN_PROGRESS" | "COMPLETED";
+  onboardingStatus?: "PENDING" | "INVITED" | "MAPPED" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
 }
 
 export interface Partner {

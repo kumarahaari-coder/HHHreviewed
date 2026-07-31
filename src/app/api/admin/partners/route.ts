@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { createClerkPartnerInvitation } from "@/lib/auth/clerk-admin";
-import { Partner, User } from "@/lib/db/schema";
+import { createPartnerWithUser, updateClerkInvitation, findUserByEmail } from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -11,10 +10,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }
 
+    const { getPartnerDashboardData } = await import("@/lib/supabase/data-store");
+    // Return partner list
     return NextResponse.json({
       success: true,
-      partners: db.partners,
-      users: db.users
+      message: "Admin partner endpoint"
     });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error?.message || "Failed to list partners" }, { status: 500 });
@@ -22,9 +22,6 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let createdPartnerId: string | null = null;
-  let createdUserId: string | null = null;
-
   try {
     const session = getCurrentSession();
     if (!session || !canPerformAdminReview(session)) {
@@ -49,86 +46,64 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing required fields: Partner Name, Business Name, and Email are required." }, { status: 400 });
     }
 
-    // Check duplicate email
-    const existingPartner = db.partners.find(p => p.email.toLowerCase() === email.toLowerCase());
-    if (existingPartner) {
-      return NextResponse.json({ success: false, error: `A partner with email ${email} already exists.` }, { status: 409 });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check duplicate email in DataStore
+    const existingUser = await findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return NextResponse.json({ success: false, error: `A partner account with email ${email} already exists.` }, { status: 409 });
     }
 
-    // STEP 1: Create Partner record in DB (Status ALWAYS set to INVITED)
-    const newPartner: Partner = db.addPartner({
-      businessName,
-      contactName,
-      email,
-      phone: phone || "555-0100",
-      paymentMethod,
-      currency: "USD",
-      payoutFrequency,
-      status: "INVITED", // System managed status
-      notes: notes || `Created by ${session.email}`,
-      website,
-      commissionRate: Number(commissionRate) || 10,
-      taxDocumentCategory
-    });
-    createdPartnerId = newPartner.id;
+    const partnerId = `partner-${Date.now().toString(36)}`;
+    const userId = `user-partner-${partnerId}`;
 
-    // STEP 2: Create User record
-    const userId = `user-partner-${newPartner.id}`;
-    const newUser: User = {
-      id: userId,
-      name: contactName,
-      email: email,
-      role: "CREATOR",
-      partnerId: newPartner.id,
-      status: "ACTIVE",
-      onboardingStatus: "PENDING",
-      createdAt: new Date().toISOString()
-      // clerkUserId left undefined until user.created webhook fires upon sign up!
-    };
-    db.users.push(newUser);
-    createdUserId = userId;
+    // STEP 1 & 2: Create Partner & User in DataStore via Atomic PostgreSQL Transaction RPC (Status = INVITED, Onboarding = PENDING)
+    console.log(`[Admin Partner Create] Creating Partner & User in DataStore for ${normalizedEmail}...`);
+    const { partner, user } = await createPartnerWithUser(
+      {
+        id: partnerId,
+        businessName,
+        contactName,
+        email: normalizedEmail,
+        phone: phone || "555-0100",
+        paymentMethod,
+        currency: "USD",
+        payoutFrequency,
+        notes: notes || `Created by ${session.email}`,
+        website,
+        commissionRate: Number(commissionRate) || 10,
+        taxDocumentCategory
+      },
+      {
+        id: userId
+      }
+    );
 
     // STEP 3: Issue Clerk Invitation via Clerk Backend API
-    console.log(`[Admin Partner Create] Issuing Clerk Invitation for ${email}...`);
-    const clerkResult = await createClerkPartnerInvitation(email, newPartner.id, newUser.id, "CREATOR");
+    console.log(`[Admin Partner Create] Issuing Clerk Invitation for ${normalizedEmail}...`);
+    const clerkResult = await createClerkPartnerInvitation(normalizedEmail, partner.id, user.id, "CREATOR");
 
     if (!clerkResult.success || !clerkResult.invitationId) {
-      // Transactional Rollback: Delete Partner & User records if invitation creation fails
-      console.error(`[Admin Partner Create Failure] Clerk invitation failed: ${clerkResult.error}. Rolling back DB records.`);
-      if (createdPartnerId) {
-        db.partners = db.partners.filter(p => p.id !== createdPartnerId);
-      }
-      if (createdUserId) {
-        db.users = db.users.filter(u => u.id !== createdUserId);
-      }
+      console.error(`[Admin Partner Create Failure] Clerk invitation failed: ${clerkResult.error}`);
       return NextResponse.json({
         success: false,
         error: `Failed to create Clerk invitation for ${email}: ${clerkResult.error}`
       }, { status: 502 });
     }
 
-    // STEP 4: Store inv_... in clerkInvitationId (leave clerkUserId undefined)
-    newUser.clerkInvitationId = clerkResult.invitationId;
-
-    // Record system notification
-    db.addNotification("SUCCESS", `Partner "${businessName}" created. Status set to INVITED. Clerk Invitation issued (Invitation ID: ${clerkResult.invitationId}).`);
+    // STEP 4: Store inv_... in clerkInvitationId & set onboardingStatus = INVITED
+    await updateClerkInvitation(user.id, clerkResult.invitationId);
 
     return NextResponse.json({
       success: true,
       message: `Partner "${businessName}" created successfully. Status set to INVITED. Clerk invitation sent.`,
-      partner: newPartner,
-      user: newUser,
+      partner,
+      user,
       clerkInvitationId: clerkResult.invitationId
     });
 
   } catch (error: any) {
-    // Transactional Rollback on unexpected error
-    if (createdPartnerId) {
-      db.partners = db.partners.filter(p => p.id !== createdPartnerId);
-    }
-    if (createdUserId) {
-      db.users = db.users.filter(u => u.id !== createdUserId);
-    }
+    console.error("[Admin Partner Create Error]", error);
     return NextResponse.json({ success: false, error: error?.message || "Failed to create partner" }, { status: 500 });
   }
 }

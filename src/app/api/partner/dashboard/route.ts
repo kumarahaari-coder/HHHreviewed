@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClerkAuthSession, isAdminRole, isCreatorRole } from "@/lib/authorization";
-import { db } from "@/lib/db/mockDb";
+import { getPartnerDashboardData } from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -41,28 +41,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "No partner account associated with this user." }, { status: 404 });
     }
 
-    const partner = db.partners.find(p => p.id === effectivePartnerId);
+    const dashboardData = await getPartnerDashboardData(effectivePartnerId);
 
-    if (!partner) {
+    if (!dashboardData || !dashboardData.partner) {
       return NextResponse.json({ success: false, error: `Partner record not found for ID: ${effectivePartnerId}` }, { status: 404 });
     }
-
-    // Strictly filter tenant data for effectivePartnerId
-    const sites = db.sites.filter(s => s.partnerId === effectivePartnerId);
-    const reservations = db.reservations.filter(r => r.partnerId === effectivePartnerId);
-    const payouts = db.payouts.filter(p => p.partnerId === effectivePartnerId);
-    const statements = db.payouts.filter(p => p.partnerId === effectivePartnerId && p.status === "PAID");
-    const taxDocument = db.getTaxDocumentByPartner(effectivePartnerId);
 
     return NextResponse.json({
       success: true,
       isPreviewMode,
-      partner,
-      sites,
-      reservations,
-      payouts,
-      statements,
-      taxDocument
+      ...dashboardData
     });
 
   } catch (error: any) {
