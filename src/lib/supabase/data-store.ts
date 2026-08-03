@@ -290,6 +290,77 @@ export async function activateUserAndPartner(userId: string, partnerId?: string)
   }
 }
 
+export async function createPartner(params: {
+  businessName: string;
+  contactName: string;
+  contactEmail: string;
+  partnerCode?: string;
+}): Promise<Partner> {
+  const normEmail = params.contactEmail.toLowerCase().trim();
+  const generatedCode = params.partnerCode || `PARTNER_${Date.now().toString(36).toUpperCase()}`;
+
+  if (!isSupabaseEnabled()) {
+    const newPartner: Partner = {
+      id: `partner-${Date.now().toString(36)}`,
+      partnerCode: generatedCode,
+      businessName: params.businessName,
+      contactName: params.contactName,
+      email: normEmail,
+      phone: "",
+      paymentMethod: "BANK_TRANSFER",
+      currency: "USD",
+      payoutFrequency: "MONTHLY",
+      status: "INVITED",
+      createdAt: new Date().toISOString()
+    };
+    mockDb.partners.push(newPartner);
+    return newPartner;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("partners")
+    .insert({
+      partner_code: generatedCode,
+      business_name: params.businessName,
+      contact_name: params.contactName,
+      contact_email: normEmail,
+      status: "active" as any
+    })
+    .select("id, partner_code, business_name, contact_name, contact_email, status, created_at")
+    .single();
+
+  if (error) {
+    console.error("[DataStore Error] createPartner failed:", error);
+    throw new Error(`Failed to create partner record in Supabase: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    partnerCode: data.partner_code,
+    businessName: data.business_name,
+    contactName: data.contact_name,
+    email: data.contact_email,
+    phone: "",
+    paymentMethod: "BANK_TRANSFER",
+    currency: "USD",
+    payoutFrequency: "MONTHLY",
+    status: data.status,
+    createdAt: data.created_at
+  };
+}
+
+export async function deletePartner(partnerId: string): Promise<void> {
+  if (!isSupabaseEnabled()) {
+    const idx = mockDb.partners.findIndex(p => p.id === partnerId);
+    if (idx !== -1) mockDb.partners.splice(idx, 1);
+    return;
+  }
+
+  const supabase = assertSupabaseClient();
+  await supabase.from("partners").delete().eq("id", partnerId);
+}
+
 /**
  * Tenant Dashboard Data Fetcher
  */
