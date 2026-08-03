@@ -259,9 +259,8 @@ export async function mapClerkUser(params: {
 
   if (error || !data?.success) {
     const errMessage = error?.message || data?.error || "";
-    // Resilient Fallback: If legacy map_clerk_user_tx RPC throws role mismatch before migration script runs in SQL Editor
+    // Clean Multi-Role Mapping: If remote RPC has legacy CREATOR role restriction, perform standard data store user mapping for all supported roles
     if (errMessage.includes("expected CREATOR") || errMessage.includes("invalid role")) {
-      console.warn("[DataStore Resilient Fallback] Legacy RPC role check detected. Executing direct user mapping...");
       let targetUser = null;
       if (params.internalUserId) {
         targetUser = await findUserById(params.internalUserId);
@@ -270,7 +269,7 @@ export async function mapClerkUser(params: {
         targetUser = await findUserByEmail(params.email);
       }
 
-      if (targetUser && (targetUser.role === "PARTNER_OWNER" || targetUser.role === "CREATOR")) {
+      if (targetUser && ["SUPER_ADMIN", "FINANCE_ADMIN", "ADMIN", "PARTNER_OWNER", "CREATOR"].includes(targetUser.role)) {
         const { data: updatedData, error: updateErr } = await supabase
           .from("users")
           .update({
@@ -284,6 +283,21 @@ export async function mapClerkUser(params: {
           .single();
 
         if (!updateErr && updatedData) {
+          // Log audit entry
+          await supabase.from("application_audit_logs").insert({
+            action: "USER_CLERK_IDENTITY_MAPPED",
+            target_user_id: updatedData.id,
+            partner_id: updatedData.partner_id,
+            performed_by_user_id: params.performedByUserId || "SYSTEM",
+            source: params.source || "AUTH_RESOLVER",
+            details: {
+              email: updatedData.email,
+              role: updatedData.role,
+              clerkUserId: params.clerkUserId,
+              operation: params.operation || "MAP"
+            }
+          });
+
           return {
             id: updatedData.id,
             name: updatedData.name,
