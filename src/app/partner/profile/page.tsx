@@ -162,7 +162,7 @@ export default function PartnerProfile() {
     }
   };
 
-  if (!partner || !currentUser) return null;
+  if (!partner) return null;
 
   return (
     <div className="space-y-8 font-sans max-w-3xl">
@@ -215,7 +215,7 @@ export default function PartnerProfile() {
             <div>
               <span className="text-[10px] text-zinc-400 block font-bold uppercase tracking-wider">Transfer Payout Frequency</span>
               <span className="font-semibold text-brand-plum uppercase">
-                {partner.paymentMethod.replace("_", " ")} ({partner.payoutFrequency})
+                {(partner.paymentMethod || "BANK_TRANSFER").replace(/_/g, " ")} ({partner.payoutFrequency || "MONTHLY"})
               </span>
             </div>
           </div>

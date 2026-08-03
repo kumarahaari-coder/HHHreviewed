@@ -224,8 +224,43 @@ export async function mapClerkUser(params: {
   });
 
   if (error || !data?.success) {
-    console.error("[DataStore Error] map_clerk_user_tx failed:", error);
-    throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error}`);
+    console.warn("[DataStore Warning] map_clerk_user_tx RPC threw error, executing direct fallback update:", error?.message || data?.error);
+    
+    const normEmail = params.email ? params.email.toLowerCase().trim() : null;
+    let updateQuery = supabase.from("users").update({
+      clerk_user_id: params.clerkUserId,
+      onboarding_status: "MAPPED",
+      status: "ACTIVE",
+      updated_at: new Date().toISOString()
+    });
+
+    if (params.internalUserId) {
+      updateQuery = updateQuery.eq("id", params.internalUserId);
+    } else if (normEmail) {
+      updateQuery = updateQuery.eq("email", normEmail);
+    } else {
+      throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error}`);
+    }
+
+    const { data: updatedUser, error: directErr } = await updateQuery
+      .select("id, name, email, role, partner_id, status, onboarding_status, created_at")
+      .single();
+
+    if (directErr || !updatedUser) {
+      console.error("[DataStore Error] Direct mapClerkUser fallback failed:", directErr);
+      throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error}`);
+    }
+
+    return {
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      role: updatedUser.role,
+      partnerId: updatedUser.partner_id,
+      status: updatedUser.status,
+      onboardingStatus: updatedUser.onboarding_status,
+      createdAt: updatedUser.created_at
+    };
   }
 
   const userRow = data.user;
@@ -359,6 +394,37 @@ export async function deletePartner(partnerId: string): Promise<void> {
 
   const supabase = assertSupabaseClient();
   await supabase.from("partners").delete().eq("id", partnerId);
+}
+
+export async function getAllPartners(): Promise<Partner[]> {
+  if (!isSupabaseEnabled()) {
+    return [...mockDb.partners];
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("partners")
+    .select("id, partner_code, business_name, contact_name, contact_email, phone, payout_currency, payout_frequency, status, created_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[DataStore Error] getAllPartners failed:", error);
+    return [...mockDb.partners];
+  }
+
+  return (data || []).map(p => ({
+    id: p.id,
+    partnerCode: p.partner_code,
+    businessName: p.business_name,
+    contactName: p.contact_name,
+    email: p.contact_email,
+    phone: p.phone || "",
+    paymentMethod: "BANK_TRANSFER",
+    currency: p.payout_currency || "USD",
+    payoutFrequency: p.payout_frequency || "MONTHLY",
+    status: p.status === "active" ? "ACTIVE" : p.status === "invited" ? "INVITED" : p.status === "suspended" ? "SUSPENDED" : p.status === "archived" ? "ARCHIVED" : (p.status?.toUpperCase() as any) || "ACTIVE",
+    createdAt: p.created_at
+  }));
 }
 
 /**

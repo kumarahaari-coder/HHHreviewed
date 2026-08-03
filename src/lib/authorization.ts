@@ -97,7 +97,7 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
 
           if (mappedUser) {
             await activateUserAndPartner(mappedUser.id, mappedUser.partnerId);
-            matchedDbUser = await findUserByClerkUserId(userId);
+            matchedDbUser = (await findUserByClerkUserId(userId)) || mappedUser;
           }
         }
       }

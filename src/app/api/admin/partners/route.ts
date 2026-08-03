@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { createClerkPartnerInvitation } from "@/lib/auth/clerk-admin";
-import { createPartner, deletePartner, createCreatorInvitation, updateClerkInvitation, findUserByEmail } from "@/lib/supabase/data-store";
+import { createPartner, deletePartner, createCreatorInvitation, updateClerkInvitation, findUserByEmail, getAllPartners } from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -10,9 +10,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }
 
+    const partners = await getAllPartners();
+
     return NextResponse.json({
       success: true,
-      message: "Admin partner endpoint"
+      partners
     });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error?.message || "Failed to list partners" }, { status: 500 });
