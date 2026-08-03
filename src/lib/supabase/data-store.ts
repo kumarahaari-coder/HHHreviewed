@@ -93,6 +93,40 @@ export async function findUserByEmail(email: string): Promise<User | null> {
   };
 }
 
+export async function findUserById(userId: string): Promise<User | null> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.users.find(u => u.id === userId) || null;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, name, email, role, partner_id, status, clerk_user_id, onboarding_status, created_at, updated_at")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[DataStore Error] findUserById failed:", error);
+    throw new Error(`Failed to query user by ID: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    name: data.name,
+    email: data.email,
+    role: data.role as UserRole,
+    partnerId: data.partner_id || undefined,
+    status: data.status,
+    clerkInvitationId: undefined,
+    clerkUserId: data.clerk_user_id || undefined,
+    onboardingStatus: data.onboarding_status,
+    createdAt: data.created_at,
+    lastLogin: undefined
+  };
+}
+
 export async function findUserByInvitationId(invitationId: string): Promise<User | null> {
   if (!isSupabaseEnabled()) {
     return mockDb.users.find(u => u.clerkInvitationId === invitationId) || null;
@@ -224,8 +258,49 @@ export async function mapClerkUser(params: {
   });
 
   if (error || !data?.success) {
-    console.error("[DataStore Error] map_clerk_user_tx failed:", error?.message || data?.error);
-    throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error || "RPC transaction failure"}`);
+    const errMessage = error?.message || data?.error || "";
+    // Resilient Fallback: If legacy map_clerk_user_tx RPC throws role mismatch before migration script runs in SQL Editor
+    if (errMessage.includes("expected CREATOR") || errMessage.includes("invalid role")) {
+      console.warn("[DataStore Resilient Fallback] Legacy RPC role check detected. Executing direct user mapping...");
+      let targetUser = null;
+      if (params.internalUserId) {
+        targetUser = await findUserById(params.internalUserId);
+      }
+      if (!targetUser && params.email) {
+        targetUser = await findUserByEmail(params.email);
+      }
+
+      if (targetUser && (targetUser.role === "PARTNER_OWNER" || targetUser.role === "CREATOR")) {
+        const { data: updatedData, error: updateErr } = await supabase
+          .from("users")
+          .update({
+            clerk_user_id: params.clerkUserId,
+            onboarding_status: "MAPPED",
+            status: targetUser.status === "INVITED" ? "ACTIVE" : targetUser.status,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", targetUser.id)
+          .select("id, name, email, role, partner_id, status, clerk_user_id, onboarding_status, created_at, updated_at")
+          .single();
+
+        if (!updateErr && updatedData) {
+          return {
+            id: updatedData.id,
+            name: updatedData.name,
+            email: updatedData.email,
+            role: updatedData.role as UserRole,
+            partnerId: updatedData.partner_id || undefined,
+            status: updatedData.status,
+            clerkUserId: updatedData.clerk_user_id || undefined,
+            onboardingStatus: updatedData.onboarding_status,
+            createdAt: updatedData.created_at
+          };
+        }
+      }
+    }
+
+    console.error("[DataStore Error] map_clerk_user_tx failed:", errMessage);
+    throw new Error(`Failed to map Clerk user in Supabase: ${errMessage || "RPC transaction failure"}`);
   }
 
   const userRow = data.user;

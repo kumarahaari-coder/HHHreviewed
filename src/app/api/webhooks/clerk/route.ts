@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Webhook } from "svix";
 import { headers } from "next/headers";
-import { mapClerkUser, findUserByClerkUserId, findUserByEmail, isSupabaseEnabled } from "@/lib/supabase/data-store";
+import { mapClerkUser, findUserByClerkUserId, findUserById, findUserByEmail, isSupabaseEnabled } from "@/lib/supabase/data-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 interface ClerkEmailAddress {
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
 
       let user = null;
       if (targetAppUserId) {
-        user = await findUserByClerkUserId(targetAppUserId);
+        user = await findUserById(targetAppUserId);
       }
       if (!user && primaryEmailStr) {
         user = await findUserByEmail(primaryEmailStr);
