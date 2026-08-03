@@ -134,6 +134,7 @@ export async function createCreatorInvitation(params: {
   internalUserId: string;
   name: string;
   email: string;
+  role?: UserRole;
   partnerId?: string;
   partnerCode?: string;
   performedByUserId?: string;
@@ -144,7 +145,7 @@ export async function createCreatorInvitation(params: {
       id: params.internalUserId,
       name: params.name,
       email: params.email,
-      role: "CREATOR",
+      role: params.role || "CREATOR",
       partnerId: params.partnerId,
       status: "INVITED",
       onboardingStatus: "INVITED",
@@ -162,7 +163,8 @@ export async function createCreatorInvitation(params: {
     p_partner_id: params.partnerId || null,
     p_partner_code: params.partnerCode || null,
     p_performed_by_user_id: params.performedByUserId || null,
-    p_source: params.source || "ADMIN_CONSOLE"
+    p_source: params.source || "ADMIN_CONSOLE",
+    p_role: params.role || "CREATOR"
   });
 
   if (error || !data?.success) {

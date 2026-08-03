@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name TEXT NOT NULL,
     email CITEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL DEFAULT 'CREATOR' CHECK (role IN ('SUPER_ADMIN', 'CREATOR')),
+    role TEXT NOT NULL DEFAULT 'CREATOR' CHECK (role IN ('SUPER_ADMIN', 'FINANCE_ADMIN', 'ADMIN', 'PARTNER_OWNER', 'CREATOR')),
     partner_id UUID REFERENCES public.partners(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'INVITED' CHECK (status IN ('INVITED', 'ACTIVE', 'SUSPENDED', 'ARCHIVED')),
     clerk_user_id TEXT UNIQUE,
@@ -424,7 +424,8 @@ CREATE OR REPLACE FUNCTION public.create_creator_invitation_tx(
     p_partner_id UUID DEFAULT NULL,
     p_partner_code TEXT DEFAULT NULL,
     p_performed_by_user_id TEXT DEFAULT NULL,
-    p_source TEXT DEFAULT 'ADMIN_CONSOLE'
+    p_source TEXT DEFAULT 'ADMIN_CONSOLE',
+    p_role TEXT DEFAULT 'CREATOR'
 ) RETURNS JSONB AS $$
 DECLARE
     v_norm_email TEXT := LOWER(TRIM(COALESCE(p_email, '')));
@@ -435,13 +436,14 @@ DECLARE
     v_existing_user_by_id public.users%ROWTYPE;
     v_existing_user_by_email public.users%ROWTYPE;
     v_user public.users%ROWTYPE;
+    v_target_role TEXT := UPPER(TRIM(COALESCE(p_role, 'CREATOR')));
 BEGIN
     -- 1. Input Assertions
     IF p_internal_user_id IS NULL OR TRIM(p_internal_user_id) = '' THEN
         RAISE EXCEPTION 'Invitation Aborted: Internal user ID is required.';
     END IF;
     IF p_name IS NULL OR TRIM(p_name) = '' THEN
-        RAISE EXCEPTION 'Invitation Aborted: Creator name is required.';
+        RAISE EXCEPTION 'Invitation Aborted: User name is required.';
     END IF;
     IF v_norm_email = '' OR POSITION('@' IN v_norm_email) < 2 THEN
         RAISE EXCEPTION 'Invitation Aborted: A valid email address is required.';
@@ -449,40 +451,48 @@ BEGIN
     IF p_source NOT IN ('ADMIN_CONSOLE', 'CLERK_WEBHOOK', 'AUTH_RESOLVER', 'ADMIN_REPAIR', 'SYSTEM') THEN
         RAISE EXCEPTION 'Invitation Aborted: Unsupported audit source %.', p_source;
     END IF;
-
-    -- 2. Partner Resolution & Explicit Active Status Check (Allowlist: ACTIVE, INVITED)
-    IF p_partner_id IS NOT NULL THEN
-        SELECT * INTO v_partner_by_id FROM public.partners WHERE id = p_partner_id;
-        IF v_partner_by_id.id IS NULL THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner ID % does not exist.', p_partner_id;
-        END IF;
-        IF v_partner_by_id.status::text NOT IN ('ACTIVE', 'INVITED') THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner % status is not eligible for creator access (status: %).', p_partner_id, v_partner_by_id.status;
-        END IF;
-        v_partner_id := v_partner_by_id.id;
+    IF v_target_role NOT IN ('SUPER_ADMIN', 'FINANCE_ADMIN', 'ADMIN', 'PARTNER_OWNER', 'CREATOR') THEN
+        RAISE EXCEPTION 'Invitation Aborted: Invalid role %.', v_target_role;
     END IF;
 
-    IF p_partner_code IS NOT NULL THEN
-        SELECT COUNT(*) INTO v_partner_code_matches FROM public.partners WHERE partner_code = p_partner_code;
-        IF v_partner_code_matches = 0 THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner code % does not exist.', p_partner_code;
-        ELSIF v_partner_code_matches > 1 THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner code % is ambiguous (% matches found).', p_partner_code, v_partner_code_matches;
+    -- 2. Partner Resolution & Role Multi-Tenant Enforcement
+    IF v_target_role IN ('PARTNER_OWNER', 'CREATOR') THEN
+        IF p_partner_id IS NOT NULL THEN
+            SELECT * INTO v_partner_by_id FROM public.partners WHERE id = p_partner_id;
+            IF v_partner_by_id.id IS NULL THEN
+                RAISE EXCEPTION 'Invitation Aborted: Partner ID % does not exist.', p_partner_id;
+            END IF;
+            IF LOWER(v_partner_by_id.status::text) NOT IN ('active', 'invited') THEN
+                RAISE EXCEPTION 'Invitation Aborted: Partner % status is not eligible for tenant access (status: %).', p_partner_id, v_partner_by_id.status;
+            END IF;
+            v_partner_id := v_partner_by_id.id;
         END IF;
 
-        SELECT * INTO v_partner_by_code FROM public.partners WHERE partner_code = p_partner_code;
-        IF v_partner_by_code.status::text NOT IN ('ACTIVE', 'INVITED') THEN
-            RAISE EXCEPTION 'Invitation Aborted: Partner code % status is not eligible for creator access (status: %).', p_partner_code, v_partner_by_code.status;
+        IF p_partner_code IS NOT NULL THEN
+            SELECT COUNT(*) INTO v_partner_code_matches FROM public.partners WHERE partner_code = p_partner_code;
+            IF v_partner_code_matches = 0 THEN
+                RAISE EXCEPTION 'Invitation Aborted: Partner code % does not exist.', p_partner_code;
+            ELSIF v_partner_code_matches > 1 THEN
+                RAISE EXCEPTION 'Invitation Aborted: Partner code % is ambiguous (% matches found).', p_partner_code, v_partner_code_matches;
+            END IF;
+
+            SELECT * INTO v_partner_by_code FROM public.partners WHERE partner_code = p_partner_code;
+            IF LOWER(v_partner_by_code.status::text) NOT IN ('active', 'invited') THEN
+                RAISE EXCEPTION 'Invitation Aborted: Partner code % status is not eligible for tenant access (status: %).', p_partner_code, v_partner_by_code.status;
+            END IF;
+
+            IF v_partner_id IS NOT NULL AND v_partner_id IS DISTINCT FROM v_partner_by_code.id THEN
+                RAISE EXCEPTION 'Invitation Aborted: Provided partner_id % and partner_code % resolve to different partners.', p_partner_id, p_partner_code;
+            END IF;
+            v_partner_id := v_partner_by_code.id;
         END IF;
 
-        IF v_partner_id IS NOT NULL AND v_partner_id IS DISTINCT FROM v_partner_by_code.id THEN
-            RAISE EXCEPTION 'Invitation Aborted: Provided partner_id % and partner_code % resolve to different partners.', p_partner_id, p_partner_code;
+        IF v_partner_id IS NULL THEN
+            RAISE EXCEPTION 'Invitation Aborted: Tenant roles (PARTNER_OWNER, CREATOR) require a valid partner_id or partner_code.';
         END IF;
-        v_partner_id := v_partner_by_code.id;
-    END IF;
-
-    IF v_partner_id IS NULL THEN
-        RAISE EXCEPTION 'Invitation Aborted: Neither partner_id nor partner_code was provided or found.';
+    ELSE
+        -- Admin roles (SUPER_ADMIN, FINANCE_ADMIN, ADMIN) must NOT be bound to a tenant partner
+        v_partner_id := NULL;
     END IF;
 
     -- 3. Concurrency Serialization & Existing Validation
@@ -497,14 +507,8 @@ BEGIN
         IF v_existing_user_by_id.email <> v_norm_email THEN
             RAISE EXCEPTION 'Invitation Aborted: User ID % has email % (expected %)', p_internal_user_id, v_existing_user_by_id.email, v_norm_email;
         END IF;
-        IF v_existing_user_by_id.role <> 'CREATOR' THEN
-            RAISE EXCEPTION 'Invitation Aborted: User ID % has non-creator role %', p_internal_user_id, v_existing_user_by_id.role;
-        END IF;
         IF v_existing_user_by_id.status NOT IN ('INVITED', 'ACTIVE') THEN
             RAISE EXCEPTION 'Invitation Aborted: User ID % has status % (not eligible for invitation).', p_internal_user_id, v_existing_user_by_id.status;
-        END IF;
-        IF v_existing_user_by_id.partner_id IS DISTINCT FROM v_partner_id THEN
-            RAISE EXCEPTION 'Invitation Aborted: User ID % linked to partner % (expected %)', p_internal_user_id, v_existing_user_by_id.partner_id, v_partner_id;
         END IF;
 
         IF v_existing_user_by_id.onboarding_status = 'MAPPED' AND v_existing_user_by_id.clerk_user_id IS NOT NULL THEN
@@ -516,17 +520,17 @@ BEGIN
         END IF;
     END IF;
 
-    -- 4. Item 10: Create User with Full Re-Validation on Conflict
+    -- 4. Create User with Specified Role and Partner Scope
     BEGIN
         INSERT INTO public.users (
             id, name, email, role, partner_id, status, onboarding_status
         ) VALUES (
-            p_internal_user_id, TRIM(p_name), v_norm_email, 'CREATOR', v_partner_id, 'INVITED', 'INVITED'
+            p_internal_user_id, TRIM(p_name), v_norm_email, v_target_role, v_partner_id, 'INVITED', 'INVITED'
         ) RETURNING * INTO v_user;
     EXCEPTION
         WHEN unique_violation THEN
             SELECT * INTO v_user FROM public.users WHERE id = p_internal_user_id AND email = v_norm_email;
-            IF v_user.id = p_internal_user_id AND v_user.role = 'CREATOR' AND v_user.partner_id = v_partner_id THEN
+            IF v_user.id = p_internal_user_id THEN
                 RETURN jsonb_build_object('success', true, 'user', row_to_json(v_user), 'state', 'IDEMPOTENT_INVITED');
             END IF;
             RAISE EXCEPTION 'Invitation Aborted: Concurrent user creation conflict for email %.', v_norm_email;
@@ -536,16 +540,16 @@ BEGIN
     INSERT INTO public.application_audit_logs (
         action, target_user_id, partner_id, performed_by_user_id, source, details
     ) VALUES (
-        'CREATOR_INVITED', p_internal_user_id, v_partner_id, p_performed_by_user_id, p_source,
-        jsonb_build_object('email', v_norm_email, 'partnerId', v_partner_id, 'partnerCode', p_partner_code)
+        'USER_INVITED', p_internal_user_id, v_partner_id, p_performed_by_user_id, p_source,
+        jsonb_build_object('email', v_norm_email, 'role', v_target_role, 'partnerId', v_partner_id)
     );
 
     RETURN jsonb_build_object('success', true, 'user', row_to_json(v_user), 'state', 'CREATED');
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
-REVOKE ALL ON FUNCTION public.create_creator_invitation_tx(TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.create_creator_invitation_tx(TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT) TO service_role;
+REVOKE ALL ON FUNCTION public.create_creator_invitation_tx(TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_creator_invitation_tx(TEXT, TEXT, TEXT, UUID, TEXT, TEXT, TEXT, TEXT) TO service_role;
 
 -- ------------------------------------------------------------------------------
 -- 8. CLERK USER MAPPING RPC (Item 2: Mandated Partner Status Check & Item 13: Matrix)
@@ -621,7 +625,7 @@ BEGIN
         RAISE EXCEPTION 'Mapping Aborted: Assigned partner UUID % does not exist.', v_target_user.partner_id;
     END IF;
 
-    IF v_partner_record.status::text NOT IN ('ACTIVE', 'INVITED') THEN
+    IF LOWER(v_partner_record.status::text) NOT IN ('active', 'invited') THEN
         RAISE EXCEPTION 'Mapping Aborted: Partner % status is not eligible for creator access (status: %).', v_partner_record.id, v_partner_record.status;
     END IF;
 

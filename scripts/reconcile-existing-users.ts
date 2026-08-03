@@ -19,6 +19,15 @@ interface ReconciliationReportItem {
   error?: string;
 }
 
+function toUuid(id: string | undefined): string | undefined {
+  if (!id) return undefined;
+  if (id === "partner-001") return "00000000-0000-0000-0000-000000000001";
+  if (id === "partner-002") return "00000000-0000-0000-0000-000000000002";
+  if (id === "partner-003") return "00000000-0000-0000-0000-000000000003";
+  if (id === "partner-hema") return "00000000-0000-0000-0000-00000000000a";
+  return id;
+}
+
 async function runReconciliation() {
   const isCommitMode = process.argv.includes("--commit");
   console.log(`=== RUNNING OFFLINE MOCK USER RECONCILIATION (${isCommitMode ? "COMMIT MODE" : "DRY-RUN MODE"}) ===`);
@@ -32,6 +41,30 @@ async function runReconciliation() {
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const report: ReconciliationReportItem[] = [];
+
+  // 1. Seed Production Partners from mockDb.partners if in commit mode
+  if (isCommitMode) {
+    console.log("Seeding base production partners into public.partners table...");
+    for (const p of mockDb.partners) {
+      const pUuid = toUuid(p.id)!;
+      const partnerCode = p.id.toUpperCase().replace(/-/g, "_");
+      const { error: pErr } = await supabase.from("partners").upsert({
+        id: pUuid,
+        partner_code: partnerCode,
+        business_name: p.businessName,
+        contact_name: p.contactName,
+        contact_email: p.email,
+        phone: p.phone || null,
+        status: "active"
+      }, { onConflict: "id" });
+
+      if (pErr) {
+        console.error(`Failed to seed partner ${p.id} (${pUuid}):`, pErr.message);
+        throw new Error(`Partner seed failed for ${p.id}: ${pErr.message}`);
+      }
+    }
+    console.log("✓ Production partners seeded successfully.");
+  }
 
   for (const user of mockDb.users) {
     const normEmail = user.email.trim().toLowerCase();
@@ -65,9 +98,11 @@ async function runReconciliation() {
         });
 
       } else {
-        let partnerId = user.partnerId;
+        const isAdmin = user.role === "FINANCE_ADMIN" || user.role === "ADMIN";
+        let rawPartnerId = isAdmin ? undefined : user.partnerId;
+        let partnerId = toUuid(rawPartnerId);
 
-        // Verify production partner existence & active status
+        // Verify production partner existence & active status for tenant-bound roles
         if (partnerId && isCommitMode) {
           const { data: partnerRow, error: partnerErr } = await supabase
             .from("partners")
@@ -76,11 +111,11 @@ async function runReconciliation() {
             .maybeSingle();
 
           if (partnerErr || !partnerRow) {
-            throw new Error(`Creator ${user.id} partner ID ${partnerId} not found in production partners table.`);
+            throw new Error(`User ${user.id} partner ID ${partnerId} not found in production partners table.`);
           }
 
-          if (partnerRow.status && !["ACTIVE", "INVITED"].includes(partnerRow.status)) {
-            throw new Error(`Creator ${user.id} partner ${partnerId} is inactive (status: ${partnerRow.status}).`);
+          if (partnerRow.status && !["active", "invited", "ACTIVE", "INVITED"].includes(partnerRow.status)) {
+            throw new Error(`User ${user.id} partner ${partnerId} is inactive (status: ${partnerRow.status}).`);
           }
         }
 
@@ -91,11 +126,27 @@ async function runReconciliation() {
             p_email: normEmail,
             p_partner_id: partnerId || null,
             p_performed_by_user_id: "user-admin-1",
-            p_source: "ADMIN_REPAIR"
+            p_source: "ADMIN_REPAIR",
+            p_role: user.role
           });
 
-          if (error) throw new Error(`Creator invitation failed: ${error.message}`);
-          if (!data?.success) throw new Error(`Creator invitation returned unsuccess: ${data?.error}`);
+          if (error) throw new Error(`User invitation failed for ${user.id}: ${error.message}`);
+          if (!data?.success) throw new Error(`User invitation returned unsuccess for ${user.id}: ${data?.error}`);
+
+          // If clerkUserId is populated on mock user, map it via map_clerk_user_tx
+          if (user.clerkUserId) {
+            const { error: mapErr } = await supabase.rpc("map_clerk_user_tx", {
+              p_internal_user_id: user.id,
+              p_email: normEmail,
+              p_exact_clerk_user_id: user.clerkUserId,
+              p_operation: "MAP",
+              p_performed_by_user_id: "user-admin-1",
+              p_source: "ADMIN_REPAIR"
+            });
+            if (mapErr) {
+              console.warn(`Warning mapping clerkUserId for ${user.id}:`, mapErr.message);
+            }
+          }
         }
 
         report.push({

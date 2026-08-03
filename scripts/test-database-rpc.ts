@@ -56,21 +56,21 @@ async function runDatabaseTests() {
   }
 
   console.log("\n4. Verifying RPC Transaction Functions...");
-  const rpcs = [
-    "claim_webhook_event_tx",
-    "complete_webhook_event_tx",
-    "fail_webhook_event_tx",
-    "create_creator_invitation_tx",
-    "map_clerk_user_tx",
-    "seed_super_admin_guarded"
+  const rpcTests = [
+    { name: "claim_webhook_event_tx", params: { p_provider: "CLERK", p_event_id: "test_check", p_event_type: "user.created" } },
+    { name: "complete_webhook_event_tx", params: { p_provider: "CLERK", p_event_id: "test_check", p_claim_token: "00000000-0000-0000-0000-000000000000", p_outcome: "MAPPED" } },
+    { name: "fail_webhook_event_tx", params: { p_provider: "CLERK", p_event_id: "test_check", p_claim_token: "00000000-0000-0000-0000-000000000000", p_error_message: "test" } },
+    { name: "create_creator_invitation_tx", params: { p_internal_user_id: "non_existent_test_id_check", p_name: "Test Check", p_email: "test_check@example.com" } },
+    { name: "map_clerk_user_tx", params: { p_internal_user_id: "non_existent_test_id_check", p_email: "test_check@example.com", p_exact_clerk_user_id: "user_test123" } },
+    { name: "seed_super_admin_guarded", params: { p_user_id: "non_existent_admin_check", p_name: "Test Admin", p_email: "admin_check@example.com", p_clerk_user_id: "user_admin123" } }
   ];
   
-  for (const rpc of rpcs) {
-    const { error } = await supabase.rpc(rpc, {});
+  for (const rpc of rpcTests) {
+    const { error } = await supabase.rpc(rpc.name, rpc.params);
     if (error && error.message.includes("Could not find the function")) {
-      console.log(`  - RPC '${rpc}': ❌ NOT DEFINED`);
+      console.log(`  - RPC '${rpc.name}': ❌ NOT DEFINED (${error.message})`);
     } else {
-      console.log(`  - RPC '${rpc}': ✓ DEFINED (Returned expected signature code: ${error ? error.message : "SUCCESS"})`);
+      console.log(`  - RPC '${rpc.name}': ✓ DEFINED & ACCESSIBLE (Result code: ${error ? error.message : "SUCCESS"})`);
     }
   }
 
