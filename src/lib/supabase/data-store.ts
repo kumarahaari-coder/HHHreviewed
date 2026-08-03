@@ -224,43 +224,8 @@ export async function mapClerkUser(params: {
   });
 
   if (error || !data?.success) {
-    console.warn("[DataStore Warning] map_clerk_user_tx RPC threw error, executing direct fallback update:", error?.message || data?.error);
-    
-    const normEmail = params.email ? params.email.toLowerCase().trim() : null;
-    let updateQuery = supabase.from("users").update({
-      clerk_user_id: params.clerkUserId,
-      onboarding_status: "MAPPED",
-      status: "ACTIVE",
-      updated_at: new Date().toISOString()
-    });
-
-    if (params.internalUserId) {
-      updateQuery = updateQuery.eq("id", params.internalUserId);
-    } else if (normEmail) {
-      updateQuery = updateQuery.eq("email", normEmail);
-    } else {
-      throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error}`);
-    }
-
-    const { data: updatedUser, error: directErr } = await updateQuery
-      .select("id, name, email, role, partner_id, status, onboarding_status, created_at")
-      .single();
-
-    if (directErr || !updatedUser) {
-      console.error("[DataStore Error] Direct mapClerkUser fallback failed:", directErr);
-      throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error}`);
-    }
-
-    return {
-      id: updatedUser.id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      role: updatedUser.role,
-      partnerId: updatedUser.partner_id,
-      status: updatedUser.status,
-      onboardingStatus: updatedUser.onboarding_status,
-      createdAt: updatedUser.created_at
-    };
+    console.error("[DataStore Error] map_clerk_user_tx failed:", error?.message || data?.error);
+    throw new Error(`Failed to map Clerk user in Supabase: ${error?.message || data?.error || "RPC transaction failure"}`);
   }
 
   const userRow = data.user;
