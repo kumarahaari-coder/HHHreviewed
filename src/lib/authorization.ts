@@ -1,7 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { User, UserRole } from "./db/schema";
 import { db } from "./db/mockDb";
-import { findUserByClerkUserId, findUserByEmail, mapClerkUser } from "./supabase/data-store";
+import { findUserByClerkUserId, findUserByEmail, mapClerkUser, activateUserAndPartner } from "./supabase/data-store";
 
 export interface AuthSession {
   userId: string;
@@ -61,30 +61,61 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
 
     const clerkUser = await currentUser();
     const primaryEmail = clerkUser?.emailAddresses?.[0]?.emailAddress || "";
-    const publicMetadata = (clerkUser?.publicMetadata || {}) as { role?: UserRole; partnerId?: string };
 
-    // Match strictly by Clerk User ID first, then by exact verified email
+    // Step 1: Match strictly by Clerk User ID first
     let matchedDbUser = await findUserByClerkUserId(userId);
+
+    // Step 2: Secure Session Fallback Mapping
     if (!matchedDbUser && primaryEmail) {
-      matchedDbUser = await findUserByEmail(primaryEmail);
-      if (matchedDbUser) {
-        await mapClerkUser({
-          internalUserId: matchedDbUser.id,
-          email: primaryEmail,
-          clerkUserId: userId,
-          source: "AUTH_RESOLVER"
-        });
+      const emailObj = clerkUser?.emailAddresses?.find(
+        e => e.emailAddress.toLowerCase().trim() === primaryEmail.toLowerCase().trim()
+      );
+      // Check if primary email is verified in Clerk session claims
+      const isEmailVerified = emailObj ? emailObj.verification?.status === "verified" : true;
+
+      if (isEmailVerified) {
+        const potentialUser = await findUserByEmail(primaryEmail);
+
+        // Security Controls:
+        // 1. Exactly one application user matches
+        // 2. User status is NOT SUSPENDED or ARCHIVED
+        // 3. Existing clerk_user_id is NULL or already equals current userId
+        // 4. Role & partner scoping exist in Supabase (preserved without modification)
+        if (
+          potentialUser &&
+          potentialUser.status !== "SUSPENDED" &&
+          potentialUser.status !== "ARCHIVED" &&
+          (!potentialUser.clerkUserId || potentialUser.clerkUserId === userId)
+        ) {
+          const mappedUser = await mapClerkUser({
+            internalUserId: potentialUser.id,
+            email: primaryEmail,
+            clerkUserId: userId,
+            operation: "MAP",
+            source: "AUTH_RESOLVER"
+          });
+
+          if (mappedUser) {
+            await activateUserAndPartner(mappedUser.id, mappedUser.partnerId);
+            matchedDbUser = await findUserByClerkUserId(userId);
+          }
+        }
       }
     }
 
-    // SECURITY CONTROL: If no application user record exists, DENY ACCESS (No default CREATOR fallback)
-    if (!matchedDbUser) {
-      console.warn(`[Access Denied] Clerk user ${userId} (${primaryEmail}) has no approved application database record.`);
+    // SECURITY CONTROL: If no application user record exists or user is suspended/archived, DENY ACCESS
+    if (!matchedDbUser || matchedDbUser.status === "SUSPENDED" || matchedDbUser.status === "ARCHIVED") {
+      console.warn(`[Access Denied] Clerk user ${userId} (${primaryEmail}) has no approved active application database record.`);
       return null;
     }
 
+    // Step 3: Lifecycle Activation check for mapped invited user
+    if (matchedDbUser.status === "INVITED" || matchedDbUser.onboardingStatus === "MAPPED") {
+      await activateUserAndPartner(matchedDbUser.id, matchedDbUser.partnerId);
+      matchedDbUser = await findUserByClerkUserId(userId) || matchedDbUser;
+    }
+
     // Role MUST come exclusively from application trusted server-side database record.
-    // Never escalate from Clerk publicMetadata.
     const role: UserRole = matchedDbUser.role;
 
     return {
