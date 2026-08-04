@@ -99,6 +99,16 @@ export interface IntegrationIdempotencyLog {
   status: "PROCESSED" | "FAILED" | "SKIPPED";
 }
 
+export interface SiteProperty {
+  id: string;
+  siteId: string;
+  propertyId: string;
+  hospitableWidgetId: string;
+  customBookingUrl?: string;
+  status: "ACTIVE" | "INACTIVE";
+  createdAt?: string;
+}
+
 export interface Site {
   id: string;
   partnerId: string;
@@ -107,9 +117,10 @@ export interface Site {
   hospitableWidgetId: string;
   bookingUrl: string;
   trackingCode: string;
-  commissionRuleId: string;
+  commissionRuleId?: string;
   status: SiteStatus;
   launchDate: string;
+  siteProperties?: SiteProperty[];
 }
 
 export interface Property {

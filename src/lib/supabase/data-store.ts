@@ -607,3 +607,167 @@ export async function getPartnerDashboardData(partnerId: string) {
     } : null
   };
 }
+
+export async function getAllSites(): Promise<Site[]> {
+  if (!isSupabaseEnabled()) {
+    return [...mockDb.sites];
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data: sitesData, error: sitesErr } = await supabase
+    .from("sites")
+    .select("id, partner_id, site_code, site_name, website_url, tracking_code, hospitable_widget_id, status, created_at")
+    .order("created_at", { ascending: false });
+
+  if (sitesErr) {
+    console.error("[DataStore Error] getAllSites failed:", sitesErr);
+    return [];
+  }
+
+  const { data: sitePropsData } = await supabase
+    .from("site_properties")
+    .select("id, site_id, property_id, status, created_at");
+
+  const sitePropertiesBySiteId = new Map<string, any[]>();
+  (sitePropsData || []).forEach(sp => {
+    const list = sitePropertiesBySiteId.get(sp.site_id) || [];
+    list.push({
+      id: sp.id,
+      siteId: sp.site_id,
+      propertyId: sp.property_id,
+      hospitableWidgetId: "",
+      customBookingUrl: undefined,
+      status: sp.status === "active" ? "ACTIVE" : "INACTIVE",
+      createdAt: sp.created_at
+    });
+    sitePropertiesBySiteId.set(sp.site_id, list);
+  });
+
+  return (sitesData || []).map(s => ({
+    id: s.id,
+    partnerId: s.partner_id,
+    siteName: s.site_name,
+    websiteUrl: s.website_url,
+    bookingUrl: s.website_url,
+    trackingCode: s.tracking_code || "",
+    hospitableWidgetId: s.hospitable_widget_id || "",
+    status: s.status === "active" ? "ACTIVE" : "PAUSED",
+    launchDate: s.created_at,
+    siteProperties: sitePropertiesBySiteId.get(s.id) || []
+  }));
+}
+
+export async function createSiteWithFourPropertyMappings(params: {
+  partnerId: string;
+  siteName: string;
+  websiteUrl: string;
+  trackingCode: string;
+  mappings: { propertyId: string; hospitableWidgetId: string }[];
+}): Promise<Site> {
+  const { validateFourPropertyWidgetMappings } = await import("@/lib/hospitable/widgets");
+  const validation = validateFourPropertyWidgetMappings(params.mappings);
+
+  if (!validation.valid) {
+    throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
+  }
+
+  const cleanUrl = params.websiteUrl.toLowerCase().trim().startsWith("http")
+    ? params.websiteUrl.toLowerCase().trim()
+    : `https://${params.websiteUrl.toLowerCase().trim()}`;
+  const cleanCode = params.trackingCode.toUpperCase().trim();
+
+  if (!isSupabaseEnabled()) {
+    const newSiteId = `site-${Date.now().toString(36)}`;
+    const siteProps = validation.validatedMappings!.map((m, idx) => ({
+      id: `sp-${Date.now()}-${idx}`,
+      siteId: newSiteId,
+      propertyId: m.propertyId,
+      hospitableWidgetId: m.hospitableWidgetId,
+      status: "ACTIVE" as const
+    }));
+
+    const newSite: Site = {
+      id: newSiteId,
+      partnerId: params.partnerId,
+      siteName: params.siteName.trim(),
+      websiteUrl: cleanUrl,
+      bookingUrl: cleanUrl,
+      hospitableWidgetId: validation.validatedMappings![0].hospitableWidgetId,
+      trackingCode: cleanCode,
+      status: "ACTIVE",
+      launchDate: new Date().toISOString(),
+      siteProperties: siteProps
+    };
+
+    mockDb.sites.push(newSite);
+    return newSite;
+  }
+
+  const supabase = assertSupabaseClient();
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("create_referral_site_tx", {
+    p_partner_id: params.partnerId,
+    p_site_name: params.siteName.trim(),
+    p_website_url: cleanUrl,
+    p_tracking_code: cleanCode,
+    p_mappings: validation.validatedMappings
+  });
+
+  if (!rpcErr && rpcData?.success && rpcData?.site_id) {
+    const sites = await getAllSites();
+    return sites.find(s => s.id === rpcData.site_id)!;
+  }
+
+  const siteCode = `SITE_${cleanCode}`;
+  const { data: siteRow, error: siteInsertErr } = await supabase
+    .from("sites")
+    .insert({
+      partner_id: params.partnerId,
+      site_code: siteCode,
+      site_name: params.siteName.trim(),
+      website_url: cleanUrl,
+      tracking_code: cleanCode,
+      status: "active" as any
+    })
+    .select("*")
+    .single();
+
+  if (siteInsertErr || !siteRow) {
+    throw new Error(`Failed to create site record in Supabase: ${siteInsertErr?.message || "Insert failed"}`);
+  }
+
+  const sitePropRows = validation.validatedMappings!.map(m => ({
+    site_id: siteRow.id,
+    property_id: m.propertyId,
+    status: "active" as any
+  }));
+
+  const { data: propsData, error: propsInsertErr } = await supabase
+    .from("site_properties")
+    .insert(sitePropRows)
+    .select("*");
+
+  if (propsInsertErr) {
+    await supabase.from("sites").delete().eq("id", siteRow.id);
+    throw new Error(`Failed to create site_properties mappings. Site creation rolled back: ${propsInsertErr.message}`);
+  }
+
+  return {
+    id: siteRow.id,
+    partnerId: siteRow.partner_id,
+    siteName: siteRow.site_name,
+    websiteUrl: siteRow.website_url,
+    bookingUrl: siteRow.website_url,
+    trackingCode: siteRow.tracking_code,
+    hospitableWidgetId: siteRow.hospitable_widget_id || "",
+    status: "ACTIVE",
+    launchDate: siteRow.created_at,
+    siteProperties: (propsData || []).map(p => ({
+      id: p.id,
+      siteId: p.site_id,
+      propertyId: p.property_id,
+      hospitableWidgetId: "",
+      status: "ACTIVE"
+    }))
+  };
+}
