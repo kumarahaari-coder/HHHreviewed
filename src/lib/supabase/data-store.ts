@@ -32,7 +32,7 @@ export async function findUserByClerkUserId(clerkUserId: string): Promise<User |
   const supabase = assertSupabaseClient();
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, role, partner_id, status, clerk_user_id, onboarding_status, created_at, updated_at")
+    .select("id, name, email, role, partner_id, status, clerk_invitation_id, clerk_user_id, onboarding_status, created_at, last_login")
     .eq("clerk_user_id", clerkUserId)
     .maybeSingle();
 
@@ -50,11 +50,11 @@ export async function findUserByClerkUserId(clerkUserId: string): Promise<User |
     role: data.role as UserRole,
     partnerId: data.partner_id || undefined,
     status: data.status,
-    clerkInvitationId: undefined,
+    clerkInvitationId: data.clerk_invitation_id || undefined,
     clerkUserId: data.clerk_user_id || undefined,
     onboardingStatus: data.onboarding_status,
     createdAt: data.created_at,
-    lastLogin: undefined
+    lastLogin: data.last_login || undefined
   };
 }
 
@@ -67,7 +67,7 @@ export async function findUserByEmail(email: string): Promise<User | null> {
   const supabase = assertSupabaseClient();
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, role, partner_id, status, clerk_user_id, onboarding_status, created_at, updated_at")
+    .select("id, name, email, role, partner_id, status, clerk_invitation_id, clerk_user_id, onboarding_status, created_at, last_login")
     .eq("email", normalizedEmail)
     .maybeSingle();
 
@@ -85,11 +85,11 @@ export async function findUserByEmail(email: string): Promise<User | null> {
     role: data.role as UserRole,
     partnerId: data.partner_id || undefined,
     status: data.status,
-    clerkInvitationId: undefined,
+    clerkInvitationId: data.clerk_invitation_id || undefined,
     clerkUserId: data.clerk_user_id || undefined,
     onboardingStatus: data.onboarding_status,
     createdAt: data.created_at,
-    lastLogin: undefined
+    lastLogin: data.last_login || undefined
   };
 }
 
@@ -132,8 +132,33 @@ export async function findUserByInvitationId(invitationId: string): Promise<User
     return mockDb.users.find(u => u.clerkInvitationId === invitationId) || null;
   }
 
-  // clerk_invitation_id is not a column in public.users DB schema
-  return null;
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, name, email, role, partner_id, status, clerk_invitation_id, clerk_user_id, onboarding_status, created_at, last_login")
+    .eq("clerk_invitation_id", invitationId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[DataStore Error] findUserByInvitationId failed:", error);
+    throw new Error(`Failed to query user by invitation ID: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    name: data.name,
+    email: data.email,
+    role: data.role as UserRole,
+    partnerId: data.partner_id || undefined,
+    status: data.status,
+    clerkInvitationId: data.clerk_invitation_id || undefined,
+    clerkUserId: data.clerk_user_id || undefined,
+    onboardingStatus: data.onboarding_status,
+    createdAt: data.created_at,
+    lastLogin: data.last_login || undefined
+  };
 }
 
 /**
@@ -143,7 +168,6 @@ export async function createCreatorInvitation(params: {
   internalUserId: string;
   name: string;
   email: string;
-  role?: UserRole;
   partnerId?: string;
   partnerCode?: string;
   performedByUserId?: string;
@@ -154,7 +178,7 @@ export async function createCreatorInvitation(params: {
       id: params.internalUserId,
       name: params.name,
       email: params.email,
-      role: params.role || "CREATOR",
+      role: "CREATOR",
       partnerId: params.partnerId,
       status: "INVITED",
       onboardingStatus: "INVITED",
@@ -172,8 +196,7 @@ export async function createCreatorInvitation(params: {
     p_partner_id: params.partnerId || null,
     p_partner_code: params.partnerCode || null,
     p_performed_by_user_id: params.performedByUserId || null,
-    p_source: params.source || "ADMIN_CONSOLE",
-    p_role: params.role || "CREATOR"
+    p_source: params.source || "ADMIN_CONSOLE"
   });
 
   if (error || !data?.success) {
@@ -208,6 +231,7 @@ export async function updateClerkInvitation(userId: string, invitationId: string
   const { error } = await supabase
     .from("users")
     .update({
+      clerk_invitation_id: invitationId,
       onboarding_status: "INVITED",
       updated_at: new Date().toISOString()
     })
@@ -359,6 +383,7 @@ export async function activateUserAndPartner(userId: string, partnerId?: string)
     .update({
       status: newUserStatus,
       onboarding_status: "COMPLETED",
+      last_login: now,
       updated_at: now
     })
     .eq("id", userId);
@@ -480,7 +505,6 @@ export async function getAllPartners(): Promise<Partner[]> {
     createdAt: p.created_at
   }));
 }
-
 /**
  * Tenant Dashboard Data Fetcher
  */

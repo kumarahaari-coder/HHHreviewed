@@ -10,6 +10,8 @@ const isPublicRoute = createRouteMatcher([
   "/auth/resolve(.*)",
   "/login(.*)",
   "/api/auth/session(.*)",
+  "/api/auth/shopify-login(.*)",
+  "/api/auth/shopify-metrics(.*)",
   "/api/webhooks(.*)",
   "/api/cron(.*)",
   "/api/hospitable(.*)"
