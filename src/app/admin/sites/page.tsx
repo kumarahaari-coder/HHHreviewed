@@ -310,9 +310,12 @@ export default function WebsiteManagement() {
             <div className="text-xs font-bold text-brand-plum uppercase tracking-wider">
               Four Required Hospitable Widget IDs *
             </div>
-            <p className="text-[11px] text-zinc-500">
-              Each website requires 4 distinct, real Hospitable widget IDs corresponding to each property. Placeholder values are rejected.
-            </p>
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 space-y-1">
+              <div className="font-bold">⚠️ Widget Validation Notice:</div>
+              <p>
+                Hospitable API v2 does not provide a widget lookup endpoint. Widget IDs are <strong>manually entered and structurally validated</strong> (non-empty, non-placeholder, intra-site distinct). Resource loadability verification confirms embed availability, but cannot prove property ownership.
+              </p>
+            </div>
 
             <div className="space-y-2">
               {CORE_PROPERTIES.map(cp => (
