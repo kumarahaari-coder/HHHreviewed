@@ -1,7 +1,8 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
 import { User, UserRole } from "./db/schema";
 import { db } from "./db/mockDb";
-import { findUserByClerkUserId, findUserByEmail, mapClerkUser, activateUserAndPartner } from "./supabase/data-store";
+import { findUserByClerkUserId, findUserByEmail, mapClerkUser, activateUserAndPartner, getAllPartners } from "./supabase/data-store";
 
 export interface AuthSession {
   userId: string;
@@ -53,6 +54,31 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
       clerkUserId: user.clerkUserId
     };
   }
+
+  // Check demo_role cookie for instant role switching without Clerk
+  try {
+    const cookieStore = await cookies();
+    const demoRole = cookieStore.get("demo_role")?.value;
+    if (demoRole === "PARTNER_OWNER" || demoRole === "MEMBER") {
+      const partners = await getAllPartners();
+      const firstPartner = partners[0];
+      return {
+        userId: "user-partner-demo",
+        email: "member.partner@hhh.com",
+        role: "PARTNER_OWNER",
+        partnerId: firstPartner?.id || "00000000-0000-0000-0000-000000000001",
+        clerkUserId: "open_bypass_partner"
+      };
+    } else if (demoRole === "SUPER_ADMIN") {
+      return {
+        userId: "user-admin-demo",
+        email: "super.admin@hhh.com",
+        role: "SUPER_ADMIN",
+        partnerId: "00000000-0000-0000-0000-000000000001",
+        clerkUserId: "open_bypass_admin"
+      };
+    }
+  } catch (e) {}
 
   try {
     let userId: string | null = null;

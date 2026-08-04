@@ -28,6 +28,7 @@ export interface User {
 
 export interface Partner {
   id: string;
+  partnerCode?: string;
   businessName: string;
   contactName: string;
   email: string;

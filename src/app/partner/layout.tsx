@@ -21,6 +21,7 @@ import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
 import { User as UserType, Partner } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/custom";
+import { RoleSwitcher } from "@/components/RoleSwitcher";
 
 function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -262,6 +263,7 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center space-x-4">
+            <RoleSwitcher />
             {currentUser && (currentUser.role === "SUPER_ADMIN" || currentUser.role === "ADMIN" || currentUser.role === "FINANCE_ADMIN") && (
               <button
                 onClick={handleReturnToAdmin}

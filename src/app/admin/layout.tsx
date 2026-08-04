@@ -22,6 +22,7 @@ import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
 import { User, SystemNotification } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/custom";
+import { RoleSwitcher } from "@/components/RoleSwitcher";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -219,6 +220,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
 
           <div className="flex items-center space-x-4">
+            <RoleSwitcher />
             {/* Notification Bell */}
             <div className="relative">
               <button
