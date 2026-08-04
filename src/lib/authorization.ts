@@ -55,27 +55,30 @@ export async function getClerkAuthSession(): Promise<AuthSession | null> {
     };
   }
 
-  // Check demo_role cookie for instant role switching without Clerk
+  // Check demo cookies for instant role/user switching without Clerk
   try {
     const cookieStore = await cookies();
     const demoRole = cookieStore.get("demo_role")?.value;
-    if (demoRole === "PARTNER_OWNER" || demoRole === "MEMBER") {
+    const demoEmail = cookieStore.get("demo_email")?.value;
+    const demoPartnerId = cookieStore.get("demo_partner_id")?.value;
+    const demoUserId = cookieStore.get("demo_user_id")?.value;
+
+    if (demoRole || demoEmail) {
+      const dbUser = demoEmail ? await findUserByEmail(demoEmail) : null;
       const partners = await getAllPartners();
       const firstPartner = partners[0];
+
+      const role: UserRole = (demoRole as UserRole) || dbUser?.role || "SUPER_ADMIN";
+      const partnerId = demoPartnerId || dbUser?.partnerId || firstPartner?.id || "00000000-0000-0000-0000-000000000001";
+      const email = demoEmail || dbUser?.email || (role === "SUPER_ADMIN" ? "hiddenhoneyace@gmail.com" : "kumarahaari@gmail.com");
+      const userId = demoUserId || dbUser?.id || (role === "SUPER_ADMIN" ? "user-admin-1" : "user-partner-demo");
+
       return {
-        userId: "user-partner-demo",
-        email: "member.partner@hhh.com",
-        role: "PARTNER_OWNER",
-        partnerId: firstPartner?.id || "00000000-0000-0000-0000-000000000001",
-        clerkUserId: "open_bypass_partner"
-      };
-    } else if (demoRole === "SUPER_ADMIN") {
-      return {
-        userId: "user-admin-demo",
-        email: "super.admin@hhh.com",
-        role: "SUPER_ADMIN",
-        partnerId: "00000000-0000-0000-0000-000000000001",
-        clerkUserId: "open_bypass_admin"
+        userId,
+        email,
+        role,
+        partnerId: (role === "SUPER_ADMIN" || role === "ADMIN" || role === "FINANCE_ADMIN") ? undefined : partnerId,
+        clerkUserId: "open_bypass_user"
       };
     }
   } catch (e) {}

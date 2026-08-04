@@ -40,11 +40,11 @@ export default function PendingAccessPage() {
 
         <div className="pt-2 flex flex-col space-y-3">
           <button
-            onClick={handleSignOut}
+            onClick={() => router.push("/login")}
             className="w-full bg-brand-plum hover:bg-brand-wine text-brand-cream py-2.5 px-4 rounded-lg font-bold text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center space-x-2"
           >
             <ArrowLeft size={16} />
-            <span>Sign Out & Return to Sign In</span>
+            <span>Select Account / Return to Switcher</span>
           </button>
         </div>
       </div>
