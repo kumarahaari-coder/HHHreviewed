@@ -65,6 +65,19 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      // Fallback: Resolve via user email info@aceassured.co
+      if (!partnerId) {
+        const { data: userRecord } = await supabase
+          .from("users")
+          .select("partner_id")
+          .eq("email", "info@aceassured.co")
+          .maybeSingle();
+
+        if (userRecord && userRecord.partner_id) {
+          partnerId = userRecord.partner_id;
+        }
+      }
+
       // Fallback: Resolve via sites table matching website_url
       if (!partnerId) {
         const { data: siteRecord } = await supabase
