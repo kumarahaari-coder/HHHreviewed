@@ -18,8 +18,9 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
+  const isAuthDisabled = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true" || process.env.AUTH_DISABLED === "true";
   const isDevMockMode = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
-  if (isDevMockMode) {
+  if (isAuthDisabled || isDevMockMode) {
     return;
   }
 

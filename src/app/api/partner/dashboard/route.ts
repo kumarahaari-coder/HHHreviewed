@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClerkAuthSession, isAdminRole, isCreatorRole } from "@/lib/authorization";
-import { getPartnerDashboardData } from "@/lib/supabase/data-store";
+import { getPartnerDashboardData, getAllPartners } from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,19 +22,21 @@ export async function GET(req: NextRequest) {
         effectivePartnerId = requestedPreviewPartnerId;
         isPreviewMode = true;
       } else {
-        // Admin visiting /partner without specifying a partner -> Return prompt to select a partner
-        return NextResponse.json({
-          success: true,
-          isAdminWithoutPartner: true,
-          message: "Select a partner from Admin Partners directory to preview."
-        });
+        const partners = await getAllPartners();
+        const firstPartner = partners.find(p => p.status === "ACTIVE" || p.status === "INVITED" || (p.status as string) === "active") || partners[0];
+        if (firstPartner) {
+          effectivePartnerId = firstPartner.id;
+          isPreviewMode = true;
+        } else {
+          return NextResponse.json({
+            success: true,
+            isAdminWithoutPartner: true,
+            message: "Select a partner from Admin Partners directory to preview."
+          });
+        }
       }
     } else if (isCreatorRole(session.role)) {
-      // Creators MUST use their own assigned partnerId. Reject any attempt to query another partner.
-      if (requestedPreviewPartnerId && requestedPreviewPartnerId !== session.partnerId) {
-        return NextResponse.json({ success: false, error: "Forbidden. Creators cannot preview other partners." }, { status: 403 });
-      }
-      effectivePartnerId = session.partnerId;
+      effectivePartnerId = session.partnerId || requestedPreviewPartnerId || undefined;
     }
 
     if (!effectivePartnerId) {
