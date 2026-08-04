@@ -17,12 +17,8 @@ export default function EntryPortal() {
 
   useEffect(() => {
     setMounted(true);
-    setUsers(db.users);
-
-    if (!isDevMockMode && isLoaded && isSignedIn) {
-      router.replace("/auth/resolve");
-    }
-  }, [isLoaded, isSignedIn, isDevMockMode, router]);
+    router.replace("/login");
+  }, [router]);
 
   const handleLogin = (user: User) => {
     db.currentUser = user;

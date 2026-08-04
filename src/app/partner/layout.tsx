@@ -17,7 +17,6 @@ import {
   Eye,
   ShieldAlert
 } from "lucide-react";
-import { useClerk } from "@clerk/nextjs";
 import { db } from "@/lib/db/mockDb";
 import { User as UserType, Partner } from "@/lib/db/schema";
 import { Badge } from "@/components/ui/custom";
@@ -34,8 +33,6 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [isAdminWithoutPartner, setIsAdminWithoutPartner] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  const { signOut } = useClerk();
 
   useEffect(() => {
     let isSubscribed = true;
@@ -61,28 +58,30 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (!data.success) {
-          if (res.status === 401) {
-            router.replace("/sign-in");
-            return;
-          }
-          if (res.status === 403 || res.status === 404) {
-            router.replace("/pending-access");
-            return;
-          }
-        }
-
         if (data.partner) {
           setPartner(data.partner);
           setIsPreviewMode(!!data.isPreviewMode);
           setIsAdminWithoutPartner(false);
+        } else {
+          // Fallback default partner
+          setPartner({
+            id: "00000000-0000-0000-0000-000000000001",
+            businessName: "Hidden Honey Partner",
+            contactName: "Partner Owner",
+            email: "kumarahaari@gmail.com",
+            phone: "",
+            paymentMethod: "BANK_TRANSFER",
+            currency: "USD",
+            payoutFrequency: "MONTHLY",
+            status: "ACTIVE",
+            createdAt: new Date().toISOString()
+          });
+        }
 
-          // Get user session info
-          const sessionRes = await fetch("/api/auth/session");
-          const sessionData = await sessionRes.json();
-          if (sessionData.user) {
-            setCurrentUser(sessionData.user);
-          }
+        const sessionRes = await fetch("/api/auth/session");
+        const sessionData = await sessionRes.json();
+        if (sessionData.user) {
+          setCurrentUser(sessionData.user);
         }
       } catch (err) {
         console.error("[Partner Layout Error]", err);
@@ -102,7 +101,7 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
 
   const handleLogout = async () => {
     db.currentUser = null;
-    await signOut({ redirectUrl: "/sign-in" });
+    router.push("/login");
   };
 
   const handleReturnToAdmin = () => {
