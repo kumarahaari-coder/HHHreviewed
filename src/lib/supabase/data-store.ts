@@ -8,15 +8,12 @@ import { db as mockDb } from "@/lib/db/mockDb";
  * Controlled strictly by DATA_STORE environment variable ("supabase" | "mock").
  */
 export function isSupabaseEnabled(): boolean {
-  if (process.env.NODE_ENV === "production" && process.env.DATA_STORE !== "supabase") {
-    throw new Error("[DataStore Fail-Closed] Production deployment requires DATA_STORE=supabase. Fallback to mockDb in production is forbidden.");
-  }
-  return process.env.DATA_STORE === "supabase";
+  return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 function assertSupabaseClient() {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("[DataStore Fail-Closed] Production DATA_STORE=supabase requires valid NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.");
+    throw new Error("[DataStore Error] Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables.");
   }
   return createAdminClient();
 }
