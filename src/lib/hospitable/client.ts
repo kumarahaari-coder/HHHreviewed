@@ -235,13 +235,23 @@ export function buildCollectionPath(
   const configuredQuery =
     resource === "properties"
       ? process.env.HOSPITABLE_PROPERTIES_QUERY
-      : process.env.HOSPITABLE_RESERVATIONS_QUERY;
+      : (process.env.HOSPITABLE_RESERVATIONS_QUERY || "include=properties,financials");
 
   const path = configuredPath || `/${resource}`;
   const params = new URLSearchParams(configuredQuery || "");
   if (query) {
     const extra = new URLSearchParams(query);
-    extra.forEach((value, key) => params.set(key, value));
+    extra.forEach((value, key) => {
+      if (key.endsWith("[]")) {
+        // Prevent duplicate array values
+        const existing = params.getAll(key);
+        if (!existing.includes(value)) {
+          params.append(key, value);
+        }
+      } else {
+        params.set(key, value);
+      }
+    });
   }
 
   const queryString = params.toString();

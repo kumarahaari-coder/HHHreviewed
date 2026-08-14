@@ -108,8 +108,17 @@ export async function acquireSyncLease(
     activeProcessLocks.set(lockName, lease);
     return lease;
   } catch (error) {
-    console.warn("Unexpected sync lease acquisition error:", error);
-    return null;
+    console.warn("Unexpected sync lease acquisition error, falling back to in-memory process lock:", error);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
+    const lease: SyncLease = {
+      lockName,
+      lockToken,
+      acquiredAt: now.toISOString(),
+      expiresAt,
+    };
+    activeProcessLocks.set(lockName, lease);
+    return lease;
   }
 }
 

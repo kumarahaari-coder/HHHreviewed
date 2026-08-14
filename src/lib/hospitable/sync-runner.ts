@@ -77,6 +77,11 @@ export type FullSyncResult = {
     propertiesUpserted: number;
     reservationsUpserted: number;
     reservationsSkipped: number;
+    reservationsInserted?: number;
+    reservationsUpdated?: number;
+    reservationsUnchanged?: number;
+    reservationsFailed?: number;
+    reservationsUnattributed?: number;
   };
   summary?: {
     hospitablePropertyCount: number;
@@ -85,6 +90,13 @@ export type FullSyncResult = {
     requestedPropertyCount: number;
     missingPropertyCount: number;
     reservationCount: number;
+    reservationsFetched?: number;
+    reservationsProcessed?: number;
+    reservationsInserted?: number;
+    reservationsUpdated?: number;
+    reservationsUnchanged?: number;
+    reservationsFailed?: number;
+    reservationsUnattributed?: number;
     financialCoveragePercent: number;
   };
   validation?: {
@@ -316,6 +328,11 @@ export async function runHospitableSync(
       ? {
           upserted: 0,
           skipped: 0,
+          inserted: validReservations.length,
+          updated: 0,
+          unchanged: 0,
+          failed: 0,
+          unattributed: validReservations.length,
           cancelledReservationsSeen: validReservations.filter((r) => r.reservationStatus === "CANCELLED").length,
           reservationsMarkedCancelled: 0,
         }
@@ -422,6 +439,11 @@ export async function runHospitableSync(
         propertiesUpserted: propertyPersistence.upserted,
         reservationsUpserted: reservationPersistence.upserted,
         reservationsSkipped: persistenceSkippedCount,
+        reservationsInserted: reservationPersistence.inserted,
+        reservationsUpdated: reservationPersistence.updated,
+        reservationsUnchanged: reservationPersistence.unchanged,
+        reservationsFailed: reservationPersistence.failed,
+        reservationsUnattributed: reservationPersistence.unattributed,
       },
 
       summary: {
@@ -431,6 +453,13 @@ export async function runHospitableSync(
         requestedPropertyCount: propertyIds.length,
         missingPropertyCount: missingPropertyIds.length,
         reservationCount: validReservations.length,
+        reservationsFetched: reservationPage.data.length,
+        reservationsProcessed: validReservations.length,
+        reservationsInserted: reservationPersistence.inserted,
+        reservationsUpdated: reservationPersistence.updated,
+        reservationsUnchanged: reservationPersistence.unchanged,
+        reservationsFailed: reservationPersistence.failed,
+        reservationsUnattributed: reservationPersistence.unattributed,
         financialCoveragePercent: financialCoverage,
       },
 

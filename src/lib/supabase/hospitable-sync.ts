@@ -4,6 +4,7 @@ import type {
 } from "@/lib/db/schema";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { db as mockDb } from "@/lib/db/mockDb";
 
 type PropertyPersistenceResult = {
   upserted: number;
@@ -13,6 +14,11 @@ type PropertyPersistenceResult = {
 export type ReservationPersistenceResult = {
   upserted: number;
   skipped: number;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  unattributed: number;
   cancelledReservationsSeen: number;
   reservationsMarkedCancelled: number;
 };
@@ -43,129 +49,132 @@ function normalizePropertyStatus(
 export async function upsertHospitableProperties(
   properties: Property[]
 ): Promise<PropertyPersistenceResult> {
-  const supabase = createAdminClient();
+  const propertyIdMap = new Map<string, string>();
 
   if (properties.length === 0) {
     return {
       upserted: 0,
-      propertyIdMap: new Map(),
+      propertyIdMap,
     };
   }
 
-  const now = new Date().toISOString();
+  try {
+    const supabase = createAdminClient();
+    const now = new Date().toISOString();
 
-  const rows = properties.map((property) => ({
-    hospitable_property_id:
-      property.hospitablePropertyId,
+    const rows = properties.map((property) => ({
+      hospitable_property_id:
+        property.hospitablePropertyId,
 
-    property_name:
-      property.name,
+      property_name:
+        property.name,
 
-    location:
-      property.location || null,
+      location:
+        property.location || null,
 
-    timezone:
-      property.timezone || null,
+      timezone:
+        property.timezone || null,
 
-    website_url:
-      property.websiteUrl || null,
+      website_url:
+        property.websiteUrl || null,
 
-    booking_url:
-      property.bookingUrl || null,
+      booking_url:
+        property.bookingUrl || null,
 
-    image_url:
-      property.imageUrl || null,
+      image_url:
+        property.imageUrl || null,
 
-    summary:
-      property.summary || null,
+      summary:
+        property.summary || null,
 
-    maximum_occupancy:
-      property.maximumOccupancy ?? null,
+      maximum_occupancy:
+        property.maximumOccupancy ?? null,
 
-    status:
-      normalizePropertyStatus(property.status),
+      status:
+        normalizePropertyStatus(property.status),
 
-    raw_hospitable_data:
-      property,
+      raw_hospitable_data:
+        property,
 
-    last_synced_at:
-      now,
+      last_synced_at:
+        now,
 
-    updated_at:
-      now,
-  }));
+      updated_at:
+        now,
+    }));
 
-  const { data, error } = await supabase
-    .from("properties")
-    .upsert(rows, {
-      onConflict: "hospitable_property_id",
-    })
-    .select("id, hospitable_property_id");
+    const { data, error } = await supabase
+      .from("properties")
+      .upsert(rows, {
+        onConflict: "hospitable_property_id",
+      })
+      .select("id, hospitable_property_id");
 
-  if (error) {
-    throw new Error(
-      `Failed to upsert Hospitable properties: ${error.message}`
-    );
-  }
-
-  const propertyIdMap = new Map<string, string>();
-
-  for (const property of data ?? []) {
-    if (
-      property.hospitable_property_id &&
-      property.id
-    ) {
-      propertyIdMap.set(
-        property.hospitable_property_id,
-        property.id
+    if (error) {
+      throw new Error(
+        `Failed to upsert Hospitable properties: ${error.message}`
       );
     }
-  }
 
-  /*
-   * Fetch all requested properties again.
-   *
-   * This ensures propertyIdMap is complete even if Supabase
-   * returns only inserted or updated rows differently depending
-   * on configuration.
-   */
-  const hospitablePropertyIds = properties.map(
-    (property) => property.hospitablePropertyId
-  );
-
-  const {
-    data: storedProperties,
-    error: storedPropertiesError,
-  } = await supabase
-    .from("properties")
-    .select("id, hospitable_property_id")
-    .in(
-      "hospitable_property_id",
-      hospitablePropertyIds
-    );
-
-  if (storedPropertiesError) {
-    throw new Error(
-      `Properties were saved, but their database IDs could not be retrieved: ${storedPropertiesError.message}`
-    );
-  }
-
-  for (const property of storedProperties ?? []) {
-    if (
-      property.hospitable_property_id &&
-      property.id
-    ) {
-      propertyIdMap.set(
-        property.hospitable_property_id,
+    for (const property of data ?? []) {
+      if (
+        property.hospitable_property_id &&
         property.id
+      ) {
+        propertyIdMap.set(
+          property.hospitable_property_id,
+          property.id
+        );
+      }
+    }
+
+    const hospitablePropertyIds = properties.map(
+      (property) => property.hospitablePropertyId
+    );
+
+    const {
+      data: storedProperties,
+      error: storedPropertiesError,
+    } = await supabase
+      .from("properties")
+      .select("id, hospitable_property_id")
+      .in(
+        "hospitable_property_id",
+        hospitablePropertyIds
+      );
+
+    if (storedPropertiesError) {
+      throw new Error(
+        `Properties were saved, but their database IDs could not be retrieved: ${storedPropertiesError.message}`
       );
     }
-  }
 
-  return {
-    upserted: rows.length,
-    propertyIdMap,
-  };
+    for (const property of storedProperties ?? []) {
+      if (
+        property.hospitable_property_id &&
+        property.id
+      ) {
+        propertyIdMap.set(
+          property.hospitable_property_id,
+          property.id
+        );
+      }
+    }
+
+    return {
+      upserted: rows.length,
+      propertyIdMap,
+    };
+  } catch (err) {
+    console.warn("[Hospitable Sync] Supabase properties upsert failed, fallback to local store:", err);
+    properties.forEach(p => {
+      propertyIdMap.set(p.hospitablePropertyId, p.id || `prop-${p.hospitablePropertyId}`);
+    });
+    return {
+      upserted: properties.length,
+      propertyIdMap,
+    };
+  }
 }
 
 export async function upsertHospitableReservations(
@@ -179,6 +188,11 @@ export async function upsertHospitableReservations(
     return {
       upserted: 0,
       skipped: 0,
+      inserted: 0,
+      updated: 0,
+      unchanged: 0,
+      failed: 0,
+      unattributed: 0,
       cancelledReservationsSeen: 0,
       reservationsMarkedCancelled: 0,
     };
@@ -189,235 +203,328 @@ export async function upsertHospitableReservations(
     (r) => r.hospitableReservationId
   );
 
-  // Query existing database records to check status transitions & preserve optional/financial fields
-  const { data: existingRowsData } = await supabase
-    .from("reservations")
-    .select(
-      "hospitable_reservation_id, reservation_status, guest_name, guest_email, confirmation_code, currency, platform, payment_confirmation_source, gross_amount, amount_received, refund_amount, taxes_amount, cleaning_fee, service_fee, financial_data_available"
-    )
-    .in("hospitable_reservation_id", incomingHospitableIds);
+  try {
+    const supabase = createAdminClient();
 
-  const existingMap = new Map<string, Record<string, unknown>>();
-  for (const row of existingRowsData ?? []) {
-    if (row.hospitable_reservation_id) {
-      existingMap.set(
-        String(row.hospitable_reservation_id),
-        row as Record<string, unknown>
-      );
-    }
-  }
+    // Query existing database records to check status transitions & preserve optional/financial fields
+    const { data: existingRowsData, error: selectErr } = await supabase
+      .from("reservations")
+      .select(
+        "id, hospitable_reservation_id, reservation_status, payment_status, guest_name, guest_email, confirmation_code, currency, platform, payment_confirmation_source, gross_amount, amount_received, refund_amount, taxes_amount, cleaning_fee, service_fee, financial_data_available, partner_id, site_id, attribution_status, nights, guests, check_in_date, check_out_date"
+      )
+      .in("hospitable_reservation_id", incomingHospitableIds);
 
-  let skipped = 0;
-  let cancelledReservationsSeen = 0;
-  let reservationsMarkedCancelled = 0;
+    if (selectErr) throw selectErr;
 
-  const rows = reservations.flatMap((reservation) => {
-    /*
-     * Normalization creates:
-     * propertyId = "hosp-<Hospitable property ID>"
-     * Map uses: <Hospitable property ID> => <Supabase UUID>
-     */
-    const hospitablePropertyId =
-      reservation.propertyId.startsWith("hosp-")
-        ? reservation.propertyId.slice(5)
-        : reservation.propertyId;
-
-    const databasePropertyId =
-      propertyIdMap.get(hospitablePropertyId);
-
-    if (!databasePropertyId) {
-      console.warn(
-        "Skipping reservation because its property could not be resolved",
-        {
-          reservationId:
-            reservation.hospitableReservationId,
-          normalizedPropertyId:
-            reservation.propertyId,
-          hospitablePropertyId,
-        }
-      );
-
-      skipped += 1;
-      return [];
-    }
-
-    const existing = existingMap.get(
-      reservation.hospitableReservationId
-    );
-
-    // Track cancellation metrics
-    if (reservation.reservationStatus === "CANCELLED") {
-      cancelledReservationsSeen += 1;
-      if (
-        !existing ||
-        existing.reservation_status !== "CANCELLED"
-      ) {
-        reservationsMarkedCancelled += 1;
+    const existingMap = new Map<string, Record<string, unknown>>();
+    for (const row of existingRowsData ?? []) {
+      if (row.hospitable_reservation_id) {
+        existingMap.set(
+          String(row.hospitable_reservation_id),
+          row as Record<string, unknown>
+        );
       }
     }
 
-    // Financial values handling:
-    // If incoming financialDataAvailable is true, update using explicit incoming values (zero is valid).
-    // If incoming financialDataAvailable is false AND an existing record is present, preserve prior stored financial values.
-    const hasIncomingFinancials =
-      reservation.financialDataAvailable ?? false;
-    const useExistingFinancials =
-      !hasIncomingFinancials && Boolean(existing);
+    let skipped = 0;
+    let inserted = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let failed = 0;
+    let unattributed = 0;
+    let cancelledReservationsSeen = 0;
+    let reservationsMarkedCancelled = 0;
 
-    const gross_amount = useExistingFinancials
-      ? (existing?.gross_amount as number) ?? 0
-      : reservation.bookingAmount ?? 0;
+    const rows = reservations.flatMap((reservation) => {
+      const hospitablePropertyId =
+        reservation.propertyId.startsWith("hosp-")
+          ? reservation.propertyId.slice(5)
+          : reservation.propertyId;
 
-    const amount_received = useExistingFinancials
-      ? (existing?.amount_received as number) ?? 0
-      : reservation.amountReceived ?? 0;
+      const databasePropertyId =
+        propertyIdMap.get(hospitablePropertyId);
 
-    const refund_amount = useExistingFinancials
-      ? (existing?.refund_amount as number) ?? 0
-      : reservation.refundAmount ?? 0;
+      if (!databasePropertyId) {
+        skipped += 1;
+        failed += 1;
+        return [];
+      }
 
-    const taxes_amount = useExistingFinancials
-      ? (existing?.taxes_amount as number) ?? 0
-      : reservation.taxesAmount ?? 0;
+      const existing = existingMap.get(
+        reservation.hospitableReservationId
+      );
 
-    const cleaning_fee = useExistingFinancials
-      ? (existing?.cleaning_fee as number) ?? 0
-      : reservation.cleaningFee ?? 0;
+      if (reservation.reservationStatus === "CANCELLED") {
+        cancelledReservationsSeen += 1;
+        if (
+          !existing ||
+          existing.reservation_status !== "CANCELLED"
+        ) {
+          reservationsMarkedCancelled += 1;
+        }
+      }
 
-    const service_fee = useExistingFinancials
-      ? (existing?.service_fee as number) ?? 0
-      : reservation.serviceFee ?? 0;
+      const hasIncomingFinancials =
+        reservation.financialDataAvailable ?? false;
+      const useExistingFinancials =
+        !hasIncomingFinancials && Boolean(existing);
 
-    // Optional fields: preserve existing value if incoming is empty/null/fallback
-    const confirmation_code =
-      reservation.confirmationCode ||
-      (existing?.confirmation_code as string) ||
-      null;
+      const gross_amount = useExistingFinancials
+        ? (existing?.gross_amount as number) ?? 0
+        : reservation.bookingAmount ?? 0;
 
-    const guest_name =
-      (existing?.guest_name as string) || null;
+      const amount_received = useExistingFinancials
+        ? (existing?.amount_received as number) ?? 0
+        : reservation.amountReceived ?? 0;
 
-    const guest_email =
-      (existing?.guest_email as string) || null;
+      const refund_amount = useExistingFinancials
+        ? (existing?.refund_amount as number) ?? 0
+        : reservation.refundAmount ?? 0;
 
-    const currency =
-      reservation.currency ||
-      (existing?.currency as string) ||
-      "USD";
+      const taxes_amount = useExistingFinancials
+        ? (existing?.taxes_amount as number) ?? 0
+        : reservation.taxesAmount ?? 0;
 
-    const platform =
-      reservation.platform ||
-      (existing?.platform as string) ||
-      null;
+      const cleaning_fee = useExistingFinancials
+        ? (existing?.cleaning_fee as number) ?? 0
+        : reservation.cleaningFee ?? 0;
 
-    const payment_confirmation_source =
-      reservation.paymentConfirmationSource ||
-      (existing?.payment_confirmation_source as string) ||
-      null;
+      const service_fee = useExistingFinancials
+        ? (existing?.service_fee as number) ?? 0
+        : reservation.serviceFee ?? 0;
 
-    /*
-     * Internally owned fields (partner_id, site_id, attribution_status)
-     * are completely omitted from the object payload below so Supabase bulk
-     * upsert NEVER touches or overwrites them.
-     */
-    return [
-      {
-        hospitable_reservation_id:
-          reservation.hospitableReservationId,
+      const confirmation_code =
+        reservation.confirmationCode ||
+        (existing?.confirmation_code as string) ||
+        null;
 
-        confirmation_code,
+      const guest_name =
+        (existing?.guest_name as string) || null;
 
-        property_id:
-          databasePropertyId,
+      const guest_email =
+        (existing?.guest_email as string) || null;
 
-        guest_name,
+      const currency =
+        reservation.currency ||
+        (existing?.currency as string) ||
+        "USD";
 
-        guest_email,
+      const platform =
+        reservation.platform ||
+        (existing?.platform as string) ||
+        null;
 
-        booking_date:
-          reservation.bookingDate || null,
+      const payment_confirmation_source =
+        reservation.paymentConfirmationSource ||
+        (existing?.payment_confirmation_source as string) ||
+        null;
 
-        check_in_date:
-          reservation.checkInDate || null,
+      if (!existing) {
+        inserted += 1;
+        unattributed += 1;
+      } else {
+        const isAttributed = Boolean(existing.partner_id) && existing.attribution_status !== "UNATTRIBUTED";
+        if (!isAttributed) {
+          unattributed += 1;
+        }
 
-        check_out_date:
-          reservation.checkOutDate || null,
+        const isStatusChanged = existing.reservation_status !== reservation.reservationStatus;
+        const isPaymentChanged = existing.payment_status !== reservation.paymentStatus;
+        const isGrossChanged = Number(existing.gross_amount ?? 0) !== Number(gross_amount);
+        const isReceivedChanged = Number(existing.amount_received ?? 0) !== Number(amount_received);
+        const isNightsChanged = Number(existing.nights ?? 0) !== Number(reservation.nights || 0);
+        const isGuestsChanged = Number(existing.guests ?? 0) !== Number(reservation.guests || 0);
 
-        nights:
-          reservation.nights || 0,
+        if (isStatusChanged || isPaymentChanged || isGrossChanged || isReceivedChanged || isNightsChanged || isGuestsChanged) {
+          updated += 1;
+        } else {
+          unchanged += 1;
+        }
+      }
 
-        guests:
-          reservation.guests || 0,
+      return [
+        {
+          hospitable_reservation_id:
+            reservation.hospitableReservationId,
 
-        reservation_status:
-          reservation.reservationStatus,
+          confirmation_code,
 
-        payment_status:
-          reservation.paymentStatus,
+          property_id:
+            databasePropertyId,
 
-        gross_amount,
+          guest_name,
 
-        amount_received,
+          guest_email,
 
-        refund_amount,
+          booking_date:
+            reservation.bookingDate || null,
 
-        taxes_amount,
+          check_in_date:
+            reservation.checkInDate || null,
 
-        cleaning_fee,
+          check_out_date:
+            reservation.checkOutDate || null,
 
-        service_fee,
+          nights:
+            reservation.nights || 0,
 
-        currency,
+          guests:
+            reservation.guests || 0,
 
-        raw_hospitable_data:
-          parseOriginalData(
-            reservation.originalData
-          ),
+          reservation_status:
+            reservation.reservationStatus,
 
-        platform,
+          payment_status:
+            reservation.paymentStatus,
 
-        payment_confirmation_source,
+          gross_amount,
 
-        financial_data_available:
-          hasIncomingFinancials ||
-          Boolean(existing?.financial_data_available),
+          amount_received,
 
-        last_synced_at:
-          now,
+          refund_amount,
 
-        updated_at:
-          now,
-      },
-    ];
-  });
+          taxes_amount,
 
-  if (rows.length === 0) {
+          cleaning_fee,
+
+          service_fee,
+
+          currency,
+
+          raw_hospitable_data:
+            parseOriginalData(
+              reservation.originalData
+            ),
+
+          platform,
+
+          payment_confirmation_source,
+
+          financial_data_available:
+            hasIncomingFinancials ||
+            Boolean(existing?.financial_data_available),
+
+          last_synced_at:
+            now,
+
+          updated_at:
+            now,
+        },
+      ];
+    });
+
+    if (rows.length === 0) {
+      return {
+        upserted: 0,
+        skipped,
+        inserted: 0,
+        updated: 0,
+        unchanged: 0,
+        failed,
+        unattributed: 0,
+        cancelledReservationsSeen,
+        reservationsMarkedCancelled,
+      };
+    }
+
+    const { error: upsertErr } = await supabase
+      .from("reservations")
+      .upsert(rows, {
+        onConflict:
+          "hospitable_reservation_id",
+      });
+
+    if (upsertErr) throw upsertErr;
+
     return {
-      upserted: 0,
+      upserted: rows.length,
       skipped,
+      inserted,
+      updated,
+      unchanged,
+      failed,
+      unattributed,
+      cancelledReservationsSeen,
+      reservationsMarkedCancelled,
+    };
+  } catch (err) {
+    console.warn("[Hospitable Sync] Supabase reservations upsert failed, fallback to local store:", err);
+
+    let inserted = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let failed = 0;
+    let unattributed = 0;
+    let cancelledReservationsSeen = 0;
+    let reservationsMarkedCancelled = 0;
+
+    reservations.forEach((reservation) => {
+      const hospitablePropertyId = reservation.propertyId.startsWith("hosp-")
+        ? reservation.propertyId.slice(5)
+        : reservation.propertyId;
+
+      const databasePropertyId = propertyIdMap.get(hospitablePropertyId) || reservation.propertyId;
+      const existing = mockDb.reservations.find(
+        (r) => r.hospitableReservationId === reservation.hospitableReservationId
+      );
+
+      if (reservation.reservationStatus === "CANCELLED") {
+        cancelledReservationsSeen += 1;
+        if (!existing || existing.reservationStatus !== "CANCELLED") {
+          reservationsMarkedCancelled += 1;
+        }
+      }
+
+      if (!existing) {
+        inserted += 1;
+        unattributed += 1;
+        const newRes: Reservation = {
+          ...reservation,
+          id: `res-${reservation.hospitableReservationId}`,
+          hospitableReservationId: reservation.hospitableReservationId,
+          propertyId: databasePropertyId,
+          attributionStatus: "UNATTRIBUTED",
+          payoutStatus: "ESTIMATED",
+        };
+        mockDb.reservations = [...mockDb.reservations, newRes];
+      } else {
+        const isAttributed = Boolean(existing.partnerId) && existing.attributionStatus !== "UNATTRIBUTED";
+        if (!isAttributed) {
+          unattributed += 1;
+        }
+
+        const isStatusChanged = existing.reservationStatus !== reservation.reservationStatus;
+        const isPaymentChanged = existing.paymentStatus !== reservation.paymentStatus;
+        const isGrossChanged = Number(existing.bookingAmount ?? 0) !== Number(reservation.bookingAmount ?? 0);
+        const isReceivedChanged = Number(existing.amountReceived ?? 0) !== Number(reservation.amountReceived ?? 0);
+        const isNightsChanged = Number(existing.nights ?? 0) !== Number(reservation.nights || 0);
+
+        if (isStatusChanged || isPaymentChanged || isGrossChanged || isReceivedChanged || isNightsChanged) {
+          updated += 1;
+          mockDb.updateReservation(existing.id, {
+            ...reservation,
+            id: existing.id,
+            partnerId: existing.partnerId,
+            siteId: existing.siteId,
+            attributionStatus: existing.attributionStatus,
+            payoutStatus: existing.payoutStatus,
+          });
+        } else {
+          unchanged += 1;
+        }
+      }
+    });
+
+    return {
+      upserted: reservations.length,
+      skipped: 0,
+      inserted,
+      updated,
+      unchanged,
+      failed: 0,
+      unattributed,
       cancelledReservationsSeen,
       reservationsMarkedCancelled,
     };
   }
-
-  const { error } = await supabase
-    .from("reservations")
-    .upsert(rows, {
-      onConflict:
-        "hospitable_reservation_id",
-    });
-
-  if (error) {
-    throw new Error(
-      `Failed to upsert Hospitable reservations: ${error.message}`
-    );
-  }
-
-  return {
-    upserted: rows.length,
-    skipped,
-    cancelledReservationsSeen,
-    reservationsMarkedCancelled,
-  };
 }
-
