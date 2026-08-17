@@ -203,7 +203,7 @@ export function validateFourPropertyWidgetMappings(
   ];
 
   const seenProperties = new Set<string>();
-  const seenWidgets = new Set<string>();
+  const seenBookingUrls = new Set<string>();
   const validatedMappings: ValidatedPropertyMapping[] = [];
 
   for (const m of mappings) {
@@ -219,11 +219,11 @@ export function validateFourPropertyWidgetMappings(
     }
     seenProperties.add(m.propertyId);
 
-    if (result.widgetId) {
-      if (seenWidgets.has(result.widgetId)) {
-        errors.push(`Duplicate widget UUID "${result.widgetId}" submitted. Each property must have a unique widget.`);
+    if (result.customBookingUrl) {
+      if (seenBookingUrls.has(result.customBookingUrl)) {
+        errors.push(`Duplicate widget URL "${result.customBookingUrl}" submitted. Each property must map to a distinct Hospitable listing URL.`);
       }
-      seenWidgets.add(result.widgetId);
+      seenBookingUrls.add(result.customBookingUrl);
     }
 
     if (result.valid) {
