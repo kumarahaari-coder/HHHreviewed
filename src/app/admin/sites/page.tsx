@@ -18,7 +18,6 @@ import {
 import { db } from "@/lib/db/mockDb";
 import { Site, Partner, RedirectClick } from "@/lib/db/schema";
 import { Card, Badge, Dialog } from "@/components/ui/custom";
-import { getAllPartners, getAllSites, createSiteWithFourPropertyMappings } from "@/lib/supabase/data-store";
 import { validateFourPropertyWidgetMappings } from "@/lib/hospitable/widgets";
 
 const CORE_PROPERTIES = [
@@ -65,10 +64,17 @@ export default function WebsiteManagement() {
   const refreshData = async () => {
     setLoading(true);
     try {
-      const [loadedSites, loadedPartners] = await Promise.all([
-        getAllSites(),
-        getAllPartners()
+      const [sitesRes, partnersRes] = await Promise.all([
+        fetch("/api/admin/sites"),
+        fetch("/api/admin/partners")
       ]);
+
+      const sitesData = await sitesRes.json();
+      const partnersData = await partnersRes.json();
+
+      const loadedSites = sitesData.success && Array.isArray(sitesData.sites) ? sitesData.sites : [];
+      const loadedPartners = partnersData.success && Array.isArray(partnersData.partners) ? partnersData.partners : [];
+
       setSites(loadedSites);
       setPartners(loadedPartners);
       if (loadedPartners.length > 0 && !partnerId) {
@@ -132,13 +138,22 @@ export default function WebsiteManagement() {
 
     setSubmitting(true);
     try {
-      await createSiteWithFourPropertyMappings({
-        partnerId,
-        siteName,
-        websiteUrl,
-        trackingCode,
-        mappings
+      const res = await fetch("/api/admin/sites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          partnerId,
+          siteName: siteName.trim(),
+          websiteUrl: websiteUrl.trim(),
+          trackingCode: trackingCode.trim(),
+          mappings
+        })
       });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to register website.");
+      }
 
       setShowAddDialog(false);
       setSiteName("");
