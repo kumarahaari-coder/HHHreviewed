@@ -742,6 +742,8 @@ export async function createSiteWithFourPropertyMappings(params: {
   const sitePropRows = validation.validatedMappings!.map(m => ({
     site_id: siteRow.id,
     property_id: m.propertyId,
+    hospitable_widget_id: m.hospitableWidgetId,
+    custom_booking_url: m.customBookingUrl,
     status: "active" as any
   }));
 
@@ -762,14 +764,15 @@ export async function createSiteWithFourPropertyMappings(params: {
     websiteUrl: siteRow.website_url,
     bookingUrl: siteRow.website_url,
     trackingCode: siteRow.tracking_code,
-    hospitableWidgetId: siteRow.hospitable_widget_id || "",
+    hospitableWidgetId: validation.validatedMappings![0].hospitableWidgetId,
     status: "ACTIVE",
     launchDate: siteRow.created_at,
     siteProperties: (propsData || []).map(p => ({
       id: p.id,
       siteId: p.site_id,
       propertyId: p.property_id,
-      hospitableWidgetId: "",
+      hospitableWidgetId: p.hospitable_widget_id,
+      customBookingUrl: p.custom_booking_url,
       status: "ACTIVE"
     }))
   };

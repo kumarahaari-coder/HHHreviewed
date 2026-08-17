@@ -411,32 +411,34 @@ export default function WebsiteManagement() {
             </div>
           </div>
 
-          {/* 4 Required Property Widget ID Inputs */}
+          {/* 4 Required Property Widget URL Inputs */}
           <div className="border-t border-brand-blush pt-3 space-y-3">
             <div className="text-xs font-bold text-brand-plum uppercase tracking-wider">
-              Four Required Hospitable Widget IDs *
+              Four Required Hospitable Widget URLs *
             </div>
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 space-y-1">
-              <div className="font-bold">⚠️ Widget Validation Notice:</div>
+              <div className="font-bold">⚠️ Widget URL Format Notice:</div>
               <p>
-                Hospitable API v2 does not provide a widget lookup endpoint. Widget IDs are <strong>manually entered and structurally validated</strong> (non-empty, non-placeholder, intra-site distinct). Resource loadability verification confirms embed availability, but cannot prove property ownership.
+                Enter the full canonical Hospitable widget URL for each property. Example:
+                <br />
+                <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono text-[10px]">https://booking.hospitable.com/widget/a24f47ee-9870-4876-9d7c-9708ed21b489/1087224</code>
               </p>
             </div>
 
             <div className="space-y-2">
               {CORE_PROPERTIES.map(cp => (
                 <div key={cp.id} className="bg-brand-bg/50 p-2.5 rounded-lg border border-brand-blush/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="sm:w-1/2">
+                  <div className="sm:w-2/5">
                     <div className="text-xs font-bold text-brand-plum">{cp.name}</div>
                     <div className="text-[10px] text-zinc-400">{cp.location}</div>
                   </div>
                   <input
-                    type="text"
+                    type="url"
                     required
                     value={widgetIds[cp.id] || ""}
                     onChange={e => handleWidgetChange(cp.id, e.target.value)}
-                    placeholder={`Widget ID for ${cp.name}`}
-                    className="sm:w-1/2 px-2.5 py-1.5 bg-white border border-brand-blush rounded text-xs font-mono focus:outline-none"
+                    placeholder="https://booking.hospitable.com/widget/{widget_uuid}/{listing_id}"
+                    className="sm:w-3/5 px-2.5 py-1.5 bg-white border border-brand-blush rounded text-xs font-mono focus:outline-none placeholder:text-zinc-400"
                   />
                 </div>
               ))}
