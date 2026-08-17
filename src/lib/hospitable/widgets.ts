@@ -248,3 +248,5 @@ export function validateFourPropertyWidgetMappings(
     validatedMappings: errors.length === 0 ? validatedMappings : undefined
   };
 }
+
+export const validateWidgetUrl = validateWidgetId;
