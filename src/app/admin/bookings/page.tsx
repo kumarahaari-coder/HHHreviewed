@@ -16,7 +16,7 @@ import {
   RefreshCw
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
-import { Reservation, Partner, Site } from "@/lib/db/schema";
+import { Reservation, Partner, Site, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
 import { Card, Badge, SlideOver } from "@/components/ui/custom";
 import { runSystemPayoutRecalculation } from "@/lib/payouts";
 
@@ -28,6 +28,7 @@ function BookingsListContent() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
+  const [attributions, setAttributions] = useState<ReservationAttribution[]>([]);
   
   // Search and Filter states
   const [searchQuery, setSearchQuery] = useState("");
@@ -48,10 +49,38 @@ function BookingsListContent() {
   const [reassignPartnerId, setReassignPartnerId] = useState("");
   const [reassignSiteId, setReassignSiteId] = useState("");
 
-  const refreshData = () => {
+  const refreshData = async () => {
     setReservations([...db.reservations]);
     setPartners(db.partners);
     setSites(db.sites);
+
+    try {
+      const res = await fetch("/api/admin/attributions");
+      if (res.ok) {
+        const data = await res.json();
+        setAttributions(data.attributions || []);
+      }
+    } catch {
+      setAttributions(db.reservationAttributions);
+    }
+  };
+
+  const handleAttributionReview = async (attributionId: string, newStatus: ReconciliationStatus) => {
+    try {
+      const res = await fetch(`/api/admin/attributions/${attributionId}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus, reviewedBy: "Super Admin" })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        db.addNotification("SUCCESS", `Attribution status updated to ${newStatus}.`);
+        await refreshData();
+      }
+    } catch (err: any) {
+      console.error("Failed to review attribution:", err);
+    }
   };
 
   useEffect(() => {
@@ -351,10 +380,34 @@ function BookingsListContent() {
                     ? "Ellsworth" 
                     : "Beech Mtn";
 
-                  // Badges
-                  let attrBadge = <Badge type="success">Attributed</Badge>;
-                  if (res.attributionStatus === "UNATTRIBUTED") {
-                    attrBadge = <Badge type="danger">Unattributed</Badge>;
+                  // Check reconciliation attribution
+                  const attr = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
+                  
+                  let attrBadge = <Badge type="gray">Unattributed</Badge>;
+                  if (attr) {
+                    if (attr.status === "ATTRIBUTED") {
+                      attrBadge = (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3" />
+                          Attributed ({attr.confidenceScore}%)
+                        </span>
+                      );
+                    } else if (attr.status === "REVIEW_REQUIRED") {
+                      attrBadge = (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" />
+                          Review Req ({attr.confidenceScore}%)
+                        </span>
+                      );
+                    } else if (attr.status === "REJECTED") {
+                      attrBadge = (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                          Rejected
+                        </span>
+                      );
+                    }
+                  } else if (res.attributionStatus === "ATTRIBUTED") {
+                    attrBadge = <Badge type="success">Attributed</Badge>;
                   } else if (res.attributionStatus === "RECONCILED") {
                     attrBadge = <Badge type="info">Reconciled</Badge>;
                   }
@@ -384,7 +437,7 @@ function BookingsListContent() {
                         <span className="text-[10px] text-zinc-400">to {res.checkOutDate}</span>
                       </td>
                       <td className="p-4 text-xs font-medium">
-                        {site ? site.siteName : <span className="text-rose-500 italic">Missing attribution</span>}
+                        {site ? site.siteName : (attr?.siteId ? (sites.find(s => s.id === attr.siteId)?.siteName || "Candidate Site") : <span className="text-zinc-400 italic">Direct Booking</span>)}
                       </td>
                       <td className="p-4 font-bold text-brand-plum">${res.bookingAmount.toFixed(2)}</td>
                       <td className="p-4">{attrBadge}</td>
@@ -479,55 +532,153 @@ function BookingsListContent() {
               </div>
             </div>
 
-            {/* Attribution Details */}
-            <div className="space-y-2 border-t border-brand-blush pt-4">
-              <h5 className="text-xs font-bold uppercase tracking-widest text-brand-wine">Attribution Info</h5>
-              {selectedRes.attributionStatus === "UNATTRIBUTED" ? (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 space-y-3">
-                  <p className="flex items-center gap-1.5">
-                    <AlertCircle size={14} />
-                    This booking has not been attributed to any partner website.
-                  </p>
-                  <button
-                    onClick={() => {
-                      setReassignPartnerId(partners[0]?.id || "");
-                      const firstSite = sites.find(s => s.partnerId === partners[0]?.id);
-                      setReassignSiteId(firstSite?.id || "");
-                      setShowReassignPanel(true);
-                    }}
-                    className="flex items-center space-x-1 bg-brand-plum text-brand-cream px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-brand-wine transition-all"
-                  >
-                    <LinkIcon size={12} />
-                    <span>Manually Attribute Now</span>
-                  </button>
+            {/* Reconciliation & Attribution Details */}
+            {(() => {
+              const resAttr = attributions.find(a => a.reservationId === selectedRes.id || a.reservationId === selectedRes.hospitableReservationId);
+              const candidatePartner = resAttr?.partnerId ? partners.find(p => p.id === resAttr.partnerId) : null;
+              const candidateSite = resAttr?.siteId ? sites.find(s => s.id === resAttr.siteId) : null;
+
+              return (
+                <div className="space-y-3 border-t border-brand-blush pt-4">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-xs font-bold uppercase tracking-widest text-brand-wine">Reconciliation & Attribution</h5>
+                    {resAttr && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        resAttr.status === "ATTRIBUTED" ? "bg-emerald-100 text-emerald-800" :
+                        resAttr.status === "REVIEW_REQUIRED" ? "bg-amber-100 text-amber-800" :
+                        resAttr.status === "REJECTED" ? "bg-rose-100 text-rose-800" : "bg-zinc-100 text-zinc-600"
+                      }`}>
+                        {resAttr.status} ({resAttr.confidenceScore}%)
+                      </span>
+                    )}
+                  </div>
+
+                  {resAttr ? (
+                    <div className="space-y-3 bg-brand-cream border border-brand-blush rounded-xl p-4 text-xs">
+                      <div className="grid grid-cols-2 gap-2 text-zinc-600 border-b border-brand-blush/40 pb-3">
+                        <div>
+                          <span className="font-semibold text-brand-plum block">Method:</span>
+                          <span className="font-mono text-[11px]">{resAttr.attributionMethod}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-brand-plum block">Confidence:</span>
+                          <span className="font-bold text-brand-wine">{resAttr.confidenceScore}%</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-brand-plum block">Candidate Partner:</span>
+                          <span>{candidatePartner?.businessName || candidatePartner?.contactName || "Unassigned"}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-brand-plum block">Candidate Site:</span>
+                          <span>{candidateSite?.siteName || "Unassigned"}</span>
+                        </div>
+                      </div>
+
+                      {/* Matched Signals */}
+                      <div>
+                        <span className="font-semibold text-brand-plum block text-[10px] uppercase mb-1">Matched Signals:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {resAttr.matchedSignals.map((sig, idx) => (
+                            <span key={idx} className="bg-brand-blush/50 text-brand-plum text-[10px] font-mono px-1.5 py-0.5 rounded">
+                              {sig}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Competing Candidates (if any) */}
+                      {resAttr.competingCandidates && resAttr.competingCandidates.length > 1 && (
+                        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 space-y-1">
+                          <span className="font-bold text-[11px] block flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                            Multi-Partner Click Collision ({resAttr.competingCandidates.length} competing sources)
+                          </span>
+                          <div className="space-y-1 text-[10px]">
+                            {resAttr.competingCandidates.map((cc, i) => (
+                              <div key={i} className="flex justify-between font-mono">
+                                <span>{sites.find(s => s.id === cc.siteId)?.siteName || cc.siteId}</span>
+                                <span>{cc.elapsedHours}h before booking</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Review Actions */}
+                      {resAttr.status === "REVIEW_REQUIRED" && (
+                        <div className="pt-2 border-t border-brand-blush/40 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAttributionReview(resAttr.id, "REJECTED")}
+                            className="px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-50 rounded-lg border border-rose-200 transition-colors"
+                          >
+                            Reject Attribution
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAttributionReview(resAttr.id, "ATTRIBUTED")}
+                            className="px-3 py-1.5 text-xs font-bold bg-brand-plum text-brand-cream hover:bg-brand-wine rounded-lg shadow-sm transition-all"
+                          >
+                            Confirm & Approve Attribution
+                          </button>
+                        </div>
+                      )}
+
+                      {resAttr.status === "ATTRIBUTED" && (
+                        <div className="text-[11px] text-emerald-800 bg-emerald-50 p-2 rounded border border-emerald-200 flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>Approved by {resAttr.reviewedBy || "Super Admin"}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : selectedRes.attributionStatus === "UNATTRIBUTED" ? (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 space-y-3">
+                      <p className="flex items-center gap-1.5">
+                        <AlertCircle size={14} />
+                        This direct booking has not been matched with any partner click in the last 72 hours.
+                      </p>
+                      <button
+                        onClick={() => {
+                          setReassignPartnerId(partners[0]?.id || "");
+                          const firstSite = sites.find(s => s.partnerId === partners[0]?.id);
+                          setReassignSiteId(firstSite?.id || "");
+                          setShowReassignPanel(true);
+                        }}
+                        className="flex items-center space-x-1 bg-brand-plum text-brand-cream px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-brand-wine transition-all"
+                      >
+                        <LinkIcon size={12} />
+                        <span>Manually Attribute Now</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 text-xs text-zinc-600 bg-brand-cream border border-brand-blush rounded-lg p-3">
+                      <div>
+                        <span className="font-semibold text-brand-plum">Partner Owner:</span>{" "}
+                        {partners.find(p => p.id === selectedRes.partnerId)?.contactName || "Unknown"}
+                      </div>
+                      <div>
+                        <span className="font-semibold text-brand-plum">Source Website:</span>{" "}
+                        {sites.find(s => s.id === selectedRes.siteId)?.siteName || "Unknown"}
+                      </div>
+                      <div>
+                        <span className="font-semibold text-brand-plum">Attribution Match:</span>{" "}
+                        {selectedRes.attributionSource || "Unknown"}
+                      </div>
+                      <button
+                        onClick={() => {
+                          setReassignPartnerId(selectedRes.partnerId || partners[0]?.id || "");
+                          setReassignSiteId(selectedRes.siteId || "");
+                          setShowReassignPanel(true);
+                        }}
+                        className="text-brand-wine hover:underline font-semibold mt-2 block"
+                      >
+                        Reassign / Edit Attribution →
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="space-y-1.5 text-xs text-zinc-600 bg-brand-cream border border-brand-blush rounded-lg p-3">
-                  <div>
-                    <span className="font-semibold text-brand-plum">Partner Owner:</span>{" "}
-                    {partners.find(p => p.id === selectedRes.partnerId)?.contactName || "Unknown"}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-brand-plum">Source Website:</span>{" "}
-                    {sites.find(s => s.id === selectedRes.siteId)?.siteName || "Unknown"}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-brand-plum">Attribution Match:</span>{" "}
-                    {selectedRes.attributionSource || "Unknown"}
-                  </div>
-                  <button
-                    onClick={() => {
-                      setReassignPartnerId(selectedRes.partnerId || partners[0]?.id || "");
-                      setReassignSiteId(selectedRes.siteId || "");
-                      setShowReassignPanel(true);
-                    }}
-                    className="text-brand-wine hover:underline font-semibold mt-2 block"
-                  >
-                    Reassign / Edit Attribution →
-                  </button>
-                </div>
-              )}
-            </div>
+              );
+            })()}
 
             {/* Manual Reconciliation Sub-panel */}
             {showReassignPanel && (

@@ -1,5 +1,5 @@
 import { createAdminClient } from "./admin";
-import { User, Partner, Site, Payout, UserRole } from "@/lib/db/schema";
+import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
 /**
@@ -8,6 +8,7 @@ import { db as mockDb } from "@/lib/db/mockDb";
  * Controlled strictly by DATA_STORE environment variable ("supabase" | "mock").
  */
 export function isSupabaseEnabled(): boolean {
+  if (process.env.DATA_STORE === "mock") return false;
   return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
@@ -169,13 +170,14 @@ export async function createCreatorInvitation(params: {
   partnerCode?: string;
   performedByUserId?: string;
   source?: string;
+  role?: UserRole | string;
 }): Promise<User> {
   if (!isSupabaseEnabled()) {
     const user: User = {
       id: params.internalUserId,
       name: params.name,
       email: params.email,
-      role: "CREATOR",
+      role: (params.role as UserRole) || "CREATOR",
       partnerId: params.partnerId,
       status: "INVITED",
       onboardingStatus: "INVITED",
@@ -193,7 +195,8 @@ export async function createCreatorInvitation(params: {
     p_partner_id: params.partnerId || null,
     p_partner_code: params.partnerCode || null,
     p_performed_by_user_id: params.performedByUserId || null,
-    p_source: params.source || "ADMIN_CONSOLE"
+    p_source: params.source || "ADMIN_CONSOLE",
+    p_role: params.role || "CREATOR"
   });
 
   if (error || !data?.success) {
@@ -769,5 +772,418 @@ export async function createSiteWithFourPropertyMappings(params: {
       hospitableWidgetId: "",
       status: "ACTIVE"
     }))
+  };
+}
+
+/**
+ * Click Tracking Persistence Layer
+ */
+export async function recordRedirectClick(click: Omit<RedirectClick, "id" | "createdAt">): Promise<RedirectClick> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.addRedirectClick(click);
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("redirect_clicks")
+    .insert({
+      site_id: click.siteId,
+      partner_id: click.partnerId,
+      property_id: click.propertyId,
+      site_property_id: click.sitePropertyId || null,
+      tracking_code: click.trackingCode,
+      widget_url: click.widgetUrl,
+      anonymous_session_id: click.anonymousSessionId,
+      referrer_url: click.referrerUrl || null,
+      user_agent_summary: click.userAgentSummary || null,
+      ip_hash: click.ipHash || null,
+      clicked_at: click.clickedAt,
+      expires_at: click.expiresAt
+    })
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    console.error("[DataStore Error] recordRedirectClick failed:", error);
+    throw new Error(`Failed to record redirect click: ${error?.message || "Insert failed"}`);
+  }
+
+  return {
+    id: data.id,
+    siteId: data.site_id,
+    partnerId: data.partner_id,
+    propertyId: data.property_id,
+    sitePropertyId: data.site_property_id || undefined,
+    trackingCode: data.tracking_code,
+    widgetUrl: data.widget_url,
+    anonymousSessionId: data.anonymous_session_id,
+    referrerUrl: data.referrer_url || undefined,
+    userAgentSummary: data.user_agent_summary || undefined,
+    ipHash: data.ip_hash || undefined,
+    clickedAt: data.clicked_at,
+    expiresAt: data.expires_at,
+    createdAt: data.created_at
+  };
+}
+
+export async function getRedirectClicksForPropertyWindow(
+  propertyId: string,
+  startTime: string,
+  endTime: string
+): Promise<RedirectClick[]> {
+  if (!isSupabaseEnabled()) {
+    const startMs = new Date(startTime).getTime();
+    const endMs = new Date(endTime).getTime();
+    return mockDb.redirectClicks.filter(c => {
+      if (c.propertyId !== propertyId) return false;
+      const cMs = new Date(c.clickedAt).getTime();
+      return cMs >= startMs && cMs <= endMs;
+    });
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("redirect_clicks")
+    .select("*")
+    .eq("property_id", propertyId)
+    .gte("clicked_at", startTime)
+    .lte("clicked_at", endTime)
+    .order("clicked_at", { ascending: false });
+
+  if (error) {
+    console.error("[DataStore Error] getRedirectClicksForPropertyWindow failed:", error);
+    throw new Error(`Failed to fetch clicks for property window: ${error.message}`);
+  }
+
+  return (data || []).map(d => ({
+    id: d.id,
+    siteId: d.site_id,
+    partnerId: d.partner_id,
+    propertyId: d.property_id,
+    sitePropertyId: d.site_property_id || undefined,
+    trackingCode: d.tracking_code,
+    widgetUrl: d.widget_url,
+    anonymousSessionId: d.anonymous_session_id,
+    referrerUrl: d.referrer_url || undefined,
+    userAgentSummary: d.user_agent_summary || undefined,
+    ipHash: d.ip_hash || undefined,
+    clickedAt: d.clicked_at,
+    expiresAt: d.expires_at,
+    createdAt: d.created_at
+  }));
+}
+
+export async function getClickAnalyticsSummary(): Promise<{
+  totalClicks: number;
+  clicksBySite: { siteId: string; siteName: string; count: number }[];
+  clicksByPartner: { partnerId: string; partnerName: string; count: number }[];
+  clicksByProperty: { propertyId: string; propertyName: string; count: number }[];
+  dailyTrends: { date: string; count: number }[];
+  recentClicks: RedirectClick[];
+}> {
+  let clicks: RedirectClick[] = [];
+  let sites: Site[] = [];
+  let partners: Partner[] = [];
+
+  if (!isSupabaseEnabled()) {
+    clicks = mockDb.redirectClicks;
+    sites = mockDb.sites;
+    partners = mockDb.partners;
+  } else {
+    const supabase = assertSupabaseClient();
+    const [clicksRes, sitesRes, partnersRes] = await Promise.all([
+      supabase.from("redirect_clicks").select("*").order("clicked_at", { ascending: false }).limit(500),
+      supabase.from("sites").select("id, site_name, partner_id"),
+      supabase.from("partners").select("id, partner_name")
+    ]);
+
+    clicks = (clicksRes.data || []).map(d => ({
+      id: d.id,
+      siteId: d.site_id,
+      partnerId: d.partner_id,
+      propertyId: d.property_id,
+      sitePropertyId: d.site_property_id || undefined,
+      trackingCode: d.tracking_code,
+      widgetUrl: d.widget_url,
+      anonymousSessionId: d.anonymous_session_id,
+      referrerUrl: d.referrer_url || undefined,
+      userAgentSummary: d.user_agent_summary || undefined,
+      ipHash: d.ip_hash || undefined,
+      clickedAt: d.clicked_at,
+      expiresAt: d.expires_at,
+      createdAt: d.created_at
+    }));
+
+    sites = (sitesRes.data || []).map(s => ({
+      id: s.id,
+      partnerId: s.partner_id,
+      siteName: s.site_name,
+      websiteUrl: "",
+      hospitableWidgetId: "",
+      bookingUrl: "",
+      trackingCode: "",
+      status: "ACTIVE" as any,
+      launchDate: ""
+    }));
+
+    partners = (partnersRes.data || []).map((p: any) => ({
+      id: p.id,
+      businessName: p.business_name || p.partner_name || "Partner",
+      contactName: p.contact_name || p.partner_name || "Partner",
+      email: p.email || "",
+      phone: p.phone || "",
+      paymentMethod: "BANK_TRANSFER" as any,
+      currency: "USD",
+      payoutFrequency: "MONTHLY" as any,
+      status: "ACTIVE" as any,
+      createdAt: ""
+    }));
+  }
+
+  const siteMap = new Map(sites.map(s => [s.id, s.siteName]));
+  const partnerMap = new Map(partners.map(p => [p.id, p.businessName || p.contactName]));
+
+  const propertyNames: Record<string, string> = {
+    "38d9159e-a35d-405e-826e-7381ad3c3197": "Uptown St. Augustine",
+    "f0fb867d-47cd-47d4-afa6-c4bf226c1768": "Downtown St. Augustine",
+    "51be6158-268d-4c96-8f0b-9968f544ddfa": "Ellsworth, Maine",
+    "55791a54-b1a3-459e-bbd5-9073a418b774": "Beech Mountain, NC",
+    "prop-001": "Uptown Retreat",
+    "prop-002": "Downtown Retreat",
+    "prop-003": "Ellsworth Retreat",
+    "prop-004": "Beech Mountain Retreat"
+  };
+
+  // Group by site
+  const siteCounts: Record<string, number> = {};
+  const partnerCounts: Record<string, number> = {};
+  const propCounts: Record<string, number> = {};
+  const dailyCounts: Record<string, number> = {};
+
+  for (const c of clicks) {
+    siteCounts[c.siteId] = (siteCounts[c.siteId] || 0) + 1;
+    partnerCounts[c.partnerId] = (partnerCounts[c.partnerId] || 0) + 1;
+    propCounts[c.propertyId] = (propCounts[c.propertyId] || 0) + 1;
+
+    const day = c.clickedAt.slice(0, 10);
+    dailyCounts[day] = (dailyCounts[day] || 0) + 1;
+  }
+
+  return {
+    totalClicks: clicks.length,
+    clicksBySite: Object.entries(siteCounts).map(([siteId, count]) => ({
+      siteId,
+      siteName: siteMap.get(siteId) || siteId,
+      count
+    })).sort((a, b) => b.count - a.count),
+    clicksByPartner: Object.entries(partnerCounts).map(([partnerId, count]) => ({
+      partnerId,
+      partnerName: partnerMap.get(partnerId) || partnerId,
+      count
+    })).sort((a, b) => b.count - a.count),
+    clicksByProperty: Object.entries(propCounts).map(([propertyId, count]) => ({
+      propertyId,
+      propertyName: propertyNames[propertyId] || propertyId,
+      count
+    })).sort((a, b) => b.count - a.count),
+    dailyTrends: Object.entries(dailyCounts).map(([date, count]) => ({
+      date,
+      count
+    })).sort((a, b) => a.date.localeCompare(b.date)),
+    recentClicks: clicks.slice(0, 50)
+  };
+}
+
+/**
+ * Reservation Attributions Persistence Layer
+ */
+export async function saveReservationAttribution(
+  attr: Omit<ReservationAttribution, "id" | "createdAt" | "updatedAt">
+): Promise<ReservationAttribution> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.saveReservationAttribution(attr);
+  }
+
+  const supabase = assertSupabaseClient();
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("reservation_attributions")
+    .upsert({
+      reservation_id: attr.reservationId,
+      site_id: attr.siteId || null,
+      partner_id: attr.partnerId || null,
+      site_property_id: attr.sitePropertyId || null,
+      click_id: attr.clickId || null,
+      attribution_method: attr.attributionMethod,
+      confidence_score: attr.confidenceScore,
+      matched_signals: attr.matchedSignals,
+      competing_candidates: attr.competingCandidates || [],
+      status: attr.status,
+      reviewed_by: attr.reviewedBy || null,
+      reviewed_at: attr.reviewedAt || null,
+      updated_at: now
+    }, {
+      onConflict: "reservation_id"
+    })
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    console.error("[DataStore Error] saveReservationAttribution failed:", error);
+    throw new Error(`Failed to save reservation attribution: ${error?.message || "Upsert failed"}`);
+  }
+
+  return {
+    id: data.id,
+    reservationId: data.reservation_id,
+    siteId: data.site_id || undefined,
+    partnerId: data.partner_id || undefined,
+    sitePropertyId: data.site_property_id || undefined,
+    clickId: data.click_id || undefined,
+    attributionMethod: data.attribution_method,
+    confidenceScore: Number(data.confidence_score),
+    matchedSignals: data.matched_signals || [],
+    competingCandidates: data.competing_candidates || [],
+    status: data.status,
+    reviewedBy: data.reviewed_by || undefined,
+    reviewedAt: data.reviewed_at || undefined,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at
+  };
+}
+
+export async function getReservationAttributions(): Promise<ReservationAttribution[]> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.reservationAttributions;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("reservation_attributions")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[DataStore Error] getReservationAttributions failed:", error);
+    throw new Error(`Failed to fetch reservation attributions: ${error.message}`);
+  }
+
+  return (data || []).map(d => ({
+    id: d.id,
+    reservationId: d.reservation_id,
+    siteId: d.site_id || undefined,
+    partnerId: d.partner_id || undefined,
+    sitePropertyId: d.site_property_id || undefined,
+    clickId: d.click_id || undefined,
+    attributionMethod: d.attribution_method,
+    confidenceScore: Number(d.confidence_score),
+    matchedSignals: d.matched_signals || [],
+    competingCandidates: d.competing_candidates || [],
+    status: d.status,
+    reviewedBy: d.reviewed_by || undefined,
+    reviewedAt: d.reviewed_at || undefined,
+    createdAt: d.created_at,
+    updatedAt: d.updated_at
+  }));
+}
+
+export async function getReservationAttributionByReservationId(
+  reservationId: string
+): Promise<ReservationAttribution | null> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.reservationAttributions.find(a => a.reservationId === reservationId) || null;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("reservation_attributions")
+    .select("*")
+    .eq("reservation_id", reservationId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[DataStore Error] getReservationAttributionByReservationId failed:", error);
+    throw new Error(`Failed to fetch attribution for reservation: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    reservationId: data.reservation_id,
+    siteId: data.site_id || undefined,
+    partnerId: data.partner_id || undefined,
+    sitePropertyId: data.site_property_id || undefined,
+    clickId: data.click_id || undefined,
+    attributionMethod: data.attribution_method,
+    confidenceScore: Number(data.confidence_score),
+    matchedSignals: data.matched_signals || [],
+    competingCandidates: data.competing_candidates || [],
+    status: data.status,
+    reviewedBy: data.reviewed_by || undefined,
+    reviewedAt: data.reviewed_at || undefined,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at
+  };
+}
+
+export async function updateReservationAttributionStatus(
+  id: string,
+  status: ReconciliationStatus,
+  reviewedBy?: string
+): Promise<ReservationAttribution> {
+  if (!isSupabaseEnabled()) {
+    const list = mockDb.reservationAttributions;
+    const idx = list.findIndex(a => a.id === id);
+    if (idx < 0) throw new Error(`Attribution record ${id} not found in mockDb`);
+    const updated: ReservationAttribution = {
+      ...list[idx],
+      status,
+      reviewedBy,
+      reviewedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    list[idx] = updated;
+    mockDb.reservationAttributions = [...list];
+    return updated;
+  }
+
+  const supabase = assertSupabaseClient();
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("reservation_attributions")
+    .update({
+      status,
+      reviewed_by: reviewedBy || null,
+      reviewed_at: now,
+      updated_at: now
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    console.error("[DataStore Error] updateReservationAttributionStatus failed:", error);
+    throw new Error(`Failed to update attribution status: ${error?.message || "Update failed"}`);
+  }
+
+  return {
+    id: data.id,
+    reservationId: data.reservation_id,
+    siteId: data.site_id || undefined,
+    partnerId: data.partner_id || undefined,
+    sitePropertyId: data.site_property_id || undefined,
+    clickId: data.click_id || undefined,
+    attributionMethod: data.attribution_method,
+    confidenceScore: Number(data.confidence_score),
+    matchedSignals: data.matched_signals || [],
+    competingCandidates: data.competing_candidates || [],
+    status: data.status,
+    reviewedBy: data.reviewed_by || undefined,
+    reviewedAt: data.reviewed_at || undefined,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at
   };
 }

@@ -33,6 +33,7 @@ import {
 
 import { getHospitableConfig } from "@/lib/hospitable/config";
 import { acquireSyncLease, releaseSyncLease, type SyncLease } from "@/lib/hospitable/lock";
+import { reconcileReservation } from "@/lib/reconciliation/reconcile";
 
 export type SyncTrigger = "manual" | "cron";
 export type SyncMode = "full" | "incremental";
@@ -343,6 +344,26 @@ export async function runHospitableSync(
         );
 
     const upsertMs = Math.round(performance.now() - upsertStart);
+
+    // Step 11b: Run non-destructive reservation reconciliation on persisted direct bookings
+    if (!options.dryRun && validReservations.length > 0) {
+      for (const res of validReservations) {
+        const dbPropId = propertyPersistence.propertyIdMap.get(
+          res.propertyId.startsWith("hosp-") ? res.propertyId.slice(5) : res.propertyId
+        );
+        if (dbPropId && res.hospitableReservationId) {
+          try {
+            await reconcileReservation({
+              id: res.id || res.hospitableReservationId,
+              propertyId: dbPropId,
+              bookingDate: res.bookingDate
+            });
+          } catch (reconErr) {
+            console.error(`[Sync Runner] Reconciliation error for res ${res.hospitableReservationId}:`, reconErr);
+          }
+        }
+      }
+    }
 
     // Step 12: Calculate skipped totals & metrics
     const validationSkippedCount =

@@ -241,3 +241,58 @@ export interface SystemNotification {
   createdAt: string;
 }
 
+export interface RedirectClick {
+  id: string;
+  siteId: string;
+  partnerId: string;
+  propertyId: string;
+  sitePropertyId?: string;
+  trackingCode: string;
+  widgetUrl: string;
+  anonymousSessionId: string;
+  referrerUrl?: string;
+  userAgentSummary?: string;
+  ipHash?: string;
+  clickedAt: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export type AttributionMethod =
+  | "TIME_WINDOW_PROBABILISTIC"
+  | "DIRECT_WIDGET"
+  | "MANUAL_ADMIN"
+  | "UNATTRIBUTED";
+
+export type ReconciliationStatus =
+  | "REVIEW_REQUIRED"
+  | "ATTRIBUTED"
+  | "UNATTRIBUTED"
+  | "REJECTED";
+
+export interface CompetingCandidate {
+  siteId: string;
+  partnerId: string;
+  clickId: string;
+  clickedAt: string;
+  elapsedHours: number;
+}
+
+export interface ReservationAttribution {
+  id: string;
+  reservationId: string;
+  siteId?: string;
+  partnerId?: string;
+  sitePropertyId?: string;
+  clickId?: string;
+  attributionMethod: AttributionMethod;
+  confidenceScore: number; // 0.00 to 100.00
+  matchedSignals: string[]; // e.g. ["PROPERTY_MATCH", "CLICK_WITHIN_24H", "SINGLE_REFERRAL_CANDIDATE"]
+  competingCandidates?: CompetingCandidate[];
+  status: ReconciliationStatus;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

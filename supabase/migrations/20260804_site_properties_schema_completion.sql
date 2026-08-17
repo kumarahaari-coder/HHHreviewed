@@ -12,7 +12,6 @@ BEGIN;
 DO $$
 DECLARE
     v_row_count INTEGER;
-    v_col_count INTEGER;
 BEGIN
     -- Assert table public.site_properties exists
     IF NOT EXISTS (
@@ -27,41 +26,30 @@ BEGIN
     IF v_row_count > 0 THEN
         RAISE EXCEPTION 'Preflight Failure: public.site_properties contains % rows. Aborting schema modification to protect data.', v_row_count;
     END IF;
-
-    -- Assert existing physical columns match audited state (site_id, property_id, created_at)
-    SELECT COUNT(*) INTO v_col_count
-    FROM information_schema.columns
-    WHERE table_schema = 'public' 
-      AND table_name = 'site_properties'
-      AND column_name IN ('site_id', 'property_id', 'created_at');
-
-    IF v_col_count < 2 THEN
-        RAISE EXCEPTION 'Preflight Failure: Existing site_properties table is missing required site_id or property_id columns.';
-    END IF;
 END $$;
 
 -- ------------------------------------------------------------------------------
 -- 2. ADD MISSING COLUMNS SAFELY (Table is confirmed 0 rows)
 -- ------------------------------------------------------------------------------
 
--- Add id UUID DEFAULT gen_random_uuid()
+-- Add id UUID NOT NULL DEFAULT gen_random_uuid()
 ALTER TABLE public.site_properties 
-  ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid();
+  ADD COLUMN IF NOT EXISTS id UUID NOT NULL DEFAULT gen_random_uuid();
 
--- Set id NOT NULL and add PRIMARY KEY constraint if not present
+-- Add UNIQUE(id) constraint so it can be referenced by foreign keys
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint 
-        WHERE conrelid = 'public.site_properties'::regclass AND contype = 'p'
+        WHERE conrelid = 'public.site_properties'::regclass AND conname = 'site_properties_id_unique'
     ) THEN
-        ALTER TABLE public.site_properties ADD PRIMARY KEY (id);
+        ALTER TABLE public.site_properties ADD CONSTRAINT site_properties_id_unique UNIQUE (id);
     END IF;
 END $$;
 
 -- Add hospitable_widget_id TEXT NOT NULL
 ALTER TABLE public.site_properties 
-  ADD COLUMN IF NOT EXISTS hospitable_widget_id TEXT;
+  ADD COLUMN IF NOT EXISTS hospitable_widget_id TEXT NOT NULL;
 
 -- Add custom_booking_url TEXT NULLABLE
 ALTER TABLE public.site_properties 
@@ -71,26 +59,16 @@ ALTER TABLE public.site_properties
 ALTER TABLE public.site_properties 
   ADD COLUMN IF NOT EXISTS status public.record_status NOT NULL DEFAULT 'active'::public.record_status;
 
--- Add updated_at TIMESTAMPTZ DEFAULT NOW()
+-- Add updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 ALTER TABLE public.site_properties 
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- ------------------------------------------------------------------------------
--- 3. CONSTRAINTS, INDEXES & SECURITY
+-- 3. INDEXES & RLS SECURITY
 -- ------------------------------------------------------------------------------
 
--- Ensure UNIQUE(site_id, property_id) constraint
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint 
-        WHERE conrelid = 'public.site_properties'::regclass AND conname = 'unique_site_property'
-    ) THEN
-        ALTER TABLE public.site_properties ADD CONSTRAINT unique_site_property UNIQUE (site_id, property_id);
-    END IF;
-END $$;
-
--- Ensure indexes exist on site_id and property_id
+-- Ensure indexes exist
+CREATE INDEX IF NOT EXISTS idx_site_properties_id ON public.site_properties(id);
 CREATE INDEX IF NOT EXISTS idx_site_properties_site_id ON public.site_properties(site_id);
 CREATE INDEX IF NOT EXISTS idx_site_properties_property_id ON public.site_properties(property_id);
 

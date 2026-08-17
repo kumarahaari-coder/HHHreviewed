@@ -9,6 +9,8 @@ import {
   PayoutBatch,
   AuditLog,
   SystemNotification,
+  RedirectClick,
+  ReservationAttribution,
   UserRole,
   PartnerStatus,
   SiteStatus,
@@ -21,6 +23,42 @@ import {
 
 // Seed Properties
 const INITIAL_PROPERTIES: Property[] = [
+  {
+    id: "38d9159e-a35d-405e-826e-7381ad3c3197",
+    hospitablePropertyId: "058aed01-470f-4ca7-a191-37c597e7f377",
+    name: "Uptown St. Augustine",
+    location: "St. Augustine, FL",
+    timezone: "America/New_York",
+    imageUrl: "https://hiddenhoneyhomes.com/wp-content/uploads/2026/05/hhh-updown-img1-scaled.webp",
+    status: "ACTIVE"
+  },
+  {
+    id: "f0fb867d-47cd-47d4-afa6-c4bf226c1768",
+    hospitablePropertyId: "5da25edc-88ac-43c4-876a-f7b626c88ecd",
+    name: "Downtown St. Augustine (Lincoln)",
+    location: "St. Augustine, FL",
+    timezone: "America/New_York",
+    imageUrl: "https://hiddenhoneyhomes.com/wp-content/uploads/2026/05/hhh-down-img1-scaled.webp",
+    status: "ACTIVE"
+  },
+  {
+    id: "51be6158-268d-4c96-8f0b-9968f544ddfa",
+    hospitablePropertyId: "abe5540b-8cbc-4bc2-b561-b25f7d4d35b0",
+    name: "Ellsworth, Maine",
+    location: "Ellsworth, ME",
+    timezone: "America/New_York",
+    imageUrl: "https://hiddenhoneyhomes.com/wp-content/uploads/2026/03/image1.jpg",
+    status: "ACTIVE"
+  },
+  {
+    id: "55791a54-b1a3-459e-bbd5-9073a418b774",
+    hospitablePropertyId: "e5552f35-6f5a-4afc-afd1-d0a676e98dc4",
+    name: "Beech Mountain, NC",
+    location: "Beech Mountain, NC",
+    timezone: "America/New_York",
+    imageUrl: "https://hiddenhoneyhomes.com/wp-content/uploads/2026/05/hhh-beeach-img1-scaled.webp",
+    status: "ACTIVE"
+  },
   {
     id: "prop-001",
     hospitablePropertyId: "hosp-prop-uptown",
@@ -153,12 +191,22 @@ const INITIAL_SITES: Site[] = [
     partnerId: "partner-001",
     siteName: "Megs Brass Stays",
     websiteUrl: "https://megsbrass.com/pages/stays",
-    hospitableWidgetId: "widget_megs_stays_01",
-    bookingUrl: "https://book.hiddenhoneyhomes.com/r/site-001",
+    hospitableWidgetId: "a24f47ee-9870-4876-9d7c-9708ed21b489",
+    bookingUrl: "https://booking.hospitable.com/widget/a24f47ee-9870-4876-9d7c-9708ed21b489/1087224",
     trackingCode: "MB-UPTOWN-1",
     commissionRuleId: "rule-001", // 10% Gross
     status: "ACTIVE",
-    launchDate: "2026-02-20"
+    launchDate: "2026-02-20",
+    siteProperties: [
+      {
+        id: "sp-site-001-beech",
+        siteId: "site-001",
+        propertyId: "55791a54-b1a3-459e-bbd5-9073a418b774",
+        hospitableWidgetId: "a24f47ee-9870-4876-9d7c-9708ed21b489",
+        customBookingUrl: "https://booking.hospitable.com/widget/a24f47ee-9870-4876-9d7c-9708ed21b489/1087224",
+        status: "ACTIVE"
+      }
+    ]
   },
   {
     id: "site-002",
@@ -733,6 +781,48 @@ class MockDatabase {
 
   get idempotencyLogs(): any[] { return this.getStorage("hhh_idempotency_logs", []); }
   set idempotencyLogs(val: any[]) { this.setStorage("hhh_idempotency_logs", val); }
+
+  get redirectClicks(): RedirectClick[] { return this.getStorage("hhh_redirect_clicks_store", []); }
+  set redirectClicks(val: RedirectClick[]) { this.setStorage("hhh_redirect_clicks_store", val); }
+
+  get reservationAttributions(): ReservationAttribution[] { return this.getStorage("hhh_reservation_attributions_store", []); }
+  set reservationAttributions(val: ReservationAttribution[]) { this.setStorage("hhh_reservation_attributions_store", val); }
+
+  addRedirectClick(click: Omit<RedirectClick, "id" | "createdAt">): RedirectClick {
+    const list = this.redirectClicks;
+    const newClick: RedirectClick = {
+      ...click,
+      id: `click-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      createdAt: new Date().toISOString()
+    };
+    this.redirectClicks = [newClick, ...list];
+    return newClick;
+  }
+
+  saveReservationAttribution(attr: Omit<ReservationAttribution, "id" | "createdAt" | "updatedAt">): ReservationAttribution {
+    const list = this.reservationAttributions;
+    const now = new Date().toISOString();
+    const existingIdx = list.findIndex(a => a.reservationId === attr.reservationId);
+    if (existingIdx >= 0) {
+      const updated: ReservationAttribution = {
+        ...list[existingIdx],
+        ...attr,
+        updatedAt: now
+      };
+      list[existingIdx] = updated;
+      this.reservationAttributions = [...list];
+      return updated;
+    } else {
+      const created: ReservationAttribution = {
+        ...attr,
+        id: `attr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.reservationAttributions = [created, ...list];
+      return created;
+    }
+  }
 
   // Tax Document Helpers
   getTaxDocumentByPartner(partnerId: string) {

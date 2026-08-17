@@ -33,8 +33,7 @@ export async function POST(req: NextRequest) {
       contactName,
       businessName,
       email,
-      partnerId,
-      partnerCode
+      partnerCode: customPartnerCode
     } = body;
 
     if (!contactName || !businessName || !email) {
@@ -43,40 +42,76 @@ export async function POST(req: NextRequest) {
 
     const normalizedEmail = email.toLowerCase().trim();
 
+    // STEP 1: Duplicate Email Pre-Check
     const existingUser = await findUserByEmail(normalizedEmail);
     if (existingUser) {
       return NextResponse.json({ success: false, error: `A partner account with email ${email} already exists.` }, { status: 409 });
     }
 
+    // STEP 2: Create Real Partner Row
+    let createdPartner;
+    try {
+      createdPartner = await createPartner({
+        businessName: businessName.trim(),
+        contactName: contactName.trim(),
+        contactEmail: normalizedEmail,
+        partnerCode: customPartnerCode ? customPartnerCode.trim() : undefined
+      });
+    } catch (partnerErr: any) {
+      console.error("[Admin Partner Create] Failed to create partner row:", partnerErr);
+      return NextResponse.json({ success: false, error: `Failed to create partner record: ${partnerErr.message}` }, { status: 500 });
+    }
+
     const internalUserId = `user-partner-${Date.now().toString(36)}`;
 
-    // STEP 1: Create Creator User Invitation via DataStore RPC
-    const user = await createCreatorInvitation({
-      internalUserId,
-      name: contactName,
-      email: normalizedEmail,
-      partnerId,
-      partnerCode,
-      performedByUserId: session.userId,
-      source: "ADMIN_CONSOLE"
-    });
+    // STEP 3: Create Partner Owner User via DataStore RPC
+    let user;
+    try {
+      user = await createCreatorInvitation({
+        internalUserId,
+        name: contactName.trim(),
+        email: normalizedEmail,
+        partnerId: createdPartner.id,
+        partnerCode: createdPartner.partnerCode,
+        role: "PARTNER_OWNER",
+        performedByUserId: session.userId,
+        source: "ADMIN_CONSOLE"
+      });
+    } catch (userErr: any) {
+      console.error("[Admin Partner Create] User creation failed, rolling back partner row:", userErr);
+      try {
+        await deletePartner(createdPartner.id);
+      } catch (cleanupErr: any) {
+        console.error("[Admin Partner Create] Failed to rollback partner row:", cleanupErr);
+      }
+      return NextResponse.json({ success: false, error: `Failed to create partner user: ${userErr.message}` }, { status: 500 });
+    }
 
-    // STEP 2: Issue Clerk Invitation
-    const clerkResult = await createClerkPartnerInvitation(normalizedEmail, user.partnerId || "", user.id, "CREATOR");
+    // STEP 4: Issue Clerk Invitation
+    const clerkResult = await createClerkPartnerInvitation(
+      normalizedEmail,
+      createdPartner.id,
+      user.id,
+      "PARTNER_OWNER"
+    );
 
     if (!clerkResult.success || !clerkResult.invitationId) {
+      console.error("[Admin Partner Create] Clerk invitation failed for user:", user.id, clerkResult.error);
       return NextResponse.json({
         success: false,
-        error: `Failed to create Clerk invitation for ${email}: ${clerkResult.error}`
+        error: `Partner "${businessName}" was created, but failed to send Clerk invitation: ${clerkResult.error}. You can resend the invitation from the partner menu.`,
+        partner: createdPartner,
+        user
       }, { status: 502 });
     }
 
-    // STEP 3: Store invitation ID
+    // STEP 5: Store Clerk Invitation ID
     await updateClerkInvitation(user.id, clerkResult.invitationId);
 
     return NextResponse.json({
       success: true,
       message: `Partner "${businessName}" created successfully. Status set to INVITED. Clerk invitation sent.`,
+      partner: createdPartner,
       user,
       clerkInvitationId: clerkResult.invitationId
     });
