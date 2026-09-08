@@ -44,8 +44,8 @@ export const HHH_CORE_PROPERTIES: HhhCoreProperty[] = [
     location: "St. Augustine, FL",
     websiteUrl: "https://hiddenhoneyhomes.com/retreats/uptown-st-augustine-fl",
     bookingUrl: "https://hiddenhoneyhomes.com/book-now/uptown-retreat/reserve",
-    ownerrezPropertyId: null, // Pending addition to OwnerRez
-    ownerrezName: null,
+    ownerrezPropertyId: 495793, // VERIFIED REAL OWNERREZ PROPERTY ID
+    ownerrezName: "Uptown St Augustine", // VERIFIED REAL OWNERREZ PROPERTY NAME
     hospitablePropertyId: "058aed01-470f-4ca7-a191-37c597e7f377",
   },
   {
@@ -57,8 +57,8 @@ export const HHH_CORE_PROPERTIES: HhhCoreProperty[] = [
     location: "St. Augustine, FL",
     websiteUrl: "https://hiddenhoneyhomes.com/retreats/downtown-st-augustine-fl",
     bookingUrl: "https://hiddenhoneyhomes.com/book-now/downtown-retreat",
-    ownerrezPropertyId: null, // Pending addition to OwnerRez
-    ownerrezName: null,
+    ownerrezPropertyId: 495794, // VERIFIED REAL OWNERREZ PROPERTY ID
+    ownerrezName: "Downtown St Augustine", // VERIFIED REAL OWNERREZ PROPERTY NAME
     hospitablePropertyId: "5da25edc-88ac-43c4-876a-f7b626c88ecd",
   },
   {
@@ -70,11 +70,12 @@ export const HHH_CORE_PROPERTIES: HhhCoreProperty[] = [
     location: "Ellsworth, ME",
     websiteUrl: "https://hiddenhoneyhomes.com/retreats/ellsworth-me",
     bookingUrl: "https://hiddenhoneyhomes.com/book-now/ellsworth-retreat",
-    ownerrezPropertyId: null, // Pending addition to OwnerRez
-    ownerrezName: null,
+    ownerrezPropertyId: 495795, // VERIFIED REAL OWNERREZ PROPERTY ID
+    ownerrezName: "Maine", // VERIFIED REAL OWNERREZ PROPERTY NAME
     hospitablePropertyId: "abe5540b-8cbc-4bc2-b561-b25f7d4d35b0",
   },
 ];
+
 
 /**
  * Finds HHH core property by OwnerRez property ID.
