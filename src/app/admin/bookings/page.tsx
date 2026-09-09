@@ -29,6 +29,7 @@ function BookingsListContent() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [attributions, setAttributions] = useState<ReservationAttribution[]>([]);
+  const [commissionPreviews, setCommissionPreviews] = useState<any[]>([]);
   
   // Search and Filter states
   const [searchQuery, setSearchQuery] = useState("");
@@ -100,6 +101,17 @@ function BookingsListContent() {
         setPartners(db.partners);
       }
 
+      try {
+        const commRes = await fetch("/api/admin/commissions/preview");
+        if (commRes.ok) {
+          const cData = await commRes.json();
+          if (cData.success && Array.isArray(cData.previews)) {
+            setCommissionPreviews(cData.previews);
+          }
+        }
+      } catch {
+        // Non-blocking preview fetch
+      }
     } catch {
       setReservations([...db.reservations]);
       setPartners(db.partners);
@@ -516,8 +528,30 @@ function BookingsListContent() {
                     attrBadge = <Badge type="info">Reconciled</Badge>;
                   }
 
+                  const ownerRezCommPreview = commissionPreviews.find(
+                    (cp) => cp.reservationId === res.id || cp.ownerrezBookingId === res.ownerrezBookingId
+                  );
+
                   let payoutBadge = <Badge type="gray">Estimated</Badge>;
-                  if (res.payoutStatus === "ELIGIBLE") {
+                  if (isOwnerRez && ownerRezCommPreview) {
+                    payoutBadge = (
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-xs text-brand-plum">
+                            ${ownerRezCommPreview.commissionCalculations.calculatedCommission.toFixed(2)}
+                          </span>
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 text-amber-900 font-extrabold border border-amber-300">
+                            Preview
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          {ownerRezCommPreview.lifecycle.status === "PENDING_PAYMENT"
+                            ? "Unpaid ($0 realized)"
+                            : ownerRezCommPreview.lifecycle.status}
+                        </span>
+                      </div>
+                    );
+                  } else if (res.payoutStatus === "ELIGIBLE") {
                     payoutBadge = <Badge type="sage">Eligible</Badge>;
                   } else if (res.payoutStatus === "APPROVED") {
                     payoutBadge = <Badge type="plum">Approved</Badge>;
@@ -685,6 +719,129 @@ function BookingsListContent() {
               </div>
             </div>
 
+            {/* OWNERREZ PHASE 5 COMMISSION READINESS & PREVIEW CARD */}
+            {(() => {
+              const preview = commissionPreviews.find(
+                (cp) => cp.reservationId === selectedRes.id || cp.ownerrezBookingId === selectedRes.ownerrezBookingId
+              );
+              if (!selectedRes.ownerrezBookingId && !preview) return null;
+
+              return (
+                <div className="space-y-3 border-t border-brand-blush pt-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <h5 className="text-xs font-bold uppercase tracking-widest text-brand-plum flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                        Commission Readiness & Preview
+                      </h5>
+                      <span className="text-[9px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                        Phase 5 (Read-Only)
+                      </span>
+                    </div>
+                    {preview && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        preview.lifecycle.status === "ELIGIBLE_READY_FOR_PAYOUT" ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
+                        preview.lifecycle.status === "ELIGIBLE_PENDING_STAY" ? "bg-purple-100 text-purple-800 border-purple-300" :
+                        preview.lifecycle.status === "PENDING_PAYMENT" ? "bg-amber-100 text-amber-900 border-amber-300" :
+                        "bg-zinc-100 text-zinc-700 border-zinc-300"
+                      }`}>
+                        {preview.lifecycle.status}
+                      </span>
+                    )}
+                  </div>
+
+                  {preview ? (
+                    <div className="bg-white border-2 border-emerald-500/20 rounded-xl p-4 text-xs space-y-3 shadow-sm">
+                      {/* Active Rule Details */}
+                      <div className="bg-brand-bg/60 p-2.5 rounded-lg border border-brand-blush/60 space-y-1">
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="font-semibold text-brand-wine">Authoritative Rule:</span>
+                          <span className="font-bold text-brand-plum">{preview.ruleResolution.ruleName || "None"}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-zinc-500">
+                          <span>Source / Scope:</span>
+                          <span className="font-mono text-emerald-700 font-semibold uppercase">{preview.ruleResolution.scope} (public.commission_rules)</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-zinc-500">
+                          <span>Rate & Base:</span>
+                          <span className="font-mono font-bold text-brand-plum">{preview.ruleResolution.percentage}% on Rent Only</span>
+                        </div>
+                      </div>
+
+                      {/* Itemized Charges & Commissionability */}
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold text-brand-wine uppercase tracking-wider block">
+                          Itemized OwnerRez Charges (Positive Rent Identification):
+                        </span>
+                        <div className="border border-brand-blush/40 rounded-lg overflow-hidden divide-y divide-brand-blush/30">
+                          {preview.itemizedCharges.map((charge: any, idx: number) => (
+                            <div key={idx} className="p-2 flex items-center justify-between text-[11px]">
+                              <div className="space-y-0.5 max-w-[70%]">
+                                <div className="font-medium text-zinc-800 flex items-center gap-1.5">
+                                  <span className="font-mono uppercase text-[9px] text-zinc-500 bg-zinc-100 px-1 py-0.2 rounded">
+                                    {charge.type}
+                                  </span>
+                                  <span className="truncate">{charge.description}</span>
+                                </div>
+                                {charge.exclusionReason && (
+                                  <span className="text-[9px] text-zinc-400 block italic">{charge.exclusionReason}</span>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <span className="font-mono font-bold text-brand-plum">${charge.amount.toFixed(2)}</span>
+                                <span className={`text-[9px] font-extrabold block uppercase ${
+                                  charge.isCommissionable ? "text-emerald-700" : "text-zinc-400"
+                                }`}>
+                                  {charge.isCommissionable ? "Commissionable" : "Excluded"}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 4-Metric Calculation Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-1">
+                        <div className="bg-zinc-50 p-2 rounded-lg border border-zinc-200">
+                          <span className="text-[9px] font-bold uppercase text-zinc-400 block">Rent Base</span>
+                          <span className="text-sm font-extrabold text-brand-plum font-mono">
+                            ${preview.commissionCalculations.contractedCommissionableBase.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="bg-purple-50/60 p-2 rounded-lg border border-purple-200">
+                          <span className="text-[9px] font-bold uppercase text-purple-700 block">Calculated</span>
+                          <span className="text-sm font-extrabold text-purple-900 font-mono">
+                            ${preview.commissionCalculations.calculatedCommission.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="bg-amber-50/60 p-2 rounded-lg border border-amber-200">
+                          <span className="text-[9px] font-bold uppercase text-amber-700 block">Realized</span>
+                          <span className="text-sm font-extrabold text-amber-900 font-mono">
+                            ${preview.commissionCalculations.realizedCommission.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-200">
+                          <span className="text-[9px] font-bold uppercase text-emerald-700 block">Payout Eligible</span>
+                          <span className="text-sm font-extrabold text-emerald-900 font-mono">
+                            ${preview.commissionCalculations.payoutEligibleCommission.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Lifecycle Explanation Banner */}
+                      <div className="p-2.5 rounded-lg bg-brand-bg/50 border border-brand-blush/60 text-[11px] text-zinc-700 leading-relaxed">
+                        <span className="font-bold text-brand-plum">Phase 5 Status Note: </span>
+                        <span>{preview.lifecycle.reason}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs text-zinc-500 italic">
+                      Evaluating commission preview for this booking...
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Reconciliation & Attribution Details */}
             {(() => {
