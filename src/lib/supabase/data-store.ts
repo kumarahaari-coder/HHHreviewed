@@ -1238,7 +1238,7 @@ export async function getAdminReservations(): Promise<Reservation[]> {
     commissionRate: 0,
     status: r.reservation_status === "CANCELLED" ? "CANCELLED" : "CONFIRMED",
     currency: r.currency || "USD",
-    platform: r.platform || undefined,
+    platform: (r.platform && r.platform !== "ownerrez") ? r.platform : (r.ownerrez_booking_id ? "direct" : (r.platform || undefined)),
     sourceProvider: r.ownerrez_booking_id ? "ownerrez" : (r.payment_confirmation_source?.toLowerCase() === "ownerrez" ? "ownerrez" : "hospitable"),
     paymentConfirmationSource: r.payment_confirmation_source || undefined,
     attributionStatus: r.attribution_status,

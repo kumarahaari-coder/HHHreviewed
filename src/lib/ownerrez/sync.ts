@@ -21,6 +21,7 @@ export interface OwnerRezBooking {
     name: string;
   };
   quote_id?: number;
+  is_quote?: boolean;
   listing_site?: string;
   arrival: string;
   departure: string;
@@ -94,6 +95,30 @@ export interface BatchSyncResult {
   reviewRequired: number;
   sourcesDiscovered: DiscoveredSource[];
   errors: string[];
+}
+
+/**
+ * Authoritatively derives the booking channel independently from the integration provider.
+ * Uses booking provenance (listing site, quote indicators) to establish channel.
+ * Never returns 'ownerrez' as a booking channel.
+ */
+export function deriveOwnerRezBookingChannel(booking: OwnerRezBooking): string {
+  const listingSite = (booking.listing_site || "").trim().toLowerCase();
+
+  if (listingSite.includes("airbnb")) return "airbnb";
+  if (listingSite.includes("vrbo") || listingSite.includes("homeaway")) return "vrbo";
+  if (listingSite.includes("booking.com") || listingSite.includes("bcom")) return "booking.com";
+  if (listingSite.includes("tripadvisor") || listingSite.includes("flipkey")) return "tripadvisor";
+  if (listingSite.includes("expedia")) return "expedia";
+  if (listingSite.includes("direct") || listingSite.includes("website") || listingSite.includes("widget")) return "direct";
+
+  // If quote_id is present or booking is linked to a direct partner storefront (e.g. Megbrass),
+  // it is authoritatively established as a direct booking channel.
+  if (booking.quote_id || booking.is_quote || listingSite) {
+    return "direct";
+  }
+
+  return "direct";
 }
 
 /**
@@ -315,8 +340,9 @@ export async function syncSingleBookingRecord(
       ? "pending"
       : "unattributed";
 
+
   // Provider / Channel separation:
-  const bookingChannel = "direct"; // direct widget/quote booking channel
+  const bookingChannel = deriveOwnerRezBookingChannel(booking);
   const providerSource = "OWNERREZ";
 
   // 5. Privacy-safe Provider Audit Payload (raw_ownerrez_data)
@@ -397,6 +423,7 @@ export async function syncSingleBookingRecord(
     const isPartnerEqual = existingRow.partner_id === resolvedPartnerId;
     const isAttrEqual = existingRow.attribution_status === dbAttributionStatus;
     const isQuoteEqual = Number(existingRow.quote_id || 0) === Number(booking.quote_id || 0);
+    const isPlatformEqual = (existingRow.platform || "").toLowerCase() === bookingChannel.toLowerCase();
 
     if (
       isGrossEqual &&
@@ -406,7 +433,8 @@ export async function syncSingleBookingRecord(
       isSiteEqual &&
       isPartnerEqual &&
       isAttrEqual &&
-      isQuoteEqual
+      isQuoteEqual &&
+      isPlatformEqual
     ) {
       return {
         bookingId,
