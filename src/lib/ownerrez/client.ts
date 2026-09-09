@@ -108,9 +108,25 @@ function buildBasicAuthHeader(email: string, pat: string): string {
 
 function resolveApiUrl(pathOrUrl: string, apiBase: string): string {
   if (/^https?:\/\//i.test(pathOrUrl)) {
-    return pathOrUrl;
+    try {
+      const parsed = new URL(pathOrUrl);
+      if (parsed.protocol !== "https:" || parsed.hostname !== "api.ownerrez.com") {
+        throw new OwnerRezConfigurationError(
+          `Security violation: Untrusted URL host '${parsed.hostname}' or protocol '${parsed.protocol}'. Only https://api.ownerrez.com is permitted.`
+        );
+      }
+      return pathOrUrl;
+    } catch (err: any) {
+      if (err instanceof OwnerRezConfigurationError) throw err;
+      throw new OwnerRezConfigurationError(`Invalid API URL: ${pathOrUrl}`);
+    }
   }
-  const cleanPath = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+
+  let cleanPath = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  // Normalize if path begins with /v2/ (e.g. from next_page_url) to avoid /v2/v2/...
+  if (cleanPath.startsWith("/v2/")) {
+    cleanPath = cleanPath.substring(3);
+  }
   return `${apiBase}${cleanPath}`;
 }
 

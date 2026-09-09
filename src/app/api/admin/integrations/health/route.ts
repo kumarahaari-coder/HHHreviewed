@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { checkR2Connectivity } from "@/lib/storage/r2";
+import { checkOwnerRezHealth } from "@/lib/ownerrez/client";
 import { appConfig } from "@/lib/config";
 import { isSupabaseEnabled } from "@/lib/supabase/data-store";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -45,8 +46,29 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. Assemble Full Integration Health Matrix
+    // 3. OwnerRez Health Check
+    let ownerrezHealth = { status: "unconfigured" as string, error: undefined as string | undefined };
+    try {
+      const orz = await checkOwnerRezHealth();
+      ownerrezHealth = { status: orz.status, error: orz.error };
+    } catch (err: any) {
+      ownerrezHealth = { status: "error", error: err?.message };
+    }
+
+    // 4. Assemble Full Integration Health Matrix
     const integrations = [
+      {
+        name: "OwnerRez Direct API v2",
+        category: "Primary PMS & Direct Sync",
+        status: ownerrezHealth.status === "healthy" ? "CONNECTED" : ownerrezHealth.status === "unconfigured" ? "NOT_CONFIGURED" : "ERROR",
+        environment: appConfig.env,
+        lastSuccess: ownerrezHealth.status === "healthy" ? now : "—",
+        lastFailure: ownerrezHealth.error || "None",
+        lastWebhook: "Polling / REST Sync",
+        lastValidated: now,
+        nonSecretId: "OwnerRez OAuth / User Token",
+        errorDetails: ownerrezHealth.error || null
+      },
       {
         name: "Supabase PostgreSQL Database",
         category: "Primary Persistence",

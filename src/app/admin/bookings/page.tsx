@@ -32,6 +32,8 @@ function BookingsListContent() {
   
   // Search and Filter states
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState("ALL");
+  const [selectedChannel, setSelectedChannel] = useState("ALL");
   const [selectedPartner, setSelectedPartner] = useState("ALL");
   const [selectedSite, setSelectedSite] = useState("ALL");
   const [selectedProperty, setSelectedProperty] = useState("ALL");
@@ -50,17 +52,58 @@ function BookingsListContent() {
   const [reassignSiteId, setReassignSiteId] = useState("");
 
   const refreshData = async () => {
-    setReservations([...db.reservations]);
-    setPartners(db.partners);
-    setSites(db.sites);
-
     try {
-      const res = await fetch("/api/admin/attributions");
-      if (res.ok) {
-        const data = await res.json();
-        setAttributions(data.attributions || []);
+      const [resRes, attrRes, sitesRes, partnersRes] = await Promise.all([
+        fetch("/api/admin/reservations"),
+        fetch("/api/admin/attributions"),
+        fetch("/api/admin/sites"),
+        fetch("/api/admin/partners"),
+      ]);
+
+      if (resRes.ok) {
+        const rData = await resRes.json();
+        if (rData.success && Array.isArray(rData.reservations)) {
+          setReservations(rData.reservations);
+        } else {
+          setReservations([...db.reservations]);
+        }
+      } else {
+        setReservations([...db.reservations]);
       }
+
+      if (attrRes.ok) {
+        const aData = await attrRes.json();
+        setAttributions(aData.attributions || []);
+      } else {
+        setAttributions(db.reservationAttributions);
+      }
+
+      if (sitesRes.ok) {
+        const sData = await sitesRes.json();
+        if (sData.success && Array.isArray(sData.sites)) {
+          setSites(sData.sites);
+        } else {
+          setSites(db.sites);
+        }
+      } else {
+        setSites(db.sites);
+      }
+
+      if (partnersRes.ok) {
+        const pData = await partnersRes.json();
+        if (pData.success && Array.isArray(pData.partners)) {
+          setPartners(pData.partners);
+        } else {
+          setPartners(db.partners);
+        }
+      } else {
+        setPartners(db.partners);
+      }
+
     } catch {
+      setReservations([...db.reservations]);
+      setPartners(db.partners);
+      setSites(db.sites);
       setAttributions(db.reservationAttributions);
     }
   };
@@ -164,6 +207,17 @@ function BookingsListContent() {
     if (searchQuery && !res.confirmationCode.toLowerCase().includes(searchQuery.toLowerCase()) && !res.id.toLowerCase().includes(searchQuery.toLowerCase())) {
       return false;
     }
+    // Integration Provider filter
+    if (selectedProvider !== "ALL") {
+      const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
+      if (selectedProvider === "OWNERREZ" && !isOwnerRez) return false;
+      if (selectedProvider === "HOSPITABLE" && isOwnerRez) return false;
+    }
+    // Booking Channel filter
+    if (selectedChannel !== "ALL") {
+      const channel = (res.platform || "DIRECT").toUpperCase();
+      if (channel !== selectedChannel) return false;
+    }
     // Filters
     if (selectedPartner !== "ALL" && res.partnerId !== selectedPartner) return false;
     if (selectedSite !== "ALL" && res.siteId !== selectedSite) return false;
@@ -179,10 +233,11 @@ function BookingsListContent() {
   // Export report simulator
   const handleExportReport = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Reservation ID,Confirmation,Source Site,Property,Check In,Checkout,Gross Amount,Payment Status,Payout Status\n";
+    csvContent += "Reservation ID,Confirmation,Provider,Channel,Source Site,Property,Check In,Checkout,Gross Amount,Payment Status,Payout Status\n";
     filteredList.forEach(r => {
       const site = sites.find(s => s.id === r.siteId)?.siteName || "Unattributed";
-      csvContent += `${r.id},${r.confirmationCode},${site},${r.propertyId},${r.checkInDate},${r.checkOutDate},${r.bookingAmount},${r.paymentStatus},${r.payoutStatus}\n`;
+      const provider = (r.ownerrezBookingId || r.paymentConfirmationSource === "OWNERREZ") ? "OwnerRez" : "Hospitable";
+      csvContent += `${r.id},${r.confirmationCode},${provider},${r.platform || "direct"},${site},${r.propertyId},${r.checkInDate},${r.checkOutDate},${r.bookingAmount},${r.paymentStatus},${r.payoutStatus}\n`;
     });
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -200,14 +255,14 @@ function BookingsListContent() {
         <div>
           <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Booking Management</h1>
           <p className="text-zinc-500 font-serif italic text-sm mt-1">
-            Track Hospitable reservations, attribute stays, and manage payout locks.
+            Track multi-provider reservations (OwnerRez & Hospitable), verify source attribution, and manage payout locks.
           </p>
         </div>
         
         <div className="flex space-x-3 self-end sm:self-auto">
           <button
             onClick={handleRecalculate}
-            className="flex items-center space-x-1.5 bg-brand-cream border border-brand-blush hover:border-brand-plum text-brand-plum px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-plum"
+            className="flex items-center space-x-1.5 bg-brand-cream border border-brand-blush hover:border-brand-plum text-brand-plum px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-plum cursor-pointer"
           >
             <RefreshCw size={14} className="animate-hover-spin" />
             <span>Recalculate Payouts</span>
@@ -215,7 +270,7 @@ function BookingsListContent() {
           
           <button
             onClick={handleExportReport}
-            className="flex items-center space-x-1.5 bg-brand-blush hover:bg-brand-blush/80 text-brand-plum border border-brand-blush/60 px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none"
+            className="flex items-center space-x-1.5 bg-brand-blush hover:bg-brand-blush/80 text-brand-plum border border-brand-blush/60 px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none cursor-pointer"
           >
             <FileSpreadsheet size={14} />
             <span>Export Bookings</span>
@@ -269,7 +324,34 @@ function BookingsListContent() {
         </div>
 
         {/* Collapsible/Extended Filters */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-3 border-t border-brand-blush/60">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 pt-3 border-t border-brand-blush/60">
+          <div>
+            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Provider</label>
+            <select
+              value={selectedProvider}
+              onChange={e => setSelectedProvider(e.target.value)}
+              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none font-bold text-brand-plum"
+            >
+              <option value="ALL">All Providers</option>
+              <option value="OWNERREZ">OwnerRez</option>
+              <option value="HOSPITABLE">Hospitable</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Channel</label>
+            <select
+              value={selectedChannel}
+              onChange={e => setSelectedChannel(e.target.value)}
+              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
+            >
+              <option value="ALL">All Channels</option>
+              <option value="DIRECT">Direct</option>
+              <option value="AIRBNB">Airbnb</option>
+              <option value="VRBO">Vrbo</option>
+            </select>
+          </div>
+
           <div>
             <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Partner</label>
             <select
@@ -306,10 +388,10 @@ function BookingsListContent() {
               className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
             >
               <option value="ALL">All Properties</option>
-              <option value="prop-001">Uptown Retreat</option>
-              <option value="prop-002">Downtown Retreat</option>
-              <option value="prop-003">Ellsworth Retreat</option>
-              <option value="prop-004">Beech Mountain</option>
+              <option value="55791a54-b1a3-459e-bbd5-9073a418b774">Beech Mountain</option>
+              <option value="38d9159e-a35d-405e-826e-7381ad3c3197">Uptown Retreat</option>
+              <option value="f0fb867d-47cd-47d4-afa6-c4bf226c1768">Downtown (Lincoln)</option>
+              <option value="51be6158-268d-4c96-8f0b-9968f544ddfa">Ellsworth Retreat</option>
             </select>
           </div>
 
@@ -352,7 +434,7 @@ function BookingsListContent() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                <th className="p-4">Confirmation</th>
+                <th className="p-4">Confirmation / Provider</th>
                 <th className="p-4">Retreat</th>
                 <th className="p-4">Stay Dates</th>
                 <th className="p-4">Source Site</th>
@@ -372,13 +454,19 @@ function BookingsListContent() {
               ) : (
                 filteredList.map(res => {
                   const site = sites.find(s => s.id === res.siteId);
-                  const propName = res.propertyId === "prop-001" 
-                    ? "Uptown" 
-                    : res.propertyId === "prop-002" 
-                    ? "Downtown" 
-                    : res.propertyId === "prop-003" 
-                    ? "Ellsworth" 
-                    : "Beech Mtn";
+                  const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
+                  
+                  // Property Name Resolver (supports canonical UUIDs)
+                  let propName = "Unknown Property";
+                  if (res.propertyId === "55791a54-b1a3-459e-bbd5-9073a418b774" || res.propertyId === "prop-004") {
+                    propName = "Beech Mountain, NC";
+                  } else if (res.propertyId === "38d9159e-a35d-405e-826e-7381ad3c3197" || res.propertyId === "prop-001") {
+                    propName = "Uptown St. Augustine";
+                  } else if (res.propertyId === "f0fb867d-47cd-47d4-afa6-c4bf226c1768" || res.propertyId === "prop-002") {
+                    propName = "Downtown (Lincoln)";
+                  } else if (res.propertyId === "51be6158-268d-4c96-8f0b-9968f544ddfa" || res.propertyId === "prop-003") {
+                    propName = "Ellsworth, Maine";
+                  }
 
                   // Check reconciliation attribution
                   const attr = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
@@ -387,17 +475,25 @@ function BookingsListContent() {
                   if (attr) {
                     if (attr.status === "ATTRIBUTED") {
                       attrBadge = (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3" />
-                          Attributed ({attr.confidenceScore}%)
-                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 w-fit">
+                            <CheckCircle className="w-3 h-3" />
+                            Attributed ({attr.confidenceScore}%)
+                          </span>
+                          <span className="text-[10px] font-medium text-emerald-700">
+                            {attr.attributionMethod === "OWNERREZ_LISTING_SITE" ? "Deterministic (OwnerRez)" : attr.attributionMethod}
+                          </span>
+                        </div>
                       );
                     } else if (attr.status === "REVIEW_REQUIRED") {
                       attrBadge = (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          Review Req ({attr.confidenceScore}%)
-                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1 w-fit">
+                            <AlertTriangle className="w-3 h-3" />
+                            Review Required
+                          </span>
+                          <span className="text-[10px] text-amber-700">Unmapped Source</span>
+                        </div>
                       );
                     } else if (attr.status === "REJECTED") {
                       attrBadge = (
@@ -406,8 +502,16 @@ function BookingsListContent() {
                         </span>
                       );
                     }
-                  } else if (res.attributionStatus === "ATTRIBUTED") {
-                    attrBadge = <Badge type="success">Attributed</Badge>;
+                  } else if ((res.attributionStatus as string) === "ATTRIBUTED" || (res.attributionStatus as string) === "automatic") {
+                    attrBadge = (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 w-fit">
+                          <CheckCircle className="w-3 h-3" />
+                          Attributed (100%)
+                        </span>
+                        <span className="text-[10px] font-medium text-emerald-700">Deterministic</span>
+                      </div>
+                    );
                   } else if (res.attributionStatus === "RECONCILED") {
                     attrBadge = <Badge type="info">Reconciled</Badge>;
                   }
@@ -427,19 +531,36 @@ function BookingsListContent() {
 
                   return (
                     <tr key={res.id} className="hover:bg-brand-blush/10 transition-colors">
-                      <td className="p-4 font-bold text-brand-plum">{res.confirmationCode}</td>
-                      <td className="p-4">
-                        <div className="font-semibold">{propName}</div>
-                        <span className="text-[10px] text-zinc-400">Nights: {res.nights}</span>
+                      <td className="p-4 font-bold text-brand-plum">
+                        <div className="flex items-center gap-1.5">
+                          <span>{res.confirmationCode}</span>
+                          {isOwnerRez ? (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-purple-100 text-purple-800 border border-purple-300 uppercase tracking-wider">
+                              OwnerRez
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-100 text-sky-800 border border-sky-300 uppercase tracking-wider">
+                              Hospitable
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-zinc-400 font-normal mt-0.5">
+                          Channel: <span className="uppercase font-semibold text-zinc-500">{res.platform || "direct"}</span>
+                          {res.ownerrezBookingId && <span className="ml-1 text-zinc-400">· OR #{res.ownerrezBookingId}</span>}
+                        </div>
                       </td>
                       <td className="p-4">
-                        <div className="text-xs">{res.checkInDate}</div>
-                        <span className="text-[10px] text-zinc-400">to {res.checkOutDate}</span>
+                        <div className="font-semibold">{propName}</div>
+                        <span className="text-[10px] text-zinc-400">Nights: {res.nights} · Guests: {res.guests || 1}</span>
+                      </td>
+                      <td className="p-4">
+                        <div className="text-xs">{res.checkInDate ? res.checkInDate.slice(0, 10) : ""}</div>
+                        <span className="text-[10px] text-zinc-400">to {res.checkOutDate ? res.checkOutDate.slice(0, 10) : ""}</span>
                       </td>
                       <td className="p-4 text-xs font-medium">
                         {site ? site.siteName : (attr?.siteId ? (sites.find(s => s.id === attr.siteId)?.siteName || "Candidate Site") : <span className="text-zinc-400 italic">Direct Booking</span>)}
                       </td>
-                      <td className="p-4 font-bold text-brand-plum">${res.bookingAmount.toFixed(2)}</td>
+                      <td className="p-4 font-bold text-brand-plum">${(res.bookingAmount || res.grossAmount || 0).toFixed(2)}</td>
                       <td className="p-4">{attrBadge}</td>
                       <td className="p-4">{payoutBadge}</td>
                       <td className="p-4 text-center">
@@ -502,19 +623,51 @@ function BookingsListContent() {
                     ? "Ellsworth Retreat"
                     : "Beech Mountain Retreat"}
                 </h4>
-                <p className="text-xs text-zinc-500">St. Augustine, FL · Stay dates: {selectedRes.checkInDate} to {selectedRes.checkOutDate}</p>
+                <p className="text-xs text-zinc-500">Stay dates: {selectedRes.checkInDate ? selectedRes.checkInDate.slice(0, 10) : ""} to {selectedRes.checkOutDate ? selectedRes.checkOutDate.slice(0, 10) : ""}</p>
               </div>
+            </div>
+
+            {/* Integration Provider & Booking Channel Breakdown */}
+            <div className="bg-brand-cream border border-brand-blush/60 rounded-xl p-3 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-brand-plum">Integration Provider:</span>
+                {selectedRes.ownerrezBookingId || selectedRes.paymentConfirmationSource === "OWNERREZ" ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-300">
+                    OwnerRez API v2
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-300">
+                    Hospitable API v2
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-zinc-600">
+                <span>Booking Channel:</span>
+                <span className="font-semibold uppercase text-brand-wine">{selectedRes.platform || "direct"}</span>
+              </div>
+              {selectedRes.ownerrezBookingId && (
+                <div className="flex items-center justify-between text-zinc-600 font-mono text-[11px]">
+                  <span>OwnerRez Booking ID:</span>
+                  <span className="font-bold">#{selectedRes.ownerrezBookingId}</span>
+                </div>
+              )}
+              {selectedRes.quoteId && (
+                <div className="flex items-center justify-between text-zinc-600 font-mono text-[11px]">
+                  <span>OwnerRez Quote ID:</span>
+                  <span>#{selectedRes.quoteId}</span>
+                </div>
+              )}
             </div>
 
             {/* Financials & Status Info */}
             <div className="grid grid-cols-2 gap-4 bg-brand-blush/20 p-4 rounded-xl border border-brand-blush/40">
               <div>
                 <span className="text-[10px] text-brand-wine block font-bold uppercase tracking-wider">Gross Booking Value</span>
-                <span className="text-base font-extrabold text-brand-plum">${selectedRes.bookingAmount.toFixed(2)}</span>
+                <span className="text-base font-extrabold text-brand-plum">${(selectedRes.bookingAmount || selectedRes.grossAmount || 0).toFixed(2)}</span>
               </div>
               <div>
                 <span className="text-[10px] text-brand-wine block font-bold uppercase tracking-wider">Net HHH Received</span>
-                <span className="text-base font-extrabold text-brand-plum">${selectedRes.amountReceived.toFixed(2)}</span>
+                <span className="text-base font-extrabold text-brand-plum">${(selectedRes.amountReceived || 0).toFixed(2)}</span>
               </div>
               <div className="col-span-2 border-t border-brand-blush/40 pt-2">
                 <span className="text-[10px] text-brand-wine block font-bold uppercase tracking-wider mb-1">Status Variables</span>
@@ -531,6 +684,7 @@ function BookingsListContent() {
                 </div>
               </div>
             </div>
+
 
             {/* Reconciliation & Attribution Details */}
             {(() => {

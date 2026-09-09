@@ -1,5 +1,5 @@
 import { createAdminClient } from "./admin";
-import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
+import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
 /**
@@ -1190,3 +1190,62 @@ export async function updateReservationAttributionStatus(
     updatedAt: data.updated_at
   };
 }
+
+export async function getAdminReservations(): Promise<Reservation[]> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.reservations;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select("*")
+    .order("check_in_date", { ascending: false });
+
+  if (error) {
+    console.error("[DataStore Error] getAdminReservations failed:", error);
+    throw new Error(`Failed to fetch admin reservations: ${error.message}`);
+  }
+
+  return (data || []).map((r: any) => ({
+    id: r.id,
+    hospitableReservationId: r.hospitable_reservation_id || undefined,
+    ownerrezBookingId: r.ownerrez_booking_id ? Number(r.ownerrez_booking_id) : undefined,
+    quoteId: r.quote_id ? Number(r.quote_id) : undefined,
+    rawOwnerrezData: r.raw_ownerrez_data || undefined,
+    confirmationCode: r.confirmation_code,
+    propertyId: r.property_id,
+    partnerId: r.partner_id || undefined,
+    siteId: r.site_id || undefined,
+    guestName: r.guest_name || undefined,
+    guestEmail: r.guest_email || undefined,
+    bookingDate: r.booking_date || undefined,
+    checkInDate: r.check_in_date,
+    checkOutDate: r.check_out_date,
+    nights: Number(r.nights || 0),
+    guests: Number(r.guests || 0),
+    reservationStatus: r.reservation_status,
+    paymentStatus: r.payment_status,
+    grossAmount: Number(r.gross_amount || 0),
+    amountReceived: Number(r.amount_received || 0),
+    refundAmount: Number(r.refund_amount || 0),
+    cleaningFee: Number(r.cleaning_fee || 0),
+    serviceFee: Number(r.service_fee || 0),
+    taxesAmount: Number(r.taxes_amount || 0),
+    bookingAmount: Number(r.gross_amount || 0),
+    payoutAmount: 0,
+    payoutStatus: "ESTIMATED",
+    commissionRate: 0,
+    status: r.reservation_status === "CANCELLED" ? "CANCELLED" : "CONFIRMED",
+    currency: r.currency || "USD",
+    platform: r.platform || undefined,
+    sourceProvider: r.ownerrez_booking_id ? "ownerrez" : (r.payment_confirmation_source?.toLowerCase() === "ownerrez" ? "ownerrez" : "hospitable"),
+    paymentConfirmationSource: r.payment_confirmation_source || undefined,
+    attributionStatus: r.attribution_status,
+    financialDataAvailable: Boolean(r.financial_data_available),
+    lastSyncedAt: r.last_synced_at || undefined,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  })) as Reservation[];
+}
+

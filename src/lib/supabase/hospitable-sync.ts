@@ -199,9 +199,9 @@ export async function upsertHospitableReservations(
   }
 
   const now = syncTimestamp || new Date().toISOString();
-  const incomingHospitableIds = reservations.map(
-    (r) => r.hospitableReservationId
-  );
+  const incomingHospitableIds = reservations
+    .map((r) => r.hospitableReservationId)
+    .filter((id): id is string => Boolean(id));
 
   try {
     const supabase = createAdminClient();
@@ -210,7 +210,7 @@ export async function upsertHospitableReservations(
     const { data: existingRowsData, error: selectErr } = await supabase
       .from("reservations")
       .select(
-        "id, hospitable_reservation_id, reservation_status, payment_status, guest_name, guest_email, confirmation_code, currency, platform, payment_confirmation_source, gross_amount, amount_received, refund_amount, taxes_amount, cleaning_fee, service_fee, financial_data_available, partner_id, site_id, attribution_status, nights, guests, check_in_date, check_out_date"
+        "id, hospitable_reservation_id, ownerrez_booking_id, reservation_status, payment_status, guest_name, guest_email, confirmation_code, currency, platform, payment_confirmation_source, gross_amount, amount_received, refund_amount, taxes_amount, cleaning_fee, service_fee, financial_data_available, partner_id, site_id, attribution_status, nights, guests, check_in_date, check_out_date"
       )
       .in("hospitable_reservation_id", incomingHospitableIds);
 
@@ -245,14 +245,33 @@ export async function upsertHospitableReservations(
         propertyIdMap.get(hospitablePropertyId);
 
       if (!databasePropertyId) {
+        console.warn(
+          "Skipping reservation because its property could not be resolved",
+          {
+            reservationId:
+              reservation.hospitableReservationId,
+            normalizedPropertyId:
+              reservation.propertyId,
+            hospitablePropertyId,
+          }
+        );
+
         skipped += 1;
-        failed += 1;
         return [];
       }
 
       const existing = existingMap.get(
-        reservation.hospitableReservationId
+        reservation.hospitableReservationId || ""
       );
+
+      // Explicit non-overwrite safeguard: never let Hospitable overwrite an OwnerRez-attributed reservation
+      if (existing?.ownerrez_booking_id || existing?.payment_confirmation_source === "OWNERREZ") {
+        console.warn(
+          `[Hospitable Protection] Skipping reservation ${reservation.hospitableReservationId} because it is owned/attributed by OwnerRez (ownerrez_booking_id: ${existing?.ownerrez_booking_id}).`
+        );
+        skipped += 1;
+        return [];
+      }
 
       if (reservation.reservationStatus === "CANCELLED") {
         cancelledReservationsSeen += 1;
