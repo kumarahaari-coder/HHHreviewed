@@ -121,6 +121,9 @@ export interface Site {
   status: SiteStatus;
   launchDate: string;
   siteProperties?: SiteProperty[];
+  ownerrezListingSiteId?: number;
+  ownerrezListingSiteName?: string;
+  ownerrezListingSiteDomain?: string;
 }
 
 export interface Property {
@@ -140,11 +143,15 @@ export interface Property {
   sourceUrl?: string;
   sourceVerifiedAt?: string;
   syncStatus?: string;
+  ownerrezPropertyId?: number;
 }
 
 export interface Reservation {
   id: string;
-  hospitableReservationId: string;
+  hospitableReservationId?: string;
+  ownerrezBookingId?: number;
+  quoteId?: number;
+  rawOwnerrezData?: Record<string, unknown>;
   confirmationCode: string;
   partnerId?: string; // Nullable if unattributed
   siteId?: string; // Nullable if unattributed
@@ -172,6 +179,8 @@ export interface Reservation {
   adminNotes?: string;
   attributionSource?: string; // e.g., "Widget ID", "Referrer URL", "Campaign Parameter"
   platform?: string;
+  sourceProvider?: string;
+  grossAmount?: number;
   financialDataAvailable?: boolean;
   paymentConfirmationSource?: string;
 }
@@ -261,6 +270,7 @@ export interface RedirectClick {
 export type AttributionMethod =
   | "TIME_WINDOW_PROBABILISTIC"
   | "DIRECT_WIDGET"
+  | "OWNERREZ_LISTING_SITE"
   | "MANUAL_ADMIN"
   | "UNATTRIBUTED";
 
