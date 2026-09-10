@@ -136,8 +136,13 @@ export async function createInitialAccrual(params: {
   providerBookingId: string;
   ownerrezBookingId?: number | null;
   calculatedCommission: number;
+  idempotencyKey?: string;
   metadata?: Record<string, unknown>;
 }): Promise<CommissionLedgerEvent | null> {
+  const defaultKey = params.commissionRuleId
+    ? `evt_accrual_${params.reservationId}_${params.commissionRuleId}`
+    : `evt_accrual_${params.reservationId}`;
+
   return appendCommissionLedgerEvent({
     partnerId: params.partnerId,
     siteId: params.siteId,
@@ -150,7 +155,7 @@ export async function createInitialAccrual(params: {
     eventType: "INITIAL_ACCRUAL",
     deltaAmount: 0.00, // Strictly non-financial
     calculatedCommission: params.calculatedCommission,
-    idempotencyKey: `evt_accrual_${params.reservationId}`,
+    idempotencyKey: params.idempotencyKey ?? defaultKey,
     metadata: params.metadata,
   });
 }
