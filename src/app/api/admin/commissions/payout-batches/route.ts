@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
     const supabase = createAdminClient();
     let query = supabase
       .from("payout_batches")
-      .select("*, partners(name, email, payout_currency)")
+      .select("*, partners(business_name, contact_name, contact_email, payout_currency)")
       .order("created_at", { ascending: false })
       .limit(limit);
 

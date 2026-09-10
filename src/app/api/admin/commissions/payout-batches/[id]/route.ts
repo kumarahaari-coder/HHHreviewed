@@ -26,7 +26,7 @@ export async function GET(
 
     const { data: batch, error: bErr } = await supabase
       .from("payout_batches")
-      .select("*, partners(name, email, payout_currency)")
+      .select("*, partners(business_name, contact_name, contact_email, payout_currency)")
       .eq("id", id)
       .single();
 
