@@ -8,7 +8,7 @@ export const maxDuration = 300;
 
 export async function GET(request: Request) {
   // 1. Enforce Server-Only Cron Authorization (fail-closed)
-  const rawCronSecret = process.env.CRON_SECRET;
+  const rawCronSecret = process.env.CRON_SECRET || process.env.HOSPITABLE_CRON_TOKEN;
   const cronSecret = rawCronSecret?.trim();
 
   if (!cronSecret) {
