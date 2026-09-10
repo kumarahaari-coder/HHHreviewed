@@ -57,6 +57,21 @@ export interface ListingSite {
 
 export type AttributionTier = "ATTRIBUTED" | "REVIEW_REQUIRED" | "UNATTRIBUTED";
 
+export interface SingleReconciliationResult {
+  attempted: boolean;
+  status:
+    | "UNPAID_PENDING_PAYMENT"
+    | "PARTIAL_PAYMENT_UNALLOCATED"
+    | "REALIZED"
+    | "MISSING_ACCRUAL_REVIEW_REQUIRED"
+    | "CANCELLED_REVIEW_REQUIRED"
+    | "ERROR";
+  rowsCreated: number;
+  realizedAmount: number;
+  reason?: string;
+  error?: string;
+}
+
 export interface SingleSyncResult {
   bookingId: number;
   ownerrezBookingId: number;
@@ -70,6 +85,7 @@ export interface SingleSyncResult {
   siteId?: string;
   partnerId?: string;
   propertyId?: string;
+  reconciliation?: SingleReconciliationResult;
   error?: string;
 }
 
@@ -80,6 +96,17 @@ export interface DiscoveredSource {
   partnerId: string | null;
   status: AttributionTier;
   bookingCount: number;
+}
+
+export interface BatchReconciliationSummary {
+  attempted: number;
+  unpaidPending: number;
+  partialUnallocated: number;
+  realized: number;
+  reviewRequired: number;
+  errors: number;
+  rowsCreated: number;
+  realizedAmount: number;
 }
 
 export interface BatchSyncResult {
@@ -95,7 +122,50 @@ export interface BatchSyncResult {
   unattributed: number;
   reviewRequired: number;
   sourcesDiscovered: DiscoveredSource[];
+  reconciliationSummary: BatchReconciliationSummary;
   errors: string[];
+}
+
+/**
+ * Safely executes payment realization reconciliation without failing reservation ingestion.
+ * Sanitizes errors to prevent exposure of secrets, credentials, or PII.
+ */
+export async function executeSafeReconciliation(
+  reservationId: string,
+  supabaseClient?: any
+): Promise<SingleReconciliationResult> {
+  try {
+    const recon = await reconcileReservationPaymentRealization({
+      reservationId,
+      sourceProvider: "ownerrez",
+      supabaseClient,
+    });
+
+    return {
+      attempted: true,
+      status: recon.status,
+      rowsCreated: recon.rowsCreated,
+      realizedAmount: recon.realizedAmount,
+      reason: recon.reason,
+    };
+  } catch (reconErr: any) {
+    const rawMsg = reconErr?.message || "Internal reconciliation exception";
+    const sanitizedError = String(rawMsg)
+      .replace(/(bearer\s+[a-zA-Z0-9_\-\.]+)/gi, "bearer [REDACTED]")
+      .replace(/(key|secret|password|token)=[^\s&]+/gi, "$1=[REDACTED]")
+      .split("\n")[0]
+      .substring(0, 200);
+
+    console.warn(`[OwnerRez Sync] Payment realization reconciliation warning for res ${reservationId}:`, sanitizedError);
+
+    return {
+      attempted: true,
+      status: "ERROR",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      error: sanitizedError,
+    };
+  }
 }
 
 /**
@@ -438,14 +508,7 @@ export async function syncSingleBookingRecord(
       isPlatformEqual
     ) {
       // Step 9a: Automatically reconcile ledger payment realization for unchanged booking
-      try {
-        await reconcileReservationPaymentRealization({
-          reservationId: existingRow.id,
-          sourceProvider: "ownerrez",
-        });
-      } catch (reconErr: any) {
-        console.warn(`[OwnerRez Sync] Payment realization reconciliation notice for unchanged res ${existingRow.id}:`, reconErr.message);
-      }
+      const reconciliation = await executeSafeReconciliation(existingRow.id, supabase);
 
       return {
         bookingId,
@@ -460,6 +523,7 @@ export async function syncSingleBookingRecord(
         siteId: resolvedSiteId || undefined,
         partnerId: resolvedPartnerId || undefined,
         propertyId: hhhPropertyId || undefined,
+        reconciliation,
       };
     }
   }
@@ -552,14 +616,7 @@ export async function syncSingleBookingRecord(
   }
 
   // 9. Automatic Phase 6 Commission Payment Realization Reconciliation
-  try {
-    await reconcileReservationPaymentRealization({
-      reservationId,
-      sourceProvider: "ownerrez",
-    });
-  } catch (reconErr: any) {
-    console.warn(`[OwnerRez Sync] Payment realization reconciliation notice for res ${reservationId}:`, reconErr.message);
-  }
+  const reconciliation = await executeSafeReconciliation(reservationId, supabase);
 
   return {
     bookingId,
@@ -574,6 +631,7 @@ export async function syncSingleBookingRecord(
     siteId: resolvedSiteId || undefined,
     partnerId: resolvedPartnerId || undefined,
     propertyId: hhhPropertyId || undefined,
+    reconciliation,
   };
 }
 
@@ -627,6 +685,17 @@ export async function syncAllOwnerRezBookings(): Promise<BatchSyncResult> {
   let reviewRequired = 0;
   const sourcesMap = new Map<string, DiscoveredSource>();
   const errors: string[] = [];
+
+  const reconciliationSummary: BatchReconciliationSummary = {
+    attempted: 0,
+    unpaidPending: 0,
+    partialUnallocated: 0,
+    realized: 0,
+    reviewRequired: 0,
+    errors: 0,
+    rowsCreated: 0,
+    realizedAmount: 0,
+  };
 
   // 3. Hardened pagination with loop detection and max page safety guard
   const visitedUrls = new Set<string>();
@@ -690,6 +759,34 @@ export async function syncAllOwnerRezBookings(): Promise<BatchSyncResult> {
           unattributed += 1;
         }
 
+        // Aggregate Phase 6 reconciliation outcomes
+        if (syncRes.reconciliation) {
+          reconciliationSummary.attempted += 1;
+          reconciliationSummary.rowsCreated += syncRes.reconciliation.rowsCreated || 0;
+          reconciliationSummary.realizedAmount = Number(
+            (reconciliationSummary.realizedAmount + (syncRes.reconciliation.realizedAmount || 0)).toFixed(2)
+          );
+
+          switch (syncRes.reconciliation.status) {
+            case "UNPAID_PENDING_PAYMENT":
+              reconciliationSummary.unpaidPending += 1;
+              break;
+            case "PARTIAL_PAYMENT_UNALLOCATED":
+              reconciliationSummary.partialUnallocated += 1;
+              break;
+            case "REALIZED":
+              reconciliationSummary.realized += 1;
+              break;
+            case "MISSING_ACCRUAL_REVIEW_REQUIRED":
+            case "CANCELLED_REVIEW_REQUIRED":
+              reconciliationSummary.reviewRequired += 1;
+              break;
+            case "ERROR":
+              reconciliationSummary.errors += 1;
+              break;
+          }
+        }
+
         // Track discovered source
         const srcKey = (item.listing_site || "NO_LISTING_SITE").trim();
         const existingSrc = sourcesMap.get(srcKey);
@@ -727,6 +824,7 @@ export async function syncAllOwnerRezBookings(): Promise<BatchSyncResult> {
     unattributed,
     reviewRequired,
     sourcesDiscovered: Array.from(sourcesMap.values()),
+    reconciliationSummary,
     errors,
   };
 }

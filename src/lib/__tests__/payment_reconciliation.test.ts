@@ -1,5 +1,6 @@
 import assert from "assert";
 import { reconcileReservationPaymentRealization } from "../commissions/ledger";
+import { executeSafeReconciliation } from "../ownerrez/sync";
 
 interface InMemoryState {
   reservations: Map<string, any>;
@@ -469,8 +470,35 @@ export async function runPaymentReconciliationUnitTests() {
     console.log("  ✔ Test 7 Passed: Cancelled booking fails closed with zero realization.\n");
   }
 
+  // --------------------------------------------------------------------------
+  // Scenario 8: Reconciliation Internal Exception Hardening & Secret Sanitization
+  // --------------------------------------------------------------------------
+  {
+    console.log("[Test 8] Internal reconciliation exception hardening & secret sanitization...");
+    const brokenClient = {
+      from: () => {
+        throw new Error(
+          "DB connection error: bearer super-secret-jwt-token-12345 failed with token=ultra-private-key-67890"
+        );
+      },
+    };
+
+    const res = await executeSafeReconciliation("res-err-008", brokenClient);
+
+    assert.strictEqual(res.attempted, true, "Must record attempted = true");
+    assert.strictEqual(res.status, "ERROR", "Status must be ERROR");
+    assert.strictEqual(res.rowsCreated, 0, "Must create 0 rows");
+    assert.strictEqual(res.realizedAmount, 0.0, "Realized amount must be 0.00");
+    assert.ok(res.error, "Error message must be present");
+    assert.ok(!res.error.includes("super-secret-jwt-token-12345"), "Must redact bearer token");
+    assert.ok(!res.error.includes("ultra-private-key-67890"), "Must redact sensitive token parameter");
+    assert.ok(res.error.includes("bearer [REDACTED]"), "Must replace bearer token with [REDACTED]");
+    assert.ok(res.error.includes("token=[REDACTED]"), "Must replace token value with [REDACTED]");
+    console.log("  ✔ Test 8 Passed: Internal reconciliation exception handled safely, returning status='ERROR' and sanitized message.\n");
+  }
+
   console.log("=================================================================");
-  console.log("  ALL 7 PAYMENT RECONCILIATION SCENARIOS PASSED 100%!           ");
+  console.log("  ALL 8 PAYMENT RECONCILIATION SCENARIOS PASSED 100%!           ");
   console.log("=================================================================");
 }
 
