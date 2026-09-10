@@ -50,9 +50,9 @@ CREATE TABLE IF NOT EXISTS public.commission_ledger_events (
     
     -- Audit & Administrative Controls
     adjustment_reason TEXT NULL,
-    created_by UUID NULL,
-    approved_by UUID NULL,
-    currency TEXT NOT NULL DEFAULT 'USD',
+    created_by TEXT NULL,
+    approved_by TEXT NULL,
+    currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
     idempotency_key TEXT NOT NULL UNIQUE,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS public.commission_ledger_events (
             adjustment_reason IS NOT NULL AND 
             btrim(adjustment_reason) <> '' AND 
             created_by IS NOT NULL AND 
+            btrim(created_by) <> '' AND
             approved_by IS NOT NULL AND 
+            btrim(approved_by) <> '' AND
             approved_by <> created_by
         )
     ),
@@ -125,9 +127,9 @@ CREATE TABLE IF NOT EXISTS public.payout_batches (
             'REQUIRES_RECONCILIATION'
         )
     ),
-    created_by UUID NOT NULL,
-    submitted_by UUID NULL,
-    approved_by UUID NULL,
+    created_by TEXT NOT NULL,
+    submitted_by TEXT NULL,
+    approved_by TEXT NULL,
     approved_at TIMESTAMPTZ NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -205,13 +207,16 @@ CREATE TABLE IF NOT EXISTS public.payout_payment_attempts (
 CREATE INDEX IF NOT EXISTS idx_attempts_batch ON public.payout_payment_attempts(payout_batch_id);
 
 -- ============================================================================
--- STAGE E: Alter commission_ledger_events to Add Foreign Keys
+-- ============================================================================
+-- STAGE E: Alter commission_ledger_events to Add Foreign Keys & Derivation Trigger
 -- ============================================================================
 
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'fk_ledger_payout_batch'
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'fk_ledger_payout_batch'
+          AND conrelid = 'public.commission_ledger_events'::regclass
     ) THEN
         ALTER TABLE public.commission_ledger_events
         ADD CONSTRAINT fk_ledger_payout_batch
@@ -219,13 +224,78 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'fk_ledger_payout_item'
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'fk_ledger_payout_item'
+          AND conrelid = 'public.commission_ledger_events'::regclass
     ) THEN
         ALTER TABLE public.commission_ledger_events
         ADD CONSTRAINT fk_ledger_payout_item
         FOREIGN KEY (payout_item_id) REFERENCES public.payout_items(id) ON DELETE RESTRICT;
     END IF;
 END $$;
+
+-- Enforce PAYOUT_SETTLEMENT relationship derivation and consistency
+CREATE OR REPLACE FUNCTION public.fn_enforce_settlement_derivation()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_item RECORD;
+BEGIN
+    IF NEW.event_type = 'PAYOUT_SETTLEMENT' THEN
+        IF NEW.payout_item_id IS NULL THEN
+            RAISE EXCEPTION 'PAYOUT_SETTLEMENT requires payout_item_id to be specified.';
+        END IF;
+
+        SELECT id, payout_batch_id, reservation_id, partner_id, disbursed_amount
+        INTO v_item
+        FROM public.payout_items
+        WHERE id = NEW.payout_item_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Referenced payout_item % does not exist.', NEW.payout_item_id;
+        END IF;
+
+        -- Validate or derive payout_batch_id
+        IF NEW.payout_batch_id IS NOT NULL AND NEW.payout_batch_id <> v_item.payout_batch_id THEN
+            RAISE EXCEPTION 'Inconsistent payout_batch_id % supplied for PAYOUT_SETTLEMENT. Expected % from referenced payout item.',
+                NEW.payout_batch_id, v_item.payout_batch_id;
+        END IF;
+        NEW.payout_batch_id := v_item.payout_batch_id;
+
+        -- Validate or derive reservation_id
+        IF NEW.reservation_id IS NOT NULL AND NEW.reservation_id <> v_item.reservation_id THEN
+            RAISE EXCEPTION 'Inconsistent reservation_id % supplied for PAYOUT_SETTLEMENT. Expected % from referenced payout item.',
+                NEW.reservation_id, v_item.reservation_id;
+        END IF;
+        NEW.reservation_id := v_item.reservation_id;
+
+        -- Validate or derive partner_id
+        IF NEW.partner_id IS NOT NULL AND NEW.partner_id <> v_item.partner_id THEN
+            RAISE EXCEPTION 'Inconsistent partner_id % supplied for PAYOUT_SETTLEMENT. Expected % from referenced payout item.',
+                NEW.partner_id, v_item.partner_id;
+        END IF;
+        NEW.partner_id := v_item.partner_id;
+
+        -- Validate or derive delta_amount (must match -ABS(disbursed_amount))
+        IF NEW.delta_amount <> 0.00 AND NEW.delta_amount <> -ABS(v_item.disbursed_amount) THEN
+            RAISE EXCEPTION 'Inconsistent delta_amount % supplied for PAYOUT_SETTLEMENT. Expected % from referenced payout item.',
+                NEW.delta_amount, -ABS(v_item.disbursed_amount);
+        END IF;
+        NEW.delta_amount := -ABS(v_item.disbursed_amount);
+
+    ELSE
+        IF NEW.payout_item_id IS NOT NULL THEN
+            RAISE EXCEPTION 'payout_item_id can only be associated with PAYOUT_SETTLEMENT events.';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_enforce_settlement_derivation ON public.commission_ledger_events;
+CREATE TRIGGER trg_enforce_settlement_derivation
+BEFORE INSERT ON public.commission_ledger_events
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_settlement_derivation();
 
 -- ============================================================================
 -- STAGE F: Create commission_adjustment_requests
@@ -241,8 +311,8 @@ CREATE TABLE IF NOT EXISTS public.commission_adjustment_requests (
     status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK (
         status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED')
     ),
-    created_by UUID NOT NULL,
-    approved_by UUID NULL,
+    created_by TEXT NOT NULL,
+    approved_by TEXT NULL,
     approved_at TIMESTAMPTZ NULL,
     rejection_reason TEXT NULL,
     ledger_event_id UUID NULL REFERENCES public.commission_ledger_events(id) ON DELETE RESTRICT,
@@ -253,6 +323,30 @@ CREATE TABLE IF NOT EXISTS public.commission_adjustment_requests (
     -- Maker-Checker Invariant
     CONSTRAINT chk_adjustment_request_maker_checker CHECK (
         (approved_by IS NULL) OR (approved_by <> created_by)
+    ),
+
+    -- Database State-Coherence Constraint
+    CONSTRAINT chk_adjustment_request_state_coherence CHECK (
+        (
+            status = 'PENDING_APPROVAL' AND
+            approved_by IS NULL AND
+            approved_at IS NULL AND
+            ledger_event_id IS NULL AND
+            rejection_reason IS NULL
+        ) OR (
+            status = 'APPROVED' AND
+            approved_by IS NOT NULL AND
+            btrim(approved_by) <> '' AND
+            approved_at IS NOT NULL AND
+            ledger_event_id IS NOT NULL AND
+            rejection_reason IS NULL AND
+            approved_by <> created_by
+        ) OR (
+            status = 'REJECTED' AND
+            rejection_reason IS NOT NULL AND
+            btrim(rejection_reason) <> '' AND
+            ledger_event_id IS NULL
+        )
     )
 );
 
@@ -273,15 +367,7 @@ ALTER TABLE public.payout_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payout_payment_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.commission_adjustment_requests ENABLE ROW LEVEL SECURITY;
 
--- Ensure service_role exists (standard in Supabase, created defensively for standalone Postgres)
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-        CREATE ROLE service_role;
-    END IF;
-END $$;
-
--- Service role full access policies
+-- Service role full access policies (service_role is native in Supabase)
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'commission_ledger_events' AND policyname = 'service_role_all_ledger_events') THEN

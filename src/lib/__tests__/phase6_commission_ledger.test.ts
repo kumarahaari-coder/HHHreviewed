@@ -446,7 +446,7 @@ export async function runPhase6TestSuite() {
     assert.strictEqual(approvedRequest.approved_by, distinctSuperAdminId);
 
     // 6. Repeat approval -> zero duplicate ledger events
-    const canRepeatApprove = approvedRequest.status === "PENDING_APPROVAL";
+    const canRepeatApprove = (approvedRequest.status as string) === "PENDING_APPROVAL";
     assert.strictEqual(canRepeatApprove, false, "Repeat approval must be rejected (status is already APPROVED)");
 
     console.log("✔ Test Group 10 Passed: Hardened MANUAL_ADJUSTMENT Maker-Checker Flow Invariants");
