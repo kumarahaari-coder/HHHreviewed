@@ -341,7 +341,7 @@ export async function reconcileReservationPaymentRealization(params: {
   overrideCommissionAmount?: number;
 }): Promise<{
   reconciled: boolean;
-  status: "UNPAID_PENDING_PAYMENT" | "PARTIAL_PAYMENT_UNALLOCATED" | "REALIZED";
+  status: "UNPAID_PENDING_PAYMENT" | "PARTIAL_PAYMENT_UNALLOCATED" | "CANCELLED_REVIEW_REQUIRED" | "REALIZED";
   rowsCreated: number;
   realizedAmount: number;
   reason: string;
@@ -362,7 +362,33 @@ export async function reconcileReservationPaymentRealization(params: {
 
   const grossAmount = Number(reservation.gross_amount || 0);
   const amountReceived = Number(reservation.amount_received || 0);
+  const refundAmount = Number(reservation.refund_amount || 0);
   const paymentStatus = reservation.payment_status || "UNPAID";
+  const reservationStatus = (reservation.reservation_status || "CONFIRMED").toUpperCase();
+
+  // Fail closed on cancellations, refunds, or reversals
+  if (reservationStatus === "CANCELLED" || refundAmount > 0) {
+    return {
+      reconciled: true,
+      status: "CANCELLED_REVIEW_REQUIRED",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      reason: `Booking is cancelled or has refund activity (reservation_status = ${reservationStatus}, refund_amount = $${refundAmount.toFixed(2)}). Realized commission remains $0.00 pending manual audit.`,
+      event: null,
+    };
+  }
+
+  // Fail closed on ambiguous or zero-gross amounts
+  if (grossAmount <= 0) {
+    return {
+      reconciled: true,
+      status: "UNPAID_PENDING_PAYMENT",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      reason: `Gross amount is invalid or zero ($${grossAmount.toFixed(2)}). Realized commission remains $0.00.`,
+      event: null,
+    };
+  }
 
   // Check payment readiness
   if (paymentStatus === "UNPAID" || amountReceived <= 0) {
@@ -387,21 +413,34 @@ export async function reconcileReservationPaymentRealization(params: {
     };
   }
 
-  // 100% collected: determine commission amount
+  // 100% collected: determine commission amount from existing INITIAL_ACCRUAL snapshot if present
   let commissionAmount = params.overrideCommissionAmount;
   let commissionRuleId: string | null = null;
 
   if (commissionAmount === undefined) {
-    const { data: rules } = await supabase
-      .from("commission_rules")
-      .select("*")
-      .eq("partner_id", reservation.partner_id)
-      .eq("status", "active");
+    // Check if an INITIAL_ACCRUAL event already exists to bind strictly to historical snapshot
+    const { data: accrualEvent } = await supabase
+      .from("commission_ledger_events")
+      .select("commission_rule_id, calculated_commission")
+      .eq("reservation_id", reservation.id)
+      .eq("event_type", "INITIAL_ACCRUAL")
+      .maybeSingle();
 
-    const rule = rules && rules.length > 0 ? rules[0] : null;
-    commissionRuleId = rule?.id || null;
-    const rate = rule && rule.percentage ? rule.percentage / 100 : 0.1;
-    commissionAmount = Math.round(grossAmount * rate * 100) / 100;
+    if (accrualEvent && Number(accrualEvent.calculated_commission) > 0) {
+      commissionAmount = Number(accrualEvent.calculated_commission);
+      commissionRuleId = accrualEvent.commission_rule_id;
+    } else {
+      const { data: rules } = await supabase
+        .from("commission_rules")
+        .select("*")
+        .eq("partner_id", reservation.partner_id)
+        .eq("status", "active");
+
+      const rule = rules && rules.length > 0 ? rules[0] : null;
+      commissionRuleId = rule?.id || null;
+      const rate = rule && rule.percentage ? rule.percentage / 100 : 0.1;
+      commissionAmount = Math.round(grossAmount * rate * 100) / 100;
+    }
   }
 
   // Check if PAYMENT_REALIZED already exists
