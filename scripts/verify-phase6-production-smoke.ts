@@ -177,14 +177,14 @@ async function main() {
   // Check booking 19150249 in reservations table
   const { data: bRow, error: bErr } = await supabase
     .from("reservations")
-    .select("ownerrez_booking_id, confirmation_code, total_payout")
+    .select("ownerrez_booking_id, confirmation_code, gross_amount, amount_received")
     .eq("ownerrez_booking_id", 19150249)
     .single();
 
   if (bErr || !bRow) {
     throw new Error(`Booking 19150249 not found in reservations table: ${bErr?.message}`);
   }
-  console.log(`  • Booking 19150249 in DB: ownerrez_booking_id=${bRow.ownerrez_booking_id}, total_payout=${bRow.total_payout}`);
+  console.log(`  • Booking 19150249 in DB: ownerrez_booking_id=${bRow.ownerrez_booking_id}, confirmation_code=${bRow.confirmation_code}, gross_amount=${bRow.gross_amount}, amount_received=${bRow.amount_received}`);
 
   console.log("\n================================================================================");
   console.log("ALL PRODUCTION SMOKE TESTS & INVARIANTS PASSED 100%!");
