@@ -343,6 +343,46 @@ async function main() {
       }
     }
 
+    // Test 5: Ledger Immutability Trigger (UPDATE forbidden)
+    try {
+      await primaryClient.query(`
+        UPDATE public.commission_ledger_events SET delta_amount = 9999.00 WHERE id = $1;
+      `, [qualifyingEventId || partnerId]);
+      throw new Error("FAILED: UPDATE on commission_ledger_events was permitted!");
+    } catch (e: any) {
+      if (e.message.includes("immutable") || e.message.includes("prohibited")) {
+        console.log("  ✓ Correctly rejected UPDATE on commission_ledger_events (trg_prevent_ledger_mutation)");
+      } else {
+        // In case qualifyingEventId isn't seeded yet, seed and test below
+      }
+    }
+
+    // Test 6: Payout Batch Arithmetic Invariant Failure
+    try {
+      await primaryClient.query(`
+        INSERT INTO public.payout_batches (
+          batch_number, partner_id, payout_rail, total_gross_amount, total_netting_deduction, total_amount,
+          status, created_by
+        ) VALUES (
+          'BATCH-FAIL-ARITHMETIC', $1, 'MANUAL_ACH', 500.00, 50.00, 999.00,
+          'DRAFT', $2
+        );
+      `, [partnerId, aliceMakerId]);
+      throw new Error("FAILED: Inconsistent batch arithmetic was accepted!");
+    } catch (e: any) {
+      if (e.message.includes("chk_batch_arithmetic")) {
+        console.log("  ✓ Correctly rejected inconsistent batch arithmetic (chk_batch_arithmetic)");
+      } else {
+        throw e;
+      }
+    }
+
+    // Test 7: Payout Item Partner Consistency (Item partner_id != Batch partner_id)
+    const partner2Res = await primaryClient.query(`
+      INSERT INTO public.partners (name, email) VALUES ('Different Partner', 'other@partner.com') RETURNING id;
+    `);
+    const partner2Id = partner2Res.rows[0].id;
+
     // -------------------------------------------------------------------------
     // Partial Unique Index Tests
     // -------------------------------------------------------------------------
@@ -359,6 +399,30 @@ async function main() {
       ) RETURNING id;
     `, [partnerId, reservationId]);
     const qualifyingEventId = prRes.rows[0].id;
+
+    // Verify Ledger Immutability: UPDATE rejected
+    try {
+      await primaryClient.query("UPDATE public.commission_ledger_events SET delta_amount = 999.00 WHERE id = $1;", [qualifyingEventId]);
+      throw new Error("FAILED: UPDATE on commission_ledger_events was permitted!");
+    } catch (e: any) {
+      if (e.message.includes("immutable") || e.message.includes("prohibited")) {
+        console.log("  ✓ Correctly rejected UPDATE on commission_ledger_events (trg_prevent_ledger_mutation)");
+      } else {
+        throw e;
+      }
+    }
+
+    // Verify Ledger Immutability: DELETE rejected
+    try {
+      await primaryClient.query("DELETE FROM public.commission_ledger_events WHERE id = $1;", [qualifyingEventId]);
+      throw new Error("FAILED: DELETE on commission_ledger_events was permitted!");
+    } catch (e: any) {
+      if (e.message.includes("immutable") || e.message.includes("prohibited")) {
+        console.log("  ✓ Correctly rejected DELETE on commission_ledger_events (trg_prevent_ledger_mutation)");
+      } else {
+        throw e;
+      }
+    }
 
     // Create Batch A
     const bARes = await primaryClient.query(`
@@ -383,6 +447,38 @@ async function main() {
       ) RETURNING id;
     `, [batchAId, qualifyingEventId, reservationId, partnerId]);
     const itemAId = itemARes.rows[0].id;
+
+    // Seed a distinct event to test partner consistency foreign key
+    const pr2Res = await primaryClient.query(`
+      INSERT INTO public.commission_ledger_events (
+        partner_id, reservation_id, source_provider, booking_channel, provider_booking_id,
+        event_type, delta_amount, calculated_commission, idempotency_key
+      ) VALUES (
+        $1, $2, 'ownerrez', 'direct', 'OR-100',
+        'PAYMENT_REALIZED', 75.00, 75.00, 'PAYMENT_REALIZED:TEST:002'
+      ) RETURNING id;
+    `, [partnerId, reservationId]);
+    const qualifyingEvent2Id = pr2Res.rows[0].id;
+
+    // Verify Partner Consistency: Item partner_id != Batch partner_id rejected
+    try {
+      await primaryClient.query(`
+        INSERT INTO public.payout_items (
+          payout_batch_id, qualifying_ledger_event_id, reservation_id, partner_id,
+          gross_amount, netting_deduction, disbursed_amount, status
+        ) VALUES (
+          $1, $2, $3, $4,
+          75.00, 0.00, 75.00, 'PENDING'
+        );
+      `, [batchAId, qualifyingEvent2Id, reservationId, partner2Id]);
+      throw new Error("FAILED: Item with mismatched partner_id was accepted in batch!");
+    } catch (e: any) {
+      if (e.message.includes("fk_payout_items_batch_partner")) {
+        console.log("  ✓ Correctly rejected item with mismatched partner_id (fk_payout_items_batch_partner)");
+      } else {
+        throw e;
+      }
+    }
 
     // Create Batch B and attempt duplicate PENDING item for SAME qualifying event
     const bBRes = await primaryClient.query(`

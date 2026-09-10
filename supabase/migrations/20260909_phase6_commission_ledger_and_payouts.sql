@@ -86,6 +86,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_payout_settlement_item
 ON public.commission_ledger_events(payout_item_id)
 WHERE event_type = 'PAYOUT_SETTLEMENT';
 
+-- Database-Enforced Ledger Immutability Trigger (Prohibits UPDATE & DELETE)
+CREATE OR REPLACE FUNCTION public.fn_prevent_ledger_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Commission ledger events are strictly immutable. Updates and deletes are prohibited.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_ledger_mutation ON public.commission_ledger_events;
+CREATE TRIGGER trg_prevent_ledger_mutation
+BEFORE UPDATE OR DELETE ON public.commission_ledger_events
+FOR EACH ROW EXECUTE FUNCTION public.fn_prevent_ledger_mutation();
+
 -- ============================================================================
 -- STAGE B: Create payout_batches
 -- ============================================================================
@@ -98,7 +111,7 @@ CREATE TABLE IF NOT EXISTS public.payout_batches (
     total_gross_amount NUMERIC(10, 2) NOT NULL CHECK (total_gross_amount > 0),
     total_netting_deduction NUMERIC(10, 2) NOT NULL DEFAULT 0.00 CHECK (total_netting_deduction >= 0),
     total_amount NUMERIC(10, 2) NOT NULL CHECK (total_amount > 0),
-    currency TEXT NOT NULL DEFAULT 'USD',
+    currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
     status TEXT NOT NULL CHECK (
         status IN (
             'DRAFT',
@@ -124,7 +137,13 @@ CREATE TABLE IF NOT EXISTS public.payout_batches (
     CONSTRAINT chk_maker_checker_separation CHECK (
         (approved_by IS NULL) OR 
         (approved_by != created_by AND (submitted_by IS NULL OR approved_by != submitted_by))
-    )
+    ),
+
+    -- Payout Arithmetic Invariant
+    CONSTRAINT chk_batch_arithmetic CHECK (total_amount = (total_gross_amount - total_netting_deduction)),
+
+    -- Composite Unique Key for Cross-Table Partner Referential Integrity
+    CONSTRAINT uq_payout_batch_partner UNIQUE (id, partner_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_payout_batches_partner_status ON public.payout_batches(partner_id, status);
@@ -142,9 +161,17 @@ CREATE TABLE IF NOT EXISTS public.payout_items (
     gross_amount NUMERIC(10, 2) NOT NULL CHECK (gross_amount > 0),
     netting_deduction NUMERIC(10, 2) NOT NULL DEFAULT 0.00 CHECK (netting_deduction >= 0),
     disbursed_amount NUMERIC(10, 2) NOT NULL CHECK (disbursed_amount > 0),
+    currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
     status TEXT NOT NULL CHECK (status IN ('PENDING', 'SETTLED', 'FAILED', 'CANCELLED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Item Payout Arithmetic Invariant
+    CONSTRAINT chk_disbursed_arithmetic CHECK (disbursed_amount = (gross_amount - netting_deduction)),
+
+    -- Database-Enforced Partner Consistency Between Batch and Items
+    CONSTRAINT fk_payout_items_batch_partner FOREIGN KEY (payout_batch_id, partner_id)
+        REFERENCES public.payout_batches(id, partner_id) ON DELETE RESTRICT
 );
 
 -- Partial Unique Index: Exactly one active claim per qualifying ledger event
