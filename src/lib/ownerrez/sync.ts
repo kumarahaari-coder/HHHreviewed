@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ownerRezRequest } from "./client";
+import { reconcileReservationPaymentRealization } from "@/lib/commissions/ledger";
 
 export interface OwnerRezCharge {
   type?: string;
@@ -436,6 +437,16 @@ export async function syncSingleBookingRecord(
       isQuoteEqual &&
       isPlatformEqual
     ) {
+      // Step 9a: Automatically reconcile ledger payment realization for unchanged booking
+      try {
+        await reconcileReservationPaymentRealization({
+          reservationId: existingRow.id,
+          sourceProvider: "ownerrez",
+        });
+      } catch (reconErr: any) {
+        console.warn(`[OwnerRez Sync] Payment realization reconciliation notice for unchanged res ${existingRow.id}:`, reconErr.message);
+      }
+
       return {
         bookingId,
         ownerrezBookingId: booking.id,
@@ -538,6 +549,16 @@ export async function syncSingleBookingRecord(
 
   if (attrErr) {
     console.warn("Could not upsert reservation_attributions:", attrErr.message);
+  }
+
+  // 9. Automatic Phase 6 Commission Payment Realization Reconciliation
+  try {
+    await reconcileReservationPaymentRealization({
+      reservationId,
+      sourceProvider: "ownerrez",
+    });
+  } catch (reconErr: any) {
+    console.warn(`[OwnerRez Sync] Payment realization reconciliation notice for res ${reservationId}:`, reconErr.message);
   }
 
   return {

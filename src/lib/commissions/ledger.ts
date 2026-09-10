@@ -23,6 +23,7 @@ export interface AppendLedgerEventParams {
   payoutItemId?: string | null;
   idempotencyKey: string;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }
 
 /**
@@ -75,7 +76,7 @@ export async function appendCommissionLedgerEvent(
   validateManualAdjustmentParams(params);
   validatePayoutSettlementParams(params);
 
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   const insertPayload = {
     partner_id: params.partnerId,
@@ -115,11 +116,17 @@ export async function appendCommissionLedgerEvent(
         .eq("idempotency_key", params.idempotencyKey)
         .maybeSingle();
 
+      if (existing) {
+        (existing as any).__isDuplicate = true;
+      }
       return (existing as CommissionLedgerEvent) || null;
     }
     throw new Error(`Failed to append commission ledger event: ${error.message}`);
   }
 
+  if (data) {
+    (data as any).__isDuplicate = false;
+  }
   return data as CommissionLedgerEvent;
 }
 
@@ -175,6 +182,7 @@ export async function createPaymentRealized(params: {
   ownerrezBookingId?: number | null;
   commissionAmount: number;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }): Promise<CommissionLedgerEvent | null> {
   if (params.commissionAmount <= 0) {
     throw new Error("Payment realization amount must be greater than zero.");
@@ -193,6 +201,7 @@ export async function createPaymentRealized(params: {
     calculatedCommission: params.commissionAmount,
     idempotencyKey: `evt_realized_${params.reservationId}_full`,
     metadata: params.metadata,
+    supabaseClient: params.supabaseClient,
   });
 }
 
@@ -332,22 +341,31 @@ export async function createDisputeRelease(params: {
  * Conservative Rules:
  * 1. If unpaid (amount_received <= 0 or payment_status == 'UNPAID'): zero PAYMENT_REALIZED events created.
  * 2. If partial payment: zero PAYMENT_REALIZED events created (unallocated).
- * 3. If 100% collected: appends idempotent PAYMENT_REALIZED event via createPaymentRealized.
- * 4. Never mutates existing INITIAL_ACCRUAL event.
+ * 3. If cancelled or refunded: zero PAYMENT_REALIZED events created (CANCELLED_REVIEW_REQUIRED).
+ * 4. If fully paid: REQUIRES exactly one historical INITIAL_ACCRUAL event.
+ *    - If missing or ambiguous: fails closed with MISSING_ACCRUAL_REVIEW_REQUIRED and creates 0 rows.
+ *    - Never resolves current active commission rule as fallback.
+ *    - Inherits historical rule ID, calculated commission, and snapshot evidence.
+ * 5. Deterministically idempotent under evt_realized_<reservation_id>_full.
  */
 export async function reconcileReservationPaymentRealization(params: {
   reservationId: string;
   sourceProvider?: "ownerrez" | "hospitable";
-  overrideCommissionAmount?: number;
+  supabaseClient?: any;
 }): Promise<{
   reconciled: boolean;
-  status: "UNPAID_PENDING_PAYMENT" | "PARTIAL_PAYMENT_UNALLOCATED" | "CANCELLED_REVIEW_REQUIRED" | "REALIZED";
+  status:
+    | "UNPAID_PENDING_PAYMENT"
+    | "PARTIAL_PAYMENT_UNALLOCATED"
+    | "CANCELLED_REVIEW_REQUIRED"
+    | "MISSING_ACCRUAL_REVIEW_REQUIRED"
+    | "REALIZED";
   rowsCreated: number;
   realizedAmount: number;
   reason: string;
   event: CommissionLedgerEvent | null;
 }> {
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   // 1. Fetch reservation from database
   const { data: reservation, error: resErr } = await supabase
@@ -413,34 +431,36 @@ export async function reconcileReservationPaymentRealization(params: {
     };
   }
 
-  // 100% collected: determine commission amount from existing INITIAL_ACCRUAL snapshot if present
-  let commissionAmount = params.overrideCommissionAmount;
-  let commissionRuleId: string | null = null;
+  // 100% collected: require exactly one historical INITIAL_ACCRUAL event
+  const { data: accrualEvents, error: accrualErr } = await supabase
+    .from("commission_ledger_events")
+    .select("*")
+    .eq("reservation_id", reservation.id)
+    .eq("event_type", "INITIAL_ACCRUAL");
 
-  if (commissionAmount === undefined) {
-    // Check if an INITIAL_ACCRUAL event already exists to bind strictly to historical snapshot
-    const { data: accrualEvent } = await supabase
-      .from("commission_ledger_events")
-      .select("commission_rule_id, calculated_commission")
-      .eq("reservation_id", reservation.id)
-      .eq("event_type", "INITIAL_ACCRUAL")
-      .maybeSingle();
+  if (accrualErr || !accrualEvents || accrualEvents.length !== 1) {
+    return {
+      reconciled: true,
+      status: "MISSING_ACCRUAL_REVIEW_REQUIRED",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      reason: `Payment realization requires exactly one historical INITIAL_ACCRUAL event. Found: ${accrualEvents ? accrualEvents.length : 0}. Active-rule fallback is forbidden.`,
+      event: null,
+    };
+  }
 
-    if (accrualEvent && Number(accrualEvent.calculated_commission) > 0) {
-      commissionAmount = Number(accrualEvent.calculated_commission);
-      commissionRuleId = accrualEvent.commission_rule_id;
-    } else {
-      const { data: rules } = await supabase
-        .from("commission_rules")
-        .select("*")
-        .eq("partner_id", reservation.partner_id)
-        .eq("status", "active");
+  const accrual = accrualEvents[0];
+  const commissionAmount = Number(accrual.calculated_commission || 0);
 
-      const rule = rules && rules.length > 0 ? rules[0] : null;
-      commissionRuleId = rule?.id || null;
-      const rate = rule && rule.percentage ? rule.percentage / 100 : 0.1;
-      commissionAmount = Math.round(grossAmount * rate * 100) / 100;
-    }
+  if (commissionAmount <= 0) {
+    return {
+      reconciled: true,
+      status: "MISSING_ACCRUAL_REVIEW_REQUIRED",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      reason: `Historical INITIAL_ACCRUAL has invalid or zero calculated_commission ($${commissionAmount.toFixed(2)}). Realized commission remains $0.00.`,
+      event: null,
+    };
   }
 
   // Check if PAYMENT_REALIZED already exists
@@ -462,30 +482,37 @@ export async function reconcileReservationPaymentRealization(params: {
     };
   }
 
-  // Create payment realization
+  // Create payment realization strictly inheriting accrual snapshot
   const event = await createPaymentRealized({
-    partnerId: reservation.partner_id,
-    siteId: reservation.site_id,
-    reservationId: reservation.id,
-    commissionRuleId,
-    sourceProvider: params.sourceProvider || "ownerrez",
-    bookingChannel: reservation.platform || "direct",
-    providerBookingId: String(reservation.ownerrez_booking_id || reservation.hospitable_reservation_id),
-    ownerrezBookingId: reservation.ownerrez_booking_id || null,
+    partnerId: accrual.partner_id,
+    siteId: accrual.site_id,
+    reservationId: accrual.reservation_id,
+    commissionRuleId: accrual.commission_rule_id,
+    sourceProvider: (accrual.source_provider || params.sourceProvider || "ownerrez") as "ownerrez" | "hospitable",
+    bookingChannel: accrual.booking_channel || reservation.platform || "direct",
+    providerBookingId: accrual.provider_booking_id || String(reservation.ownerrez_booking_id || reservation.hospitable_reservation_id),
+    ownerrezBookingId: accrual.ownerrez_booking_id || reservation.ownerrez_booking_id || null,
     commissionAmount: commissionAmount,
+    supabaseClient: supabase,
     metadata: {
-      reconciliationSource: "payment_readiness_gate",
+      reconciliationSource: "ownerrez_sync_realization",
+      inheritedAccrualId: accrual.id,
+      accrualRuleSnapshot: accrual.metadata,
       grossAmount,
       amountReceived,
     },
   });
 
+  const isDuplicate = (event as any)?.__isDuplicate === true;
+
   return {
     reconciled: true,
     status: "REALIZED",
-    rowsCreated: event ? 1 : 0,
+    rowsCreated: event && !isDuplicate ? 1 : 0,
     realizedAmount: commissionAmount,
-    reason: "PAYMENT_REALIZED event created successfully.",
+    reason: isDuplicate
+      ? "PAYMENT_REALIZED event already exists (concurrent duplicate caught idempotently)."
+      : "PAYMENT_REALIZED event created successfully from historical accrual snapshot.",
     event,
   };
 }
