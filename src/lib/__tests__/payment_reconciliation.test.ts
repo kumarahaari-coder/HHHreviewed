@@ -497,8 +497,75 @@ export async function runPaymentReconciliationUnitTests() {
     console.log("  ✔ Test 8 Passed: Internal reconciliation exception handled safely, returning status='ERROR' and sanitized message.\n");
   }
 
+  // --------------------------------------------------------------------------
+  // Scenario 9: Successful Reconciliation Reporting (Observability Contract)
+  // --------------------------------------------------------------------------
+  {
+    console.log("[Test 9] Successful reconciliation reporting structure for unpaid and paid states...");
+    const state: InMemoryState = {
+      reservations: new Map(),
+      commission_ledger_events: new Map(),
+      idempotencyKeys: new Set(),
+    };
+
+    const resId = "res-obs-009";
+    state.reservations.set(resId, {
+      id: resId,
+      partner_id: PARTNER_ID,
+      site_id: SITE_ID,
+      ownerrez_booking_id: 19150249,
+      gross_amount: 1475.0,
+      amount_received: 0.0,
+      refund_amount: 0.0,
+      payment_status: "UNPAID",
+      reservation_status: "CONFIRMED",
+      platform: "direct",
+    });
+
+    state.commission_ledger_events.set("evt-accrual-9", {
+      id: "evt-accrual-9",
+      reservation_id: resId,
+      partner_id: PARTNER_ID,
+      site_id: SITE_ID,
+      commission_rule_id: RULE_ID_HISTORICAL,
+      event_type: "INITIAL_ACCRUAL",
+      delta_amount: 0.0,
+      calculated_commission: 127.5,
+      idempotency_key: `evt_accrual_${resId}_${RULE_ID_HISTORICAL}`,
+    });
+    state.idempotencyKeys.add(`evt_accrual_${resId}_${RULE_ID_HISTORICAL}`);
+
+    const client = createMockSupabaseClient(state);
+
+    // 9a. Test unpaid booking reporting
+    const resUnpaid = await executeSafeReconciliation(resId, client);
+    assert.strictEqual(resUnpaid.attempted, true, "attempted must be true");
+    assert.strictEqual(resUnpaid.status, "UNPAID_PENDING_PAYMENT", "status must be UNPAID_PENDING_PAYMENT");
+    assert.strictEqual(resUnpaid.rowsCreated, 0, "rowsCreated must be 0");
+    assert.strictEqual(resUnpaid.realizedAmount, 0.0, "realizedAmount must be 0.00");
+    assert.ok(resUnpaid.reason && resUnpaid.reason.includes("unpaid"), "reason must explain unpaid state");
+    assert.strictEqual(resUnpaid.error, undefined, "error must be undefined on successful reconciliation");
+
+    // 9b. Transition to fully paid and verify realization reporting
+    state.reservations.set(resId, {
+      ...state.reservations.get(resId),
+      payment_status: "PAID",
+      amount_received: 1475.0,
+    });
+
+    const resPaid = await executeSafeReconciliation(resId, client);
+    assert.strictEqual(resPaid.attempted, true, "attempted must be true");
+    assert.strictEqual(resPaid.status, "REALIZED", "status must be REALIZED");
+    assert.strictEqual(resPaid.rowsCreated, 1, "rowsCreated must be 1");
+    assert.strictEqual(resPaid.realizedAmount, 127.5, "realizedAmount must be 127.50");
+    assert.ok(resPaid.reason && resPaid.reason.includes("PAYMENT_REALIZED"), "reason must confirm realization");
+    assert.strictEqual(resPaid.error, undefined, "error must be undefined on successful realization");
+
+    console.log("  ✔ Test 9 Passed: Successful reconciliation reporting strictly adheres to observability contract.\n");
+  }
+
   console.log("=================================================================");
-  console.log("  ALL 8 PAYMENT RECONCILIATION SCENARIOS PASSED 100%!           ");
+  console.log("  ALL 9 PAYMENT RECONCILIATION SCENARIOS PASSED 100%!           ");
   console.log("=================================================================");
 }
 
