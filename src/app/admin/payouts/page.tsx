@@ -19,6 +19,7 @@ import { Reservation, Partner, Payout, PayoutBatch } from "@/lib/db/schema";
 import { Card, Badge, Tabs, Dialog } from "@/components/ui/custom";
 import { runSystemPayoutRecalculation } from "@/lib/payouts";
 import confetti from "canvas-confetti";
+import { Phase6LedgerPanel } from "@/components/admin/Phase6LedgerPanel";
 
 export default function PayoutProcessing() {
   // Data states
@@ -261,6 +262,7 @@ export default function PayoutProcessing() {
       {/* Tabs Menu */}
       <Tabs
         tabs={[
+          { id: "phase6_ledger", label: "Ledger & Batches (Phase 6)" },
           { id: "eligible", label: `Eligible Queue (${eligiblePayouts.length})` },
           { id: "holds", label: `Admin Holds (${holdPayouts.length})` },
           { id: "approved", label: `Approved Queue (${approvedPayouts.length})` },
@@ -272,6 +274,11 @@ export default function PayoutProcessing() {
       />
 
       {/* TAB CONTENTS */}
+
+      {/* 0. PHASE 6 COMMISSION LEDGER & BATCHES */}
+      {activeTab === "phase6_ledger" && (
+        <Phase6LedgerPanel />
+      )}
 
       {/* 1. ELIGIBLE QUEUE */}
       {activeTab === "eligible" && (
