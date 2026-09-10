@@ -8,15 +8,15 @@ export const maxDuration = 300;
 
 export async function GET(request: Request) {
   // 1. Enforce Server-Only Cron Authorization (fail-closed)
-  const rawCronSecret = process.env.CRON_SECRET || process.env.HOSPITABLE_CRON_TOKEN;
-  const cronSecret = rawCronSecret?.trim();
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const hospitableCronToken = process.env.HOSPITABLE_CRON_TOKEN?.trim();
 
-  if (!cronSecret) {
-    console.error("[OWNERREZ CRON AUTH] Server CRON_SECRET is not configured.");
+  if (!cronSecret && !hospitableCronToken) {
+    console.error("[OWNERREZ CRON AUTH] Server CRON_SECRET or HOSPITABLE_CRON_TOKEN is not configured.");
     return NextResponse.json(
       {
         success: false,
-        error: "Server CRON_SECRET is not configured.",
+        error: "Server cron secret is not configured.",
       },
       { status: 500 }
     );
@@ -30,7 +30,13 @@ export async function GET(request: Request) {
     receivedToken = authHeader.trim().replace(/^Bearer /i, "").trim();
   }
 
-  if (!receivedToken || receivedToken !== cronSecret) {
+  const isMatch = Boolean(
+    receivedToken &&
+    ((cronSecret && receivedToken === cronSecret) ||
+     (hospitableCronToken && receivedToken === hospitableCronToken))
+  );
+
+  if (!isMatch) {
     return NextResponse.json(
       {
         success: false,
