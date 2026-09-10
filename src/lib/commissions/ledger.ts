@@ -325,3 +325,129 @@ export async function createDisputeRelease(params: {
     metadata: { ...params.metadata, disputeId: params.disputeId },
   });
 }
+
+/**
+ * Reconciles the payment realization ledger state for a reservation against its live payment status.
+ *
+ * Conservative Rules:
+ * 1. If unpaid (amount_received <= 0 or payment_status == 'UNPAID'): zero PAYMENT_REALIZED events created.
+ * 2. If partial payment: zero PAYMENT_REALIZED events created (unallocated).
+ * 3. If 100% collected: appends idempotent PAYMENT_REALIZED event via createPaymentRealized.
+ * 4. Never mutates existing INITIAL_ACCRUAL event.
+ */
+export async function reconcileReservationPaymentRealization(params: {
+  reservationId: string;
+  sourceProvider?: "ownerrez" | "hospitable";
+  overrideCommissionAmount?: number;
+}): Promise<{
+  reconciled: boolean;
+  status: "UNPAID_PENDING_PAYMENT" | "PARTIAL_PAYMENT_UNALLOCATED" | "REALIZED";
+  rowsCreated: number;
+  realizedAmount: number;
+  reason: string;
+  event: CommissionLedgerEvent | null;
+}> {
+  const supabase = createAdminClient();
+
+  // 1. Fetch reservation from database
+  const { data: reservation, error: resErr } = await supabase
+    .from("reservations")
+    .select("*")
+    .eq("id", params.reservationId)
+    .single();
+
+  if (resErr || !reservation) {
+    throw new Error(`Reservation ${params.reservationId} not found: ${resErr?.message}`);
+  }
+
+  const grossAmount = Number(reservation.gross_amount || 0);
+  const amountReceived = Number(reservation.amount_received || 0);
+  const paymentStatus = reservation.payment_status || "UNPAID";
+
+  // Check payment readiness
+  if (paymentStatus === "UNPAID" || amountReceived <= 0) {
+    return {
+      reconciled: true,
+      status: "UNPAID_PENDING_PAYMENT",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      reason: `Booking is unpaid (amount_received = $${amountReceived.toFixed(2)}, payment_status = ${paymentStatus}). Realized commission remains $0.00.`,
+      event: null,
+    };
+  }
+
+  if (amountReceived < grossAmount) {
+    return {
+      reconciled: true,
+      status: "PARTIAL_PAYMENT_UNALLOCATED",
+      rowsCreated: 0,
+      realizedAmount: 0.0,
+      reason: `Partial payment received ($${amountReceived.toFixed(2)} of $${grossAmount.toFixed(2)}). Realized commission held at $0.00.`,
+      event: null,
+    };
+  }
+
+  // 100% collected: determine commission amount
+  let commissionAmount = params.overrideCommissionAmount;
+  let commissionRuleId: string | null = null;
+
+  if (commissionAmount === undefined) {
+    const { data: rules } = await supabase
+      .from("commission_rules")
+      .select("*")
+      .eq("partner_id", reservation.partner_id)
+      .eq("status", "active");
+
+    const rule = rules && rules.length > 0 ? rules[0] : null;
+    commissionRuleId = rule?.id || null;
+    const rate = rule && rule.percentage ? rule.percentage / 100 : 0.1;
+    commissionAmount = Math.round(grossAmount * rate * 100) / 100;
+  }
+
+  // Check if PAYMENT_REALIZED already exists
+  const idempotencyKey = `evt_realized_${reservation.id}_full`;
+  const { data: existing } = await supabase
+    .from("commission_ledger_events")
+    .select("*")
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+
+  if (existing) {
+    return {
+      reconciled: true,
+      status: "REALIZED",
+      rowsCreated: 0,
+      realizedAmount: Number(existing.delta_amount),
+      reason: "PAYMENT_REALIZED event already exists (idempotent no-op).",
+      event: existing as CommissionLedgerEvent,
+    };
+  }
+
+  // Create payment realization
+  const event = await createPaymentRealized({
+    partnerId: reservation.partner_id,
+    siteId: reservation.site_id,
+    reservationId: reservation.id,
+    commissionRuleId,
+    sourceProvider: params.sourceProvider || "ownerrez",
+    bookingChannel: reservation.platform || "direct",
+    providerBookingId: String(reservation.ownerrez_booking_id || reservation.hospitable_reservation_id),
+    ownerrezBookingId: reservation.ownerrez_booking_id || null,
+    commissionAmount: commissionAmount,
+    metadata: {
+      reconciliationSource: "payment_readiness_gate",
+      grossAmount,
+      amountReceived,
+    },
+  });
+
+  return {
+    reconciled: true,
+    status: "REALIZED",
+    rowsCreated: event ? 1 : 0,
+    realizedAmount: commissionAmount,
+    reason: "PAYMENT_REALIZED event created successfully.",
+    event,
+  };
+}
+
