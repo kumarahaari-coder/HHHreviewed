@@ -19,6 +19,7 @@
 import fs from "fs";
 import path from "path";
 import { Client } from "pg";
+import { generateDraftPayoutBatch } from "../src/lib/commissions/payout-generator";
 
 // Dynamically require embedded-postgres
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -777,62 +778,311 @@ async function main() {
     }
 
     // -------------------------------------------------------------------------
-    // Two-Connection FOR UPDATE Concurrency Test
+    // Two-Connection FOR UPDATE Concurrency Test: Actual Batch-Generation Lock
     // -------------------------------------------------------------------------
-    console.log("\n[9/11] Running Two-Connection FOR UPDATE Concurrency Test (Genuine Server TCP)...");
+    console.log("\n[9/11] Running Two-Connection Concurrency Acceptance on Real PostgreSQL (Actual Batch-Generation Lock)...");
 
+    // Part A: Exact Raw SQL Concurrency Workflow (Partner P)
+    console.log("\n  --- PART A: RAW SQL ACTUAL BATCH-GENERATION CONCURRENCY WORKFLOW ---");
+
+    // Initial State: Partner P exists with ZERO active payout batches
+    const partnerPRes = await primaryClient.query(`
+      INSERT INTO public.partners (name, email) 
+      VALUES ('Partner P Concurrency', 'partner-p@example.com') 
+      RETURNING id;
+    `);
+    const partnerPId = partnerPRes.rows[0].id;
+
+    const resPRes = await primaryClient.query(`
+      INSERT INTO public.reservations (partner_id, source_provider, platform, confirmation_code, total_payout, check_in_date, check_out_date)
+      VALUES ($1, 'ownerrez', 'direct', 'CONF-CONC-P', 1500.00, NOW() - INTERVAL '7 days', NOW() - INTERVAL '2 days')
+      RETURNING id;
+    `, [partnerPId]);
+    const resPId = resPRes.rows[0].id;
+
+    const prPRes = await primaryClient.query(`
+      INSERT INTO public.commission_ledger_events (
+        partner_id, reservation_id, source_provider, booking_channel, provider_booking_id,
+        event_type, delta_amount, calculated_commission, idempotency_key
+      ) VALUES (
+        $1, $2, 'ownerrez', 'direct', 'OR-CONC-P',
+        'PAYMENT_REALIZED', 250.00, 250.00, 'PAYMENT_REALIZED:CONC:P'
+      ) RETURNING id;
+    `, [partnerPId, resPId]);
+    const qualEventPId = prPRes.rows[0].id;
+
+    // Verify initial active batches count is exactly ZERO
+    const activeBatchesInit = await primaryClient.query(`
+      SELECT id FROM public.payout_batches
+      WHERE partner_id = $1
+        AND status IN (
+          'DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'AWAITING_MANUAL_CONFIRMATION', 'PROCESSING', 'REQUIRES_RECONCILIATION'
+        );
+    `, [partnerPId]);
+    console.log(`  • Initial State: Partner P exists, active payout batches count: ${activeBatchesInit.rows.length} (Expected: 0)`);
+    if (activeBatchesInit.rows.length !== 0) throw new Error("Expected zero active batches initially");
+
+    // Open two independent TCP PostgreSQL connections
     const client1 = new Client({ connectionString: DB_URL });
     const client2 = new Client({ connectionString: DB_URL });
     await client1.connect();
     await client2.connect();
 
-    const pid1Res = await client1.query("SELECT pg_backend_pid();");
-    const pid2Res = await client2.query("SELECT pg_backend_pid();");
-    const pid1 = pid1Res.rows[0].pg_backend_pid;
-    const pid2 = pid2Res.rows[0].pg_backend_pid;
+    const pid1 = (await client1.query("SELECT pg_backend_pid();")).rows[0].pg_backend_pid;
+    const pid2 = (await client2.query("SELECT pg_backend_pid();")).rows[0].pg_backend_pid;
     console.log(`  • Connection 1 Server PID: ${pid1}`);
     console.log(`  • Connection 2 Server PID: ${pid2}`);
-    if (pid1 === pid2) {
-      throw new Error("Connections are not independent!");
-    }
+    if (pid1 === pid2) throw new Error("Connections are not independent!");
     console.log("  ✓ Verified two genuinely independent server PostgreSQL backend processes.");
 
-    // client1 locks batchAId FOR UPDATE
+    // Connection 1: BEGIN; SELECT id FROM public.partners WHERE id = :partner_id FOR UPDATE;
     await client1.query("BEGIN;");
-    await client1.query("SELECT * FROM public.payout_batches WHERE id = $1 FOR UPDATE;", [batchAId]);
-    console.log("  • Connection 1 acquired exclusive FOR UPDATE row lock on batch", batchAId);
+    await client1.query("SELECT id FROM public.partners WHERE id = $1 FOR UPDATE;", [partnerPId]);
+    console.log("  • Connection 1: Acquired exclusive FOR UPDATE lock on Partner P (Transaction 1 kept open)");
 
-    // client2 attempts to lock the SAME row with NOWAIT -> must fail with SQLState 55P03
+    // Connection 1 verifies active batches for Partner P (zero rows)
+    const activeC1 = await client1.query(`
+      SELECT id
+      FROM public.payout_batches
+      WHERE partner_id = $1
+        AND status IN (
+          'DRAFT',
+          'PENDING_APPROVAL',
+          'APPROVED',
+          'AWAITING_MANUAL_CONFIRMATION',
+          'PROCESSING',
+          'REQUIRES_RECONCILIATION'
+        );
+    `, [partnerPId]);
+    console.log(`  • Connection 1: Verified active batches count: ${activeC1.rows.length} (Expected: 0)`);
+    if (activeC1.rows.length !== 0) throw new Error("Expected zero active batches in Connection 1");
+
+    // Connection 1 creates the DRAFT batch/items but does NOT commit yet
+    const batchC1Res = await client1.query(`
+      INSERT INTO public.payout_batches (
+        batch_number, partner_id, payout_rail, total_gross_amount, total_netting_deduction, total_amount,
+        status, created_by
+      ) VALUES (
+        'BATCH-CONCURRENCY-P1', $1, 'MANUAL_ACH', 250.00, 0.00, 250.00,
+        'DRAFT', $2
+      ) RETURNING id;
+    `, [partnerPId, aliceMakerId]);
+    const batchC1Id = batchC1Res.rows[0].id;
+
+    await client1.query(`
+      INSERT INTO public.payout_items (
+        payout_batch_id, qualifying_ledger_event_id, reservation_id, partner_id,
+        gross_amount, netting_deduction, disbursed_amount, status
+      ) VALUES (
+        $1, $2, $3, $4,
+        250.00, 0.00, 250.00, 'PENDING'
+      );
+    `, [batchC1Id, qualEventPId, resPId, partnerPId]);
+    console.log("  • Connection 1: Created DRAFT batch and payout item, but KEPT TRANSACTION OPEN (uncommitted).");
+
+    // Connection 2, concurrently: BEGIN; SELECT id FROM public.partners WHERE id = :partner_id FOR UPDATE NOWAIT;
     await client2.query("BEGIN;");
-    let lockConflictCaught = false;
+    let nowaitLockRejected = false;
     try {
-      await client2.query("SELECT * FROM public.payout_batches WHERE id = $1 FOR UPDATE NOWAIT;", [batchAId]);
+      await client2.query("SELECT id FROM public.partners WHERE id = $1 FOR UPDATE NOWAIT;", [partnerPId]);
     } catch (e: any) {
       if (e.code === "55P03" || e.message.includes("could not obtain lock on row")) {
-        lockConflictCaught = true;
-        console.log(`  ✓ Connection 2 was immediately rejected with SQLState 55P03: "${e.message}"`);
+        nowaitLockRejected = true;
+        console.log(`  ✓ Connection 2 NOWAIT immediately rejected with SQLSTATE 55P03: "${e.message}"`);
       } else {
         throw e;
       }
     }
     await client2.query("ROLLBACK;");
+    if (!nowaitLockRejected) throw new Error("Connection 2 NOWAIT was not rejected!");
 
-    if (!lockConflictCaught) {
-      throw new Error("FAILED: Connection 2 was not blocked by Connection 1 FOR UPDATE lock!");
-    }
-
-    // Release lock on client1
-    await client1.query("COMMIT;");
-    console.log("  • Connection 1 committed and released lock.");
-
-    // client2 now acquires the lock without conflict
+    // Connection 2 waiting lock: Transaction 2 blocks until Transaction 1 commits
     await client2.query("BEGIN;");
-    const c2LockRes = await client2.query("SELECT id, status FROM public.payout_batches WHERE id = $1 FOR UPDATE NOWAIT;", [batchAId]);
-    console.log(`  ✓ Connection 2 successfully acquired row lock after release (status: ${c2LockRes.rows[0].status})`);
-    await client2.query("COMMIT;");
+    console.log("  • Connection 2: Starting waiting FOR UPDATE query on Partner P (blocking)...");
+
+    let c2AcquiredLock = false;
+    const c2LockPromise = (async () => {
+      const res = await client2.query("SELECT id FROM public.partners WHERE id = $1 FOR UPDATE;", [partnerPId]);
+      c2AcquiredLock = true;
+      return res;
+    })();
+
+    // Verify Connection 2 is blocked
+    await new Promise((r) => setTimeout(r, 150));
+    console.log(`  • Connection 2 is blocked waiting on lock: ${!c2AcquiredLock} (Expected: true)`);
+    if (c2AcquiredLock) throw new Error("Connection 2 did not block!");
+
+    // Transaction 1 COMMIT
+    await client1.query("COMMIT;");
+    console.log("  • Connection 1: COMMITTED and released partner row lock.");
+
+    // Transaction 2 acquires partner lock
+    await c2LockPromise;
+    console.log("  ✓ Connection 2: Unblocked and acquired partner lock.");
+
+    // Transaction 2 re-runs active-batch query
+    const activeC2 = await client2.query(`
+      SELECT id, status, batch_number
+      FROM public.payout_batches
+      WHERE partner_id = $1
+        AND status IN (
+          'DRAFT',
+          'PENDING_APPROVAL',
+          'APPROVED',
+          'AWAITING_MANUAL_CONFIRMATION',
+          'PROCESSING',
+          'REQUIRES_RECONCILIATION'
+        );
+    `, [partnerPId]);
+
+    // Transaction 2 sees the new DRAFT batch
+    console.log(`  • Connection 2: Re-ran active-batch query: found ${activeC2.rows.length} active batch (${activeC2.rows[0].batch_number}, status: '${activeC2.rows[0].status}')`);
+    if (activeC2.rows.length !== 1) throw new Error("Connection 2 failed to see committed DRAFT batch!");
+
+    // Transaction 2 exits without creating another batch
+    console.log("  ✓ Connection 2: Detects in-flight batch and gracefully EXITS without creating another batch.");
+    await client2.query("ROLLBACK;");
 
     await client1.end();
     await client2.end();
+
+    // Final Assertions for Part A
+    const finalBatchesP = await primaryClient.query(`
+      SELECT id, batch_number, status FROM public.payout_batches
+      WHERE partner_id = $1
+        AND status IN (
+          'DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'AWAITING_MANUAL_CONFIRMATION', 'PROCESSING', 'REQUIRES_RECONCILIATION'
+        );
+    `, [partnerPId]);
+    const finalItemsP = await primaryClient.query(`
+      SELECT id, disbursed_amount, status FROM public.payout_items
+      WHERE partner_id = $1 AND status IN ('PENDING', 'SETTLED');
+    `, [partnerPId]);
+
+    console.log(`  • Final active payout batches for Partner P: ${finalBatchesP.rows.length} (Expected: 1)`);
+    console.log(`  • Final active payout items for Partner P: ${finalItemsP.rows.length} (Expected: 1)`);
+    console.log(`  • Duplicate payout batches created: ${finalBatchesP.rows.length - 1} (Expected: 0)`);
+    console.log(`  • Duplicate payout items: ${finalItemsP.rows.length - 1} (Expected: 0)`);
+    console.log(`  • Duplicate locked liability: $0.00 (Single $250.00 locked, exactly as expected)`);
+
+    if (finalBatchesP.rows.length !== 1) throw new Error(`Expected exactly 1 active batch, got ${finalBatchesP.rows.length}`);
+    if (finalItemsP.rows.length !== 1) throw new Error(`Expected exactly 1 payout item, got ${finalItemsP.rows.length}`);
+
+    // Part B: Test via generateDraftPayoutBatch()
+    console.log("\n  --- PART B: CONCURRENCY TEST THROUGH generateDraftPayoutBatch() ---");
+
+    const partnerQRes = await primaryClient.query(`
+      INSERT INTO public.partners (name, email) 
+      VALUES ('Partner Q Generator Concurrency', 'partner-q@example.com') 
+      RETURNING id;
+    `);
+    const partnerQId = partnerQRes.rows[0].id;
+
+    const resQRes = await primaryClient.query(`
+      INSERT INTO public.reservations (partner_id, source_provider, platform, confirmation_code, total_payout, check_in_date, check_out_date)
+      VALUES ($1, 'ownerrez', 'direct', 'CONF-CONC-Q', 1800.00, NOW() - INTERVAL '8 days', NOW() - INTERVAL '3 days')
+      RETURNING id;
+    `, [partnerQId]);
+    const resQId = resQRes.rows[0].id;
+
+    // Seed events for Partner Q: PAYMENT_REALIZED + ELIGIBILITY_RELEASE
+    await primaryClient.query(`
+      INSERT INTO public.commission_ledger_events (
+        partner_id, reservation_id, source_provider, booking_channel, provider_booking_id,
+        event_type, delta_amount, calculated_commission, idempotency_key
+      ) VALUES (
+        $1, $2, 'ownerrez', 'direct', 'OR-CONC-Q',
+        'PAYMENT_REALIZED', 300.00, 300.00, 'PAYMENT_REALIZED:CONC:Q'
+      );
+    `, [partnerQId, resQId]);
+
+    await primaryClient.query(`
+      INSERT INTO public.commission_ledger_events (
+        partner_id, reservation_id, source_provider, booking_channel, provider_booking_id,
+        event_type, delta_amount, calculated_commission, idempotency_key
+      ) VALUES (
+        $1, $2, 'ownerrez', 'direct', 'OR-CONC-Q',
+        'ELIGIBILITY_RELEASE', 0.00, 0.00, 'ELIGIBILITY_RELEASE:CONC:Q'
+      );
+    `, [partnerQId, resQId]);
+
+    const clientQ1 = new Client({ connectionString: DB_URL });
+    const clientQ2 = new Client({ connectionString: DB_URL });
+    await clientQ1.connect();
+    await clientQ2.connect();
+
+    // Client Q1 begins transaction and generates draft batch using pgClient (locks partner FOR UPDATE)
+    await clientQ1.query("BEGIN;");
+    const q1Result = await generateDraftPayoutBatch({
+      partnerId: partnerQId,
+      payoutRail: "MANUAL_ACH",
+      createdBy: aliceMakerId,
+      pgClient: clientQ1,
+    });
+    console.log(`  • Connection Q1 called generateDraftPayoutBatch(): created batch ${q1Result?.batch.batch_number} (Transaction Q1 kept uncommitted)`);
+
+    // Client Q2 calls generateDraftPayoutBatch() concurrently -> blocks on partner lock
+    await clientQ2.query("BEGIN;");
+    console.log("  • Connection Q2 calling generateDraftPayoutBatch() concurrently (blocks on partner lock)...");
+
+    let q2Blocked = true;
+    let q2ErrorMessage: string | null = null;
+    const q2Promise = (async () => {
+      try {
+        await generateDraftPayoutBatch({
+          partnerId: partnerQId,
+          payoutRail: "MANUAL_ACH",
+          createdBy: aliceMakerId,
+          pgClient: clientQ2,
+        });
+      } catch (err: any) {
+        q2Blocked = false;
+        q2ErrorMessage = err.message;
+      }
+    })();
+
+    // Verify Q2 is waiting
+    await new Promise((r) => setTimeout(r, 150));
+    console.log(`  • Connection Q2 still blocked waiting on Q1 partner lock: ${q2Blocked} (Expected: true)`);
+    if (!q2Blocked) throw new Error("Connection Q2 did not block on partner lock!");
+
+    // Connection Q1 COMMITS
+    await clientQ1.query("COMMIT;");
+    console.log("  • Connection Q1 COMMITTED transaction.");
+
+    // Connection Q2 unblocks, re-runs active batch check, sees Q1's batch, and throws
+    await q2Promise;
+    console.log(`  ✓ Connection Q2 caught expected active batch error: "${q2ErrorMessage}"`);
+    if (!q2ErrorMessage || !q2ErrorMessage.includes("already exists for this partner")) {
+      throw new Error(`Expected active batch error, got: ${q2ErrorMessage}`);
+    }
+
+    await clientQ2.query("ROLLBACK;");
+    await clientQ1.end();
+    await clientQ2.end();
+
+    // Final Assertions for Part B
+    const finalBatchesQ = await primaryClient.query(`
+      SELECT id, batch_number, status FROM public.payout_batches
+      WHERE partner_id = $1
+        AND status IN (
+          'DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'AWAITING_MANUAL_CONFIRMATION', 'PROCESSING', 'REQUIRES_RECONCILIATION'
+        );
+    `, [partnerQId]);
+    const finalItemsQ = await primaryClient.query(`
+      SELECT id, disbursed_amount, status FROM public.payout_items
+      WHERE partner_id = $1 AND status IN ('PENDING', 'SETTLED');
+    `, [partnerQId]);
+
+    console.log(`  • Final active payout batches for Partner Q: ${finalBatchesQ.rows.length} (Expected: 1)`);
+    console.log(`  • Final active payout items for Partner Q: ${finalItemsQ.rows.length} (Expected: 1)`);
+    console.log(`  • Duplicate payout batches created: ${finalBatchesQ.rows.length - 1} (Expected: 0)`);
+    console.log(`  • Duplicate payout items: ${finalItemsQ.rows.length - 1} (Expected: 0)`);
+    console.log(`  • Duplicate locked liability: $0.00 (Single $300.00 locked, exactly as expected)`);
+
+    if (finalBatchesQ.rows.length !== 1) throw new Error(`Expected exactly 1 active batch for Partner Q, got ${finalBatchesQ.rows.length}`);
+    if (finalItemsQ.rows.length !== 1) throw new Error(`Expected exactly 1 payout item for Partner Q, got ${finalItemsQ.rows.length}`);
+    console.log("  ✓ BOTH RAW SQL AND generateDraftPayoutBatch() CONCURRENCY LOCK TESTS PASSED 100%!");
 
     // -------------------------------------------------------------------------
     // Batch Cancellation and Re-Batching Test

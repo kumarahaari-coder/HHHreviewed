@@ -11,15 +11,239 @@ export interface GenerateDraftBatchParams {
   partnerId: string;
   payoutRail: PayoutRail;
   createdBy: string;
+  pgClient?: any;
 }
 
 /**
  * Generates a DRAFT payout batch applying deterministic FIFO negative carry-forward netting.
  * Invariant: Batch amount will never exceed partnerPayoutAvailable.
+ * If params.pgClient is provided, executes with database-level FOR UPDATE partner row locking.
  */
 export async function generateDraftPayoutBatch(
   params: GenerateDraftBatchParams
 ): Promise<{ batch: PayoutBatchRecord; items: PayoutItemRecord[] } | null> {
+  const activeStatuses: PayoutBatchStatus[] = [
+    "DRAFT",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "AWAITING_MANUAL_CONFIRMATION",
+    "PROCESSING",
+    "REQUIRES_RECONCILIATION",
+  ];
+
+  // If a direct PostgreSQL client is provided, execute with native FOR UPDATE partner lock
+  if (params.pgClient) {
+    const client = params.pgClient;
+
+    // 1. Lock partner row FOR UPDATE
+    const partnerRes = await client.query(
+      "SELECT id, status FROM public.partners WHERE id = $1 FOR UPDATE;",
+      [params.partnerId]
+    );
+    if (partnerRes.rows.length === 0) {
+      throw new Error(`Partner not found: ${params.partnerId}`);
+    }
+
+    // 2. Verify no active in-flight batch exists
+    const activeRes = await client.query(
+      `SELECT id, status, batch_number 
+       FROM public.payout_batches 
+       WHERE partner_id = $1 
+         AND status = ANY($2);`,
+      [params.partnerId, activeStatuses]
+    );
+
+    if (activeRes.rows.length > 0) {
+      throw new Error(
+        `An active payout batch (${activeRes.rows[0].batch_number}, status: ${activeRes.rows[0].status}) already exists for this partner.`
+      );
+    }
+
+    // 3. Query ledger events & active payout items
+    const ledgerRes = await client.query(
+      "SELECT * FROM public.commission_ledger_events WHERE partner_id = $1 ORDER BY created_at ASC;",
+      [params.partnerId]
+    );
+    const itemsRes = await client.query(
+      "SELECT reservation_id, disbursed_amount, status FROM public.payout_items WHERE partner_id = $1 AND status IN ('SETTLED', 'PENDING');",
+      [params.partnerId]
+    );
+    const resRes = await client.query(
+      "SELECT id, partner_id, site_id, check_in_date, check_out_date FROM public.reservations WHERE partner_id = $1;",
+      [params.partnerId]
+    );
+
+    const settledMap = new Map<string, number>();
+    const lockedMap = new Map<string, number>();
+    for (const item of itemsRes.rows) {
+      const amt = Number(item.disbursed_amount || 0);
+      if (item.status === "SETTLED") settledMap.set(item.reservation_id, (settledMap.get(item.reservation_id) || 0) + amt);
+      else if (item.status === "PENDING") lockedMap.set(item.reservation_id, (lockedMap.get(item.reservation_id) || 0) + amt);
+    }
+
+    const eventsByRes = new Map<string, any[]>();
+    for (const ev of ledgerRes.rows) {
+      const list = eventsByRes.get(ev.reservation_id) || [];
+      list.push(ev);
+      eventsByRes.set(ev.reservation_id, list);
+    }
+
+    const resMetaMap = new Map<string, any>();
+    for (const r of resRes.rows) {
+      resMetaMap.set(r.id, r);
+    }
+
+    let partnerAccountingOutstanding = 0;
+    let eligiblePositive = 0;
+    let negativeCarryForward = 0;
+    const summaries: any[] = [];
+
+    for (const [resId, events] of eventsByRes.entries()) {
+      let netRealized = 0;
+      let hasEligibilityRelease = false;
+      let latestDisputeHoldTime: string | null = null;
+      let latestDisputeReleaseTime: string | null = null;
+      let qualifyingLedgerEventId: string | null = null;
+
+      for (const ev of events) {
+        const delta = Number(ev.delta_amount || 0);
+        if (ev.event_type === "PAYMENT_REALIZED" || ev.event_type === "REFUND_CLAWBACK" || ev.event_type === "MANUAL_ADJUSTMENT") {
+          netRealized += delta;
+        }
+        if ((ev.event_type === "PAYMENT_REALIZED" || ev.event_type === "MANUAL_ADJUSTMENT") && delta > 0) {
+          qualifyingLedgerEventId = ev.id;
+        }
+        if (ev.event_type === "ELIGIBILITY_RELEASE") hasEligibilityRelease = true;
+        if (ev.event_type === "DISPUTE_HOLD") {
+          if (!latestDisputeHoldTime || ev.created_at > latestDisputeHoldTime) latestDisputeHoldTime = ev.created_at;
+        }
+        if (ev.event_type === "DISPUTE_RELEASE") {
+          if (!latestDisputeReleaseTime || ev.created_at > latestDisputeReleaseTime) latestDisputeReleaseTime = ev.created_at;
+        }
+      }
+
+      netRealized = Math.round(netRealized * 100) / 100;
+      const settled = Math.round((settledMap.get(resId) || 0) * 100) / 100;
+      const locked = Math.round((lockedMap.get(resId) || 0) * 100) / 100;
+      const outstanding = Math.round((netRealized - settled - locked) * 100) / 100;
+
+      const isDisputeFree = !latestDisputeHoldTime || Boolean(latestDisputeReleaseTime && latestDisputeReleaseTime > latestDisputeHoldTime);
+      const isStayEligible = hasEligibilityRelease && isDisputeFree;
+
+      partnerAccountingOutstanding += outstanding;
+      if (outstanding > 0 && isStayEligible) eligiblePositive += outstanding;
+      else if (outstanding < 0) negativeCarryForward += Math.abs(outstanding);
+
+      const meta = resMetaMap.get(resId);
+      summaries.push({
+        reservation_id: resId,
+        check_in_date: meta?.check_in_date ? new Date(meta.check_in_date).toISOString().split("T")[0] : "",
+        outstanding_amount: outstanding,
+        is_stay_eligible: isStayEligible,
+        qualifying_ledger_event_id: qualifyingLedgerEventId,
+      });
+    }
+
+    partnerAccountingOutstanding = Math.round(partnerAccountingOutstanding * 100) / 100;
+    eligiblePositive = Math.round(eligiblePositive * 100) / 100;
+    negativeCarryForward = Math.round(negativeCarryForward * 100) / 100;
+    const partnerPayoutAvailable = Math.round(Math.max(0, eligiblePositive - negativeCarryForward) * 100) / 100;
+
+    if (partnerPayoutAvailable <= 0) {
+      throw new Error(`No payout available for partner (Payout Available: $${partnerPayoutAvailable.toFixed(2)}, Negative Carry-Forward: $${negativeCarryForward.toFixed(2)}).`);
+    }
+
+    const eligibleReservations = summaries
+      .filter((r) => r.outstanding_amount > 0 && r.is_stay_eligible)
+      .sort((a, b) => {
+        const dateCmp = a.check_in_date.localeCompare(b.check_in_date);
+        if (dateCmp !== 0) return dateCmp;
+        return a.reservation_id.localeCompare(b.reservation_id);
+      });
+
+    if (eligibleReservations.length === 0) {
+      throw new Error("No completed, dispute-free stays found for payout batch inclusion.");
+    }
+
+    let remainingDeduction = negativeCarryForward;
+    const itemsToInsert: any[] = [];
+    let totalGross = 0;
+    let totalDeduction = 0;
+    let totalDisbursed = 0;
+
+    for (const res of eligibleReservations) {
+      if (!res.qualifying_ledger_event_id) continue;
+      const grossAvailable = res.outstanding_amount;
+      const deduction = Math.round(Math.min(grossAvailable, remainingDeduction) * 100) / 100;
+      const netDisbursed = Math.round((grossAvailable - deduction) * 100) / 100;
+      remainingDeduction = Math.round((remainingDeduction - deduction) * 100) / 100;
+
+      if (netDisbursed > 0) {
+        itemsToInsert.push({
+          reservation_id: res.reservation_id,
+          qualifying_ledger_event_id: res.qualifying_ledger_event_id,
+          partner_id: params.partnerId,
+          gross_amount: grossAvailable,
+          netting_deduction: deduction,
+          disbursed_amount: netDisbursed,
+          status: "PENDING",
+        });
+        totalGross += grossAvailable;
+        totalDeduction += deduction;
+        totalDisbursed += netDisbursed;
+      }
+    }
+
+    totalGross = Math.round(totalGross * 100) / 100;
+    totalDeduction = Math.round(totalDeduction * 100) / 100;
+    totalDisbursed = Math.round(totalDisbursed * 100) / 100;
+
+    const batchNumber = `BATCH-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const batchRes = await client.query(
+      `INSERT INTO public.payout_batches (
+        batch_number, partner_id, payout_rail, total_gross_amount, total_netting_deduction, total_amount,
+        status, created_by, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'DRAFT', $7, $8) RETURNING *;`,
+      [
+        batchNumber,
+        params.partnerId,
+        params.payoutRail,
+        totalGross,
+        totalDeduction,
+        totalDisbursed,
+        params.createdBy,
+        JSON.stringify({ partnerAccountingOutstanding, negativeCarryForward, eligiblePositive }),
+      ]
+    );
+    const createdBatch = batchRes.rows[0];
+
+    const createdItems: any[] = [];
+    for (const it of itemsToInsert) {
+      const itRes = await client.query(
+        `INSERT INTO public.payout_items (
+          payout_batch_id, qualifying_ledger_event_id, reservation_id, partner_id,
+          gross_amount, netting_deduction, disbursed_amount, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;`,
+        [
+          createdBatch.id,
+          it.qualifying_ledger_event_id,
+          it.reservation_id,
+          it.partner_id,
+          it.gross_amount,
+          it.netting_deduction,
+          it.disbursed_amount,
+          it.status,
+        ]
+      );
+      createdItems.push(itRes.rows[0]);
+    }
+
+    return {
+      batch: createdBatch as PayoutBatchRecord,
+      items: createdItems as PayoutItemRecord[],
+    };
+  }
+
   const supabase = createAdminClient();
 
   // 1. Verify partner exists and has active status
@@ -34,14 +258,6 @@ export async function generateDraftPayoutBatch(
   }
 
   // 2. Verify no active in-flight batch exists for this partner
-  const activeStatuses: PayoutBatchStatus[] = [
-    "DRAFT",
-    "PENDING_APPROVAL",
-    "APPROVED",
-    "AWAITING_MANUAL_CONFIRMATION",
-    "PROCESSING",
-    "REQUIRES_RECONCILIATION",
-  ];
 
   const { data: activeBatches, error: abErr } = await supabase
     .from("payout_batches")
