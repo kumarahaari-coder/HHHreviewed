@@ -274,4 +274,17 @@ BEGIN
     END IF;
 END $$;
 
+-- ============================================================================
+-- STAGE H: Record Migration in public.schema_migrations
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO public.schema_migrations (version, applied_at)
+VALUES ('20260909_phase6_commission_ledger_and_payouts', NOW())
+ON CONFLICT (version) DO NOTHING;
+
 COMMIT;
