@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS public.commission_adjustment_requests (
     partner_id UUID NOT NULL REFERENCES public.partners(id),
     reservation_id UUID NOT NULL REFERENCES public.reservations(id),
     delta_amount NUMERIC(10, 2) NOT NULL,
-    currency TEXT NOT NULL DEFAULT 'USD',
+    currency TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
     reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
     status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK (
         status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED')
@@ -343,9 +343,11 @@ CREATE TABLE IF NOT EXISTS public.commission_adjustment_requests (
             approved_by <> created_by
         ) OR (
             status = 'REJECTED' AND
+            approved_by IS NULL AND
+            approved_at IS NULL AND
+            ledger_event_id IS NULL AND
             rejection_reason IS NOT NULL AND
-            btrim(rejection_reason) <> '' AND
-            ledger_event_id IS NULL
+            btrim(rejection_reason) <> ''
         )
     )
 );

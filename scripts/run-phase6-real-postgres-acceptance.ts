@@ -522,6 +522,60 @@ async function main() {
       }
     }
 
+    // Test SC-8: REJECTED with approved_by set -> rejected
+    try {
+      await primaryClient.query(`
+        INSERT INTO public.commission_adjustment_requests (
+          partner_id, reservation_id, delta_amount, reason, status, created_by, approved_by, rejection_reason
+        ) VALUES (
+          $1, $2, 50.00, 'Test reason', 'REJECTED', $3, $4, 'Some rejection reason'
+        );
+      `, [partnerId, reservationId, aliceMakerId, bobApproverId]);
+      throw new Error("FAILED: REJECTED with approved_by was accepted!");
+    } catch (e: any) {
+      if (e.message.includes("chk_adjustment_request_state_coherence")) {
+        console.log("  ✓ Correctly rejected REJECTED with non-null approved_by");
+      } else {
+        throw e;
+      }
+    }
+
+    // Test SC-9: REJECTED with approved_at set -> rejected
+    try {
+      await primaryClient.query(`
+        INSERT INTO public.commission_adjustment_requests (
+          partner_id, reservation_id, delta_amount, reason, status, created_by, approved_at, rejection_reason
+        ) VALUES (
+          $1, $2, 50.00, 'Test reason', 'REJECTED', $3, NOW(), 'Some rejection reason'
+        );
+      `, [partnerId, reservationId, aliceMakerId]);
+      throw new Error("FAILED: REJECTED with approved_at was accepted!");
+    } catch (e: any) {
+      if (e.message.includes("chk_adjustment_request_state_coherence")) {
+        console.log("  ✓ Correctly rejected REJECTED with non-null approved_at");
+      } else {
+        throw e;
+      }
+    }
+
+    // Test SC-10: currency != 'USD' -> rejected
+    try {
+      await primaryClient.query(`
+        INSERT INTO public.commission_adjustment_requests (
+          partner_id, reservation_id, delta_amount, currency, reason, status, created_by
+        ) VALUES (
+          $1, $2, 50.00, 'EUR', 'Test reason', 'PENDING_APPROVAL', $3
+        );
+      `, [partnerId, reservationId, aliceMakerId]);
+      throw new Error("FAILED: currency 'EUR' was accepted on commission_adjustment_requests!");
+    } catch (e: any) {
+      if (e.message.includes("currency")) {
+        console.log("  ✓ Correctly rejected non-USD currency on commission_adjustment_requests (currency = 'USD')");
+      } else {
+        throw e;
+      }
+    }
+
     // -------------------------------------------------------------------------
     // Partial Unique Index & Immutability Tests
     // -------------------------------------------------------------------------
