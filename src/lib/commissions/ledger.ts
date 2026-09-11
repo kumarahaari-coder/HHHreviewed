@@ -220,6 +220,7 @@ export async function createRefundClawback(params: {
   clawbackAmount: number; // positive number, converted to negative delta
   refundReferenceId: string;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }): Promise<CommissionLedgerEvent | null> {
   const positiveAmount = Math.abs(params.clawbackAmount);
   if (positiveAmount <= 0) {
@@ -239,6 +240,7 @@ export async function createRefundClawback(params: {
     calculatedCommission: 0.00,
     idempotencyKey: `evt_clawback_${params.reservationId}_${params.refundReferenceId}`,
     metadata: params.metadata,
+    supabaseClient: params.supabaseClient,
   });
 }
 
@@ -254,6 +256,7 @@ export async function createEligibilityRelease(params: {
   providerBookingId: string;
   ownerrezBookingId?: number | null;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }): Promise<CommissionLedgerEvent | null> {
   return appendCommissionLedgerEvent({
     partnerId: params.partnerId,
@@ -268,6 +271,7 @@ export async function createEligibilityRelease(params: {
     calculatedCommission: 0.00,
     idempotencyKey: `evt_release_${params.reservationId}`,
     metadata: params.metadata,
+    supabaseClient: params.supabaseClient,
   });
 }
 
@@ -285,6 +289,7 @@ export async function createDisputeHold(params: {
   reason: string;
   createdBy: string;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }): Promise<CommissionLedgerEvent | null> {
   return appendCommissionLedgerEvent({
     partnerId: params.partnerId,
@@ -300,6 +305,7 @@ export async function createDisputeHold(params: {
     createdBy: params.createdBy,
     idempotencyKey: `evt_dispute_hold_${params.reservationId}_${params.disputeId}`,
     metadata: { ...params.metadata, disputeId: params.disputeId },
+    supabaseClient: params.supabaseClient,
   });
 }
 
@@ -317,6 +323,7 @@ export async function createDisputeRelease(params: {
   reason: string;
   createdBy: string;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }): Promise<CommissionLedgerEvent | null> {
   return appendCommissionLedgerEvent({
     partnerId: params.partnerId,
@@ -332,6 +339,7 @@ export async function createDisputeRelease(params: {
     createdBy: params.createdBy,
     idempotencyKey: `evt_dispute_release_${params.reservationId}_${params.disputeId}`,
     metadata: { ...params.metadata, disputeId: params.disputeId },
+    supabaseClient: params.supabaseClient,
   });
 }
 
@@ -516,4 +524,14 @@ export async function reconcileReservationPaymentRealization(params: {
     event,
   };
 }
+
+export {
+  reconcileReservationEligibilityRelease,
+  processCompletedStaysEligibility,
+} from "./eligibility";
+export type {
+  EligibilityReconciliationStatus,
+  EligibilityReconciliationResult,
+  BatchEligibilityResult,
+} from "./eligibility";
 

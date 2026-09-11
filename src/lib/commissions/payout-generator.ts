@@ -12,6 +12,7 @@ export interface GenerateDraftBatchParams {
   payoutRail: PayoutRail;
   createdBy: string;
   pgClient?: any;
+  supabaseClient?: any;
 }
 
 /**
@@ -244,7 +245,7 @@ export async function generateDraftPayoutBatch(
     };
   }
 
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   // 1. Verify partner exists and has active status
   const { data: partner, error: pErr } = await supabase
@@ -276,7 +277,7 @@ export async function generateDraftPayoutBatch(
   }
 
   // 3. Calculate partner projection with negative carry-forward
-  const projection = await getPartnerFinancialProjection(params.partnerId);
+  const projection = await getPartnerFinancialProjection(params.partnerId, supabase);
 
   if (projection.partnerPayoutAvailable <= 0) {
     throw new Error(
@@ -409,8 +410,9 @@ export async function cancelPayoutBatch(params: {
   batchId: string;
   adminUserId: string;
   reason?: string;
+  supabaseClient?: any;
 }): Promise<void> {
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   // Fetch batch to verify state
   const { data: batch, error: bErr } = await supabase
@@ -471,8 +473,9 @@ export async function cancelPayoutBatch(params: {
 export async function submitPayoutBatchForApproval(params: {
   batchId: string;
   submittedBy: string;
+  supabaseClient?: any;
 }): Promise<PayoutBatchRecord> {
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   const { data: batch, error: bErr } = await supabase
     .from("payout_batches")
@@ -503,6 +506,19 @@ export async function submitPayoutBatchForApproval(params: {
     throw new Error(`Failed to submit batch for approval: ${uErr?.message}`);
   }
 
+  // Audit log for submission
+  await supabase.from("application_audit_logs").insert({
+    action: "SUBMIT_PAYOUT_BATCH",
+    performed_by_user_id: params.submittedBy,
+    partner_id: updated.partner_id,
+    source: "admin_portal",
+    details: {
+      batchId: params.batchId,
+      batchNumber: updated.batch_number,
+      totalAmount: updated.total_amount,
+    },
+  });
+
   return updated as PayoutBatchRecord;
 }
 
@@ -513,8 +529,9 @@ export async function submitPayoutBatchForApproval(params: {
 export async function approvePayoutBatch(params: {
   batchId: string;
   approvedBy: string;
+  supabaseClient?: any;
 }): Promise<PayoutBatchRecord> {
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   const { data: batch, error: bErr } = await supabase
     .from("payout_batches")
@@ -555,6 +572,19 @@ export async function approvePayoutBatch(params: {
     throw new Error(`Failed to approve batch: ${uErr?.message}`);
   }
 
+  // Audit log for approval
+  await supabase.from("application_audit_logs").insert({
+    action: "APPROVE_PAYOUT_BATCH",
+    performed_by_user_id: params.approvedBy,
+    partner_id: updated.partner_id,
+    source: "admin_portal",
+    details: {
+      batchId: params.batchId,
+      batchNumber: updated.batch_number,
+      totalAmount: updated.total_amount,
+    },
+  });
+
   return updated as PayoutBatchRecord;
 }
 
@@ -564,6 +594,184 @@ export function isPhase6SettlementEnabled(): boolean {
 
 export function isPhase6ExternalPayoutsEnabled(): boolean {
   return process.env.PHASE6_EXTERNAL_PAYOUTS_ENABLED === "true";
+}
+
+/**
+ * Verifies all pre-settlement invariants before any settlement mutations occur:
+ * 1. Batch status must be in ['APPROVED', 'AWAITING_MANUAL_CONFIRMATION', 'PROCESSING'].
+ * 2. At least one payout item exists.
+ * 3. Every payout item MUST be in the expected locked status ('PENDING').
+ * 4. Every payout item MUST belong to the same partner as the batch header.
+ * 5. Batch total_amount MUST exactly equal the sum of item disbursed_amount.
+ * 6. Health check: No reservation in the batch has an active dispute hold or post-submission clawback exceeding net realized commission.
+ */
+export async function validateBatchSettlementPreconditions(params: {
+  batch: PayoutBatchRecord;
+  items: PayoutItemRecord[];
+  supabaseClient?: any;
+}): Promise<{ valid: boolean; error?: string }> {
+  const { batch, items } = params;
+  const supabase = params.supabaseClient || createAdminClient();
+
+  const validPriorStatuses: PayoutBatchStatus[] = [
+    "APPROVED",
+    "AWAITING_MANUAL_CONFIRMATION",
+    "PROCESSING",
+  ];
+
+  if (!validPriorStatuses.includes(batch.status)) {
+    return {
+      valid: false,
+      error: `Cannot settle batch from status '${batch.status}'. Must be in [${validPriorStatuses.join(", ")}].`,
+    };
+  }
+
+  if (!items || items.length === 0) {
+    return {
+      valid: false,
+      error: `No payout items found for batch ${batch.id}.`,
+    };
+  }
+
+  // 1. Verify every item is in the expected locked state PENDING
+  for (const item of items) {
+    if (item.status !== "PENDING") {
+      return {
+        valid: false,
+        error: `Settlement blocked: Payout item ${item.id} (reservation ${item.reservation_id}) is in status '${item.status}', expected locked status 'PENDING'.`,
+      };
+    }
+  }
+
+  // 2. Verify every item belongs to the same partner as the batch
+  for (const item of items) {
+    if (item.partner_id !== batch.partner_id) {
+      return {
+        valid: false,
+        error: `Partner boundary violation: Item ${item.id} partner (${item.partner_id}) does not match batch partner (${batch.partner_id}).`,
+      };
+    }
+  }
+
+  // 3. Verify batch total exactly equals sum of item disbursed amounts
+  let itemsSum = 0;
+  for (const item of items) {
+    itemsSum += Number(item.disbursed_amount || 0);
+  }
+  itemsSum = Math.round(itemsSum * 100) / 100;
+  const batchTotal = Math.round(Number(batch.total_amount || 0) * 100) / 100;
+
+  if (itemsSum !== batchTotal) {
+    return {
+      valid: false,
+      error: `Batch total mismatch: Batch total_amount ($${batchTotal.toFixed(2)}) does not equal sum of item disbursed_amounts ($${itemsSum.toFixed(2)}).`,
+    };
+  }
+
+  // 4. Stale-state / dispute / clawback invalidation check
+  const resIds = items.map((i) => i.reservation_id);
+  const { data: ledgerEvents, error: ledErr } = await supabase
+    .from("commission_ledger_events")
+    .select("*")
+    .in("reservation_id", resIds)
+    .order("created_at", { ascending: true });
+
+  if (ledErr) {
+    return {
+      valid: false,
+      error: `Failed to load ledger events for pre-settlement verification: ${ledErr.message}`,
+    };
+  }
+
+  const eventsByRes = new Map<string, any[]>();
+  for (const ev of ledgerEvents || []) {
+    const list = eventsByRes.get(ev.reservation_id) || [];
+    list.push(ev);
+    eventsByRes.set(ev.reservation_id, list);
+  }
+
+  for (const item of items) {
+    const events = eventsByRes.get(item.reservation_id) || [];
+    let netRealized = 0;
+    let latestDisputeHoldTime: string | null = null;
+    let latestDisputeReleaseTime: string | null = null;
+
+    for (const ev of events) {
+      const delta = Number(ev.delta_amount || 0);
+      if (ev.event_type === "PAYMENT_REALIZED" || ev.event_type === "REFUND_CLAWBACK" || ev.event_type === "MANUAL_ADJUSTMENT") {
+        netRealized += delta;
+      }
+      if (ev.event_type === "DISPUTE_HOLD") {
+        if (!latestDisputeHoldTime || ev.created_at > latestDisputeHoldTime) {
+          latestDisputeHoldTime = ev.created_at;
+        }
+      }
+      if (ev.event_type === "DISPUTE_RELEASE") {
+        if (!latestDisputeReleaseTime || ev.created_at > latestDisputeReleaseTime) {
+          latestDisputeReleaseTime = ev.created_at;
+        }
+      }
+    }
+
+    const isDisputed = Boolean(
+      latestDisputeHoldTime &&
+        (!latestDisputeReleaseTime || latestDisputeReleaseTime <= latestDisputeHoldTime)
+    );
+
+    if (isDisputed) {
+      return {
+        valid: false,
+        error: `Settlement blocked: Reservation ${item.reservation_id} has an active dispute hold registered after batch submission.`,
+      };
+    }
+
+    netRealized = Math.round(netRealized * 100) / 100;
+    if (netRealized < Number(item.disbursed_amount)) {
+      return {
+        valid: false,
+        error: `Settlement blocked: Reservation ${item.reservation_id} net realized commission ($${netRealized.toFixed(2)}) is less than disbursed amount ($${Number(item.disbursed_amount).toFixed(2)}) due to post-submission refund clawback.`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Creates a payout payment attempt record.
+ * Strictly fails closed if PHASE6_EXTERNAL_PAYOUTS_ENABLED is not explicitly true.
+ */
+export async function createPayoutPaymentAttempt(params: {
+  payoutBatchId: string;
+  payoutRail: PayoutRail;
+  amount: number;
+  currency?: string;
+  metadata?: Record<string, unknown>;
+  supabaseClient?: any;
+}): Promise<any> {
+  if (!isPhase6ExternalPayoutsEnabled()) {
+    throw new Error("External payouts are disabled in this environment (PHASE6_EXTERNAL_PAYOUTS_ENABLED=false).");
+  }
+
+  const supabase = params.supabaseClient || createAdminClient();
+  const { data, error } = await supabase
+    .from("payout_payment_attempts")
+    .insert({
+      payout_batch_id: params.payoutBatchId,
+      payout_rail: params.payoutRail,
+      amount: params.amount,
+      currency: params.currency || "USD",
+      status: "PENDING",
+      metadata: params.metadata || {},
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create payout payment attempt: ${error.message}`);
+  }
+
+  return data;
 }
 
 /**
@@ -581,12 +789,13 @@ export async function markPayoutBatchSettled(params: {
   adminUserId: string;
   transactionReference?: string;
   notes?: string;
+  supabaseClient?: any;
 }): Promise<{ batch: PayoutBatchRecord; settledItemsCount: number }> {
   if (!isPhase6SettlementEnabled()) {
     throw new Error("Financial settlement is disabled in this environment (PHASE6_SETTLEMENT_ENABLED=false).");
   }
 
-  const supabase = createAdminClient();
+  const supabase = params.supabaseClient || createAdminClient();
 
   // 1. Fetch batch
   const { data: batch, error: bErr } = await supabase
@@ -599,31 +808,31 @@ export async function markPayoutBatchSettled(params: {
     throw new Error(`Batch not found: ${params.batchId}`);
   }
 
-  const validPriorStatuses: PayoutBatchStatus[] = [
-    "APPROVED",
-    "AWAITING_MANUAL_CONFIRMATION",
-    "PROCESSING",
-  ];
-
-  if (!validPriorStatuses.includes(batch.status)) {
-    throw new Error(
-      `Cannot settle batch from status '${batch.status}'. Must be in [${validPriorStatuses.join(", ")}].`
-    );
-  }
-
-  // 2. Fetch pending items
+  // 2. Fetch items
   const { data: items, error: iErr } = await supabase
     .from("payout_items")
     .select("*")
-    .eq("payout_batch_id", params.batchId)
-    .eq("status", "PENDING");
+    .eq("payout_batch_id", params.batchId);
 
   if (iErr || !items || items.length === 0) {
-    throw new Error(`No pending payout items found for batch ${params.batchId}`);
+    throw new Error(`No payout items found for batch ${params.batchId}`);
   }
 
+  // 3. Pre-settlement validation
+  const validation = await validateBatchSettlementPreconditions({
+    batch: batch as PayoutBatchRecord,
+    items: items as PayoutItemRecord[],
+    supabaseClient: supabase,
+  });
+
+  if (!validation.valid) {
+    throw new Error(validation.error);
+  }
+
+  const typedItems = items as PayoutItemRecord[];
+
   // Fetch reservation metadata to populate ledger events
-  const resIds = items.map((i) => i.reservation_id);
+  const resIds = typedItems.map((i: PayoutItemRecord) => i.reservation_id);
   const { data: reservations, error: resErr } = await supabase
     .from("reservations")
     .select("id, source_provider, platform, confirmation_code, ownerrez_booking_id, site_id")
@@ -639,7 +848,7 @@ export async function markPayoutBatchSettled(params: {
   }
 
   // 3. Mark payout items SETTLED
-  const itemIds = items.map((i) => i.id);
+  const itemIds = typedItems.map((i: PayoutItemRecord) => i.id);
   const { error: itemUpErr } = await supabase
     .from("payout_items")
     .update({
@@ -653,7 +862,7 @@ export async function markPayoutBatchSettled(params: {
   }
 
   // 4. Insert PAYOUT_SETTLEMENT ledger event for each settled item
-  const ledgerInserts = items.map((item) => {
+  const ledgerInserts = typedItems.map((item: PayoutItemRecord) => {
     const res = resMap.get(item.reservation_id);
     const provider = (res?.source_provider as "ownerrez" | "hospitable") || "ownerrez";
     const channel = res?.platform || "direct";

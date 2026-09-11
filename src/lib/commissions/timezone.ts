@@ -18,7 +18,7 @@ export function computeEligibilityReleaseTimestamp(
   propertyTimezone?: string | null,
   holdHours: number = DEFAULT_POST_STAY_HOLD_HOURS
 ): Date {
-  const timezone = propertyTimezone?.trim() || DEFAULT_PROPERTY_TIMEZONE;
+  let timezone = propertyTimezone?.trim() || DEFAULT_PROPERTY_TIMEZONE;
   const cleanDate = checkOutDateStr.split("T")[0];
   
   // Create reference date for 11:00 AM on check-out date
@@ -30,16 +30,31 @@ export function computeEligibilityReleaseTimestamp(
   const tempUtc = new Date(Date.UTC(year, month - 1, day, 11, 0, 0));
   
   // Resolve timezone offset using Intl.DateTimeFormat
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    timezone = DEFAULT_PROPERTY_TIMEZONE;
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  }
   
   const parts = formatter.formatToParts(tempUtc);
   const partMap: Record<string, number> = {};

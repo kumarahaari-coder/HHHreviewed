@@ -108,6 +108,14 @@ export async function PATCH(
 
     if (action === "settle") {
       if (!isPhase6SettlementEnabled()) {
+        const supabase = createAdminClient();
+        await supabase.from("application_audit_logs").insert({
+          action: "BLOCKED_SETTLEMENT_ATTEMPT",
+          performed_by_user_id: session.userId,
+          source: "admin_portal",
+          details: { batchId: id, reason: "PHASE6_SETTLEMENT_ENABLED=false" },
+        });
+
         return NextResponse.json(
           { success: false, error: "Financial settlement is disabled in this environment." },
           { status: 403 }

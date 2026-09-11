@@ -16,9 +16,10 @@ import {
  * Notice: PAYOUT_SETTLEMENT is strictly excluded from netRealized to prevent double-subtraction.
  */
 export async function getReservationFinancialSummaries(
-  partnerId: string
+  partnerId: string,
+  supabaseClient?: any
 ): Promise<ReservationFinancialSummary[]> {
-  const supabase = createAdminClient();
+  const supabase = supabaseClient || createAdminClient();
 
   // 1. Fetch all commission ledger events for this partner
   const { data: ledgerEvents, error: ledgerErr } = await supabase
@@ -168,9 +169,10 @@ export async function getReservationFinancialSummaries(
  *   partnerPayoutAvailable = MAX(0, eligiblePositive - negativeCarryForward)
  */
 export async function getPartnerFinancialProjection(
-  partnerId: string
+  partnerId: string,
+  supabaseClient?: any
 ): Promise<PartnerFinancialProjection> {
-  const summaries = await getReservationFinancialSummaries(partnerId);
+  const summaries = await getReservationFinancialSummaries(partnerId, supabaseClient);
 
   let partnerAccountingOutstanding = 0;
   let eligiblePositive = 0;
