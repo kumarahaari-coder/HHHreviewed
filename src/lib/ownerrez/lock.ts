@@ -35,42 +35,11 @@ export async function acquireOwnerRezSyncLease(
   }
 
   try {
-    // 2. Database-backed atomic lease acquisition via PostgreSQL RPC (if available)
-    const { data: rpcSuccess, error: rpcError } = await supabase.rpc(
-      "try_acquire_hospitable_sync_lock",
-      {
-        p_lock_name: lockName,
-        p_lock_token: lockToken,
-        p_lease_seconds: leaseSeconds,
-        p_acquired_by: acquiredBy,
-      }
-    );
-
-    if (!rpcError && typeof rpcSuccess === "boolean") {
-      if (!rpcSuccess) {
-        return null;
-      }
-
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
-
-      const lease: OwnerRezSyncLease = {
-        lockName,
-        lockToken,
-        acquiredAt: now.toISOString(),
-        expiresAt,
-      };
-
-      activeProcessLocks.set(lockName, lease);
-      setupAutoRenewal(lease, leaseSeconds, supabase);
-      return lease;
-    }
-
-    // 3. Database-backed distributed table lock via hospitable_sync_logs
+    // 2. Database-backed distributed table lock via hospitable_sync_logs
     const now = new Date();
     const cutoff = new Date(now.getTime() - leaseSeconds * 1000).toISOString();
 
-    // 3a. Pre-check: Reject if an active unexpired RUNNING sync already exists
+    // 2a. Pre-check: Reject if an active unexpired RUNNING sync already exists
     const { data: runningLogs, error: checkError } = await supabase
       .from("hospitable_sync_logs")
       .select("id, started_at")
@@ -83,7 +52,7 @@ export async function acquireOwnerRezSyncLease(
       return null;
     }
 
-    // 3b. Insert candidate lease log
+    // 2b. Insert candidate lease log
     const nowIso = now.toISOString();
     const expiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
     const { data: inserted, error: insertError } = await supabase
@@ -107,7 +76,7 @@ export async function acquireOwnerRezSyncLease(
       return null;
     }
 
-    // 3c. Leader Election: Query all RUNNING logs to resolve simultaneous race conditions
+    // 2c. Leader Election: Query all RUNNING logs to resolve simultaneous race conditions
     const { data: electionRows, error: electionError } = await supabase
       .from("hospitable_sync_logs")
       .select("id, started_at")
@@ -167,22 +136,6 @@ export async function renewOwnerRezSyncLease(
   const supabase = supabaseClient || createAdminClient();
 
   try {
-    const { data: rpcSuccess, error: rpcError } = await supabase.rpc(
-      "renew_hospitable_sync_lock",
-      {
-        p_lock_name: lease.lockName,
-        p_lock_token: lease.lockToken,
-        p_lease_seconds: leaseSeconds,
-      }
-    );
-
-    if (!rpcError && typeof rpcSuccess === "boolean" && rpcSuccess) {
-      const now = new Date();
-      lease.expiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
-      activeProcessLocks.set(lease.lockName, lease);
-      return true;
-    }
-
     if (lease.logId) {
       const now = new Date();
       const newExpiresAt = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
@@ -236,18 +189,6 @@ export async function releaseOwnerRezSyncLease(
   const supabase = supabaseClient || createAdminClient();
 
   try {
-    const { data: rpcSuccess, error } = await supabase.rpc(
-      "release_hospitable_sync_lock",
-      {
-        p_lock_name: lease.lockName,
-        p_lock_token: lease.lockToken,
-      }
-    );
-
-    if (!error && typeof rpcSuccess === "boolean" && rpcSuccess) {
-      return true;
-    }
-
     if (lease.logId) {
       await supabase
         .from("hospitable_sync_logs")
