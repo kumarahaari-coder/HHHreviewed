@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { syncAllOwnerRezBookings } from "@/lib/ownerrez/sync";
 import { acquireOwnerRezSyncLease, releaseOwnerRezSyncLease } from "@/lib/ownerrez/lock";
+import { processCompletedStaysEligibility } from "@/lib/commissions/eligibility";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -65,10 +66,31 @@ export async function GET(request: Request) {
     // 3. Execute authoritative bulk synchronization & reconciliation
     const batchResult = await syncAllOwnerRezBookings();
 
+    // 4. Safely execute eligibility release scan within existing distributed lease
+    let eligibilitySummary: any = null;
+    try {
+      eligibilitySummary = await processCompletedStaysEligibility();
+    } catch (eligErr: any) {
+      console.error("[OWNERREZ CRON] Eligibility release scan warning:", eligErr?.message || eligErr);
+      eligibilitySummary = {
+        error: eligErr?.message || "Eligibility release scan failed",
+        totalScanned: 0,
+        eligibleReleased: 0,
+        alreadyReleased: 0,
+        skippedUnpaid: 0,
+        skippedFuture: 0,
+        skippedCancelled: 0,
+        skippedDisputed: 0,
+        errors: 1,
+        results: [],
+      };
+    }
+
     return NextResponse.json({
       success: batchResult.failed === 0,
       trigger: "cron",
       result: batchResult,
+      eligibilitySummary,
       completedAt: new Date().toISOString(),
     });
   } catch (error: any) {

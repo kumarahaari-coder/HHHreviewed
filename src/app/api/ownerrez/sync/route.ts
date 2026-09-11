@@ -23,6 +23,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: batchResult.failed === 0,
         result: batchResult,
+        ...batchResult,
       });
     }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { generateDraftPayoutBatch } from "@/lib/commissions/payout-generator";
+import { generateDraftPayoutBatch, checkPartnerTaxClearance } from "@/lib/commissions/payout-generator";
 import { PayoutRail } from "@/lib/commissions/types";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +62,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: `Invalid payoutRail. Must be one of: ${validRails.join(", ")}` },
         { status: 400 }
+      );
+    }
+
+    // Fail-closed tax compliance pre-flight check
+    const supabase = createAdminClient();
+    const clearance = await checkPartnerTaxClearance(partnerId, supabase);
+    if (!clearance.cleared) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Tax compliance hold: Partner is not cleared for payout (${clearance.reason}). Operational prerequisite: creator tax document review status must be APPROVED.`,
+        },
+        { status: 422 }
       );
     }
 

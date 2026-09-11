@@ -429,6 +429,23 @@ export async function cancelPayoutBatch(params: {
     throw new Error("Cannot cancel a settled payout batch.");
   }
 
+  if (batch.status === "PROCESSING") {
+    throw new Error("Cannot cancel a payout batch in PROCESSING status (bank disbursement in flight).");
+  }
+
+  // Check active payment attempts
+  const { data: activeAttempts } = await supabase
+    .from("payout_payment_attempts")
+    .select("id, status, provider_transfer_id")
+    .eq("payout_batch_id", params.batchId)
+    .in("status", ["PENDING", "SUCCEEDED"]);
+
+  if (activeAttempts && activeAttempts.length > 0) {
+    throw new Error(
+      `Cannot cancel payout batch: active disbursement in progress (trace: ${activeAttempts[0].provider_transfer_id || activeAttempts[0].id}).`
+    );
+  }
+
   // 1. Mark batch CANCELLED
   const { error: batchUpErr } = await supabase
     .from("payout_batches")
@@ -829,6 +846,43 @@ export async function markPayoutBatchSettled(params: {
     throw new Error(validation.error);
   }
 
+  // 2b. Validate payment attempt invariants
+  const { data: attempts, error: attErr } = await supabase
+    .from("payout_payment_attempts")
+    .select("*")
+    .eq("payout_batch_id", params.batchId);
+
+  if (attErr) {
+    throw new Error(`Failed to check payment attempts: ${attErr.message}`);
+  }
+
+  const activeAttempt = (attempts || []).find(
+    (a: any) => a.status === "PENDING" || a.status === "SUCCEEDED"
+  );
+
+  if (activeAttempt) {
+    if (Number(activeAttempt.requested_amount) !== Number(batch.total_amount)) {
+      throw new Error(
+        `Settlement blocked: Disbursement attempt amount ($${Number(activeAttempt.requested_amount).toFixed(2)}) does not match batch total ($${Number(batch.total_amount).toFixed(2)}).`
+      );
+    }
+
+    if (!activeAttempt.provider_transfer_id) {
+      throw new Error(
+        `Settlement blocked: Bank trace has not been recorded for disbursement attempt '${activeAttempt.id}'.`
+      );
+    }
+
+    if (
+      params.transactionReference &&
+      params.transactionReference.trim() !== activeAttempt.provider_transfer_id.trim()
+    ) {
+      throw new Error(
+        `Settlement reference mismatch: Provided reference '${params.transactionReference}' does not match recorded bank trace '${activeAttempt.provider_transfer_id}'.`
+      );
+    }
+  }
+
   const typedItems = items as PayoutItemRecord[];
 
   // Fetch reservation metadata to populate ledger events
@@ -923,6 +977,16 @@ export async function markPayoutBatchSettled(params: {
     throw new Error(`Failed to mark payout batch SETTLED: ${batchUpErr?.message}`);
   }
 
+  // 5b. Transition active payment attempt to SUCCEEDED if present
+  await supabase
+    .from("payout_payment_attempts")
+    .update({
+      status: "SUCCEEDED",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("payout_batch_id", params.batchId)
+    .eq("status", "PENDING");
+
   // 6. Record audit log
   await supabase.from("application_audit_logs").insert({
     action: "SETTLE_PAYOUT_BATCH",
@@ -942,5 +1006,496 @@ export async function markPayoutBatchSettled(params: {
   return {
     batch: settledBatch as PayoutBatchRecord,
     settledItemsCount: items.length,
+  };
+}
+
+/**
+ * Step 1 of Manual ACH Disbursement:
+ * Records an immutable disbursement intent BEFORE Treasury presses final submit in the bank portal.
+ * Transitions batch to 'PROCESSING', creates a pending 'payout_payment_attempts' record (without bank trace),
+ * and permanently locks the batch against cancellation, regeneration, or duplicate execution.
+ */
+export async function initiateManualDisbursementIntent(params: {
+  batchId: string;
+  adminUserId: string;
+  notes?: string;
+  supabaseClient?: any;
+}): Promise<{
+  batch: PayoutBatchRecord;
+  paymentAttempt: any;
+  intentReference: string;
+}> {
+  const supabase = params.supabaseClient || createAdminClient();
+
+  // 1. Fetch and validate batch
+  const { data: batch, error: bErr } = await supabase
+    .from("payout_batches")
+    .select("*")
+    .eq("id", params.batchId)
+    .single();
+
+  if (bErr || !batch) {
+    throw new Error(`Batch not found: ${params.batchId}`);
+  }
+
+  // 1b. Check for existing payment attempts (prohibit second attempt creation)
+  const { data: existingAttempts, error: aErr } = await supabase
+    .from("payout_payment_attempts")
+    .select("*")
+    .eq("payout_batch_id", params.batchId);
+
+  if (aErr) {
+    throw new Error(`Failed to check existing payment attempts: ${aErr.message}`);
+  }
+
+  const activeAttempt = (existingAttempts || []).find(
+    (a: any) => a.status === "PENDING" || a.status === "SUCCEEDED"
+  );
+  if (activeAttempt) {
+    throw new Error(
+      `Disbursement attempt already exists for batch ${params.batchId} with status '${activeAttempt.status}' (attemptId: ${activeAttempt.id}). Duplicate attempt creation is prohibited.`
+    );
+  }
+
+  if (batch.status === "SETTLED") {
+    throw new Error("Cannot initiate disbursement on an already settled payout batch.");
+  }
+  if (batch.status === "CANCELLED") {
+    throw new Error("Cannot initiate disbursement on a cancelled payout batch.");
+  }
+  if (batch.status === "DRAFT") {
+    throw new Error("Cannot initiate disbursement on a DRAFT batch; batch must be submitted and APPROVED first.");
+  }
+  if (batch.status === "PENDING_APPROVAL") {
+    throw new Error("Cannot initiate disbursement on a PENDING_APPROVAL batch; Super Admin approval is required first.");
+  }
+
+  const allowedStatuses = ["APPROVED", "AWAITING_MANUAL_CONFIRMATION"];
+  if (!allowedStatuses.includes(batch.status)) {
+    throw new Error(`Cannot initiate disbursement intent on batch in status '${batch.status}'. Batch must be APPROVED.`);
+  }
+
+  // 3. Insert immutable manual payment attempt (pre-bank submission)
+  const idempotencyKey = `manual_intent_${batch.id}_${Date.now()}`;
+  const providerIdempotencyKey = `manual_intent_${batch.id}`;
+
+  const { data: attempt, error: insertErr } = await supabase
+    .from("payout_payment_attempts")
+    .insert({
+      payout_batch_id: batch.id,
+      idempotency_key: idempotencyKey,
+      payment_provider: "MANUAL_ACH",
+      provider_idempotency_key: providerIdempotencyKey,
+      provider_transfer_id: null, // Trace reference will be attached after bank dispatch
+      requested_amount: batch.total_amount,
+      status: "PENDING",
+      attempt_count: 1,
+      last_error: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .select("*")
+    .single();
+
+  if (insertErr) {
+    throw new Error(`Failed to insert manual disbursement attempt: ${insertErr.message}`);
+  }
+
+  // 4. Transition batch to PROCESSING to seal against cancellation/modification
+  const { data: updatedBatch, error: upErr } = await supabase
+    .from("payout_batches")
+    .update({
+      status: "PROCESSING",
+      metadata: {
+        ...(batch.metadata || {}),
+        manualDisbursementIntent: {
+          initiatedBy: params.adminUserId,
+          intentAttemptId: attempt.id,
+          amount: batch.total_amount,
+          notes: params.notes || null,
+          initiatedAt: new Date().toISOString(),
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.batchId)
+    .select("*")
+    .single();
+
+  if (upErr) {
+    throw new Error(`Failed to update batch to PROCESSING: ${upErr.message}`);
+  }
+
+  // 5. Audit log
+  await supabase.from("application_audit_logs").insert({
+    action: "INITIATE_MANUAL_DISBURSEMENT_INTENT",
+    performed_by_user_id: params.adminUserId,
+    partner_id: batch.partner_id,
+    source: "admin_portal",
+    details: {
+      batchId: batch.id,
+      attemptId: attempt.id,
+      amount: batch.total_amount,
+      partnerId: batch.partner_id,
+    },
+  });
+
+  return {
+    batch: updatedBatch as PayoutBatchRecord,
+    paymentAttempt: attempt,
+    intentReference: attempt.id,
+  };
+}
+
+/**
+ * Step 2 of Manual ACH Disbursement:
+ * Records the bank trace/reference returned by the corporate bank portal against the existing pending attempt.
+ */
+export async function recordBankTraceForDisbursement(params: {
+  batchId: string;
+  adminUserId: string;
+  bankTraceReference: string;
+  notes?: string;
+  supabaseClient?: any;
+}): Promise<{
+  batch: PayoutBatchRecord;
+  paymentAttempt: any;
+}> {
+  const supabase = params.supabaseClient || createAdminClient();
+  const traceRef = params.bankTraceReference?.trim();
+  if (!traceRef) {
+    throw new Error("Bank trace reference is required to record bank dispatch.");
+  }
+
+  // 1. Fetch batch
+  const { data: batch, error: bErr } = await supabase
+    .from("payout_batches")
+    .select("*")
+    .eq("id", params.batchId)
+    .single();
+
+  if (bErr || !batch) {
+    throw new Error(`Batch not found: ${params.batchId}`);
+  }
+
+  if (batch.status !== "PROCESSING") {
+    throw new Error(`Cannot record bank trace on batch in status '${batch.status}'. Batch must be in PROCESSING status.`);
+  }
+
+  // 2. Fetch pending attempt
+  const { data: attempts, error: aErr } = await supabase
+    .from("payout_payment_attempts")
+    .select("*")
+    .eq("payout_batch_id", params.batchId);
+
+  if (aErr) {
+    throw new Error(`Failed to check payment attempts: ${aErr.message}`);
+  }
+
+  const activeAttempt = (attempts || []).find((a: any) => a.status === "PENDING");
+  if (!activeAttempt) {
+    throw new Error(`No pending disbursement attempt found for batch ${params.batchId}. Intent must be initiated before recording bank trace.`);
+  }
+
+  // 3. Verify amount consistency
+  if (Number(activeAttempt.requested_amount) !== Number(batch.total_amount)) {
+    throw new Error(
+      `Disbursement attempt amount ($${Number(activeAttempt.requested_amount).toFixed(2)}) does not match batch total ($${Number(batch.total_amount).toFixed(2)}).`
+    );
+  }
+
+  // 4. Trace check (idempotent replay vs conflict)
+  if (activeAttempt.provider_transfer_id) {
+    if (activeAttempt.provider_transfer_id.trim() === traceRef) {
+      return { batch: batch as PayoutBatchRecord, paymentAttempt: activeAttempt };
+    }
+    throw new Error(
+      `Different bank trace '${traceRef}' submitted against existing attempt '${activeAttempt.id}' which already has trace '${activeAttempt.provider_transfer_id}'. Trace conflict prohibited.`
+    );
+  }
+
+  // 5. Update attempt with bank trace
+  const { data: updatedAttempt, error: upAttErr } = await supabase
+    .from("payout_payment_attempts")
+    .update({
+      provider_transfer_id: traceRef,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", activeAttempt.id)
+    .select("*")
+    .single();
+
+  if (upAttErr) {
+    throw new Error(`Failed to update disbursement attempt with bank trace: ${upAttErr.message}`);
+  }
+
+  // 6. Update batch metadata
+  const { data: updatedBatch, error: upBErr } = await supabase
+    .from("payout_batches")
+    .update({
+      metadata: {
+        ...(batch.metadata || {}),
+        bankDisbursement: {
+          traceReference: traceRef,
+          recordedBy: params.adminUserId,
+          recordedAt: new Date().toISOString(),
+          notes: params.notes || null,
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.batchId)
+    .select("*")
+    .single();
+
+  if (upBErr) {
+    throw new Error(`Failed to update batch metadata with bank trace: ${upBErr.message}`);
+  }
+
+  // 7. Audit log
+  await supabase.from("application_audit_logs").insert({
+    action: "RECORD_MANUAL_ACH_BANK_TRACE",
+    performed_by_user_id: params.adminUserId,
+    partner_id: batch.partner_id,
+    source: "admin_portal",
+    details: {
+      batchId: batch.id,
+      attemptId: activeAttempt.id,
+      bankTraceReference: traceRef,
+      amount: batch.total_amount,
+    },
+  });
+
+  return { batch: updatedBatch as PayoutBatchRecord, paymentAttempt: updatedAttempt };
+}
+
+/**
+ * Aborts a manual disbursement intent BEFORE bank submission (e.g. if bank transfer was never executed).
+ * Returns batch to 'APPROVED' status and marks attempt 'FAILED'.
+ */
+export async function abortPreBankDisbursementIntent(params: {
+  batchId: string;
+  adminUserId: string;
+  reason: string;
+  supabaseClient?: any;
+}): Promise<{
+  batch: PayoutBatchRecord;
+  paymentAttempt: any;
+}> {
+  const supabase = params.supabaseClient || createAdminClient();
+
+  const { data: batch, error: bErr } = await supabase
+    .from("payout_batches")
+    .select("*")
+    .eq("id", params.batchId)
+    .single();
+
+  if (bErr || !batch) {
+    throw new Error(`Batch not found: ${params.batchId}`);
+  }
+
+  if (batch.status !== "PROCESSING") {
+    throw new Error(`Cannot abort disbursement intent on batch in status '${batch.status}'.`);
+  }
+
+  const { data: attempts, error: aErr } = await supabase
+    .from("payout_payment_attempts")
+    .select("*")
+    .eq("payout_batch_id", params.batchId)
+    .eq("status", "PENDING");
+
+  if (aErr) {
+    throw new Error(`Failed to query payment attempts: ${aErr.message}`);
+  }
+
+  const activeAttempt = (attempts || [])[0];
+  if (!activeAttempt) {
+    throw new Error("No active pending disbursement attempt found to abort.");
+  }
+
+  if (activeAttempt.provider_transfer_id) {
+    throw new Error(
+      `Cannot abort: funds transfer was already registered with bank trace '${activeAttempt.provider_transfer_id}'. Batch must proceed through verification and settlement.`
+    );
+  }
+
+  // 1. Mark attempt FAILED
+  const { data: failedAttempt, error: upAttErr } = await supabase
+    .from("payout_payment_attempts")
+    .update({
+      status: "FAILED",
+      last_error: `Pre-bank disbursement aborted by ${params.adminUserId}: ${params.reason}`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", activeAttempt.id)
+    .select("*")
+    .single();
+
+  if (upAttErr) {
+    throw new Error(`Failed to update attempt to FAILED: ${upAttErr.message}`);
+  }
+
+  // 2. Return batch to APPROVED
+  const { data: updatedBatch, error: upBErr } = await supabase
+    .from("payout_batches")
+    .update({
+      status: "APPROVED",
+      metadata: {
+        ...(batch.metadata || {}),
+        disbursementAborted: {
+          abortedBy: params.adminUserId,
+          reason: params.reason,
+          abortedAt: new Date().toISOString(),
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.batchId)
+    .select("*")
+    .single();
+
+  if (upBErr) {
+    throw new Error(`Failed to return batch status to APPROVED: ${upBErr.message}`);
+  }
+
+  // 3. Audit log
+  await supabase.from("application_audit_logs").insert({
+    action: "ABORT_PRE_BANK_DISBURSEMENT_INTENT",
+    performed_by_user_id: params.adminUserId,
+    partner_id: batch.partner_id,
+    source: "admin_portal",
+    details: {
+      batchId: batch.id,
+      attemptId: activeAttempt.id,
+      reason: params.reason,
+    },
+  });
+
+  return { batch: updatedBatch as PayoutBatchRecord, paymentAttempt: failedAttempt };
+}
+
+/**
+ * Backwards-compatible convenience wrapper combining initiate + trace if executed in one step.
+ */
+export async function recordManualDisbursementIntent(params: {
+  batchId: string;
+  adminUserId: string;
+  bankTraceReference: string;
+  notes?: string;
+  supabaseClient?: any;
+}): Promise<{
+  batch: PayoutBatchRecord;
+  paymentAttempt: any;
+}> {
+  // If no attempt exists yet, initiate intent first
+  const supabase = params.supabaseClient || createAdminClient();
+  const { data: attempts } = await supabase
+    .from("payout_payment_attempts")
+    .select("*")
+    .eq("payout_batch_id", params.batchId)
+    .eq("status", "PENDING");
+
+  if (!attempts || attempts.length === 0) {
+    await initiateManualDisbursementIntent({
+      batchId: params.batchId,
+      adminUserId: params.adminUserId,
+      notes: params.notes,
+      supabaseClient: supabase,
+    });
+  }
+
+  return recordBankTraceForDisbursement(params);
+}
+
+/**
+ * Validates whether a partner is cleared for payout under fail-closed tax compliance policy.
+ * Exact database state required:
+ *   1. creator_tax_documents.status === 'APPROVED'
+ *   2. creator_tax_documents.current_version_id IS NOT NULL
+ *   3. tax_document_versions:
+ *      - quarantine_status === 'PASSED'
+ *      - is_superseded === FALSE
+ *      - document_type IN ('W_9', 'W_8')
+ * If any condition fails, the partner is strictly NOT cleared for payout.
+ */
+export async function checkPartnerTaxClearance(
+  partnerId: string,
+  supabaseClient?: any
+): Promise<{
+  cleared: boolean;
+  status: string;
+  documentType?: string;
+  reason?: string;
+}> {
+  const supabase = supabaseClient || createAdminClient();
+
+  const { data: taxDoc, error: dErr } = await supabase
+    .from("creator_tax_documents")
+    .select("*")
+    .eq("partner_id", partnerId)
+    .maybeSingle();
+
+  if (dErr || !taxDoc) {
+    return {
+      cleared: false,
+      status: "NOT_SUBMITTED",
+      reason: "No tax document found for partner. Tax clearance is a fail-closed operational prerequisite.",
+    };
+  }
+
+  if (taxDoc.status !== "APPROVED") {
+    return {
+      cleared: false,
+      status: taxDoc.status,
+      reason: `Tax document review status is '${taxDoc.status}'. Payouts require an APPROVED tax document.`,
+    };
+  }
+
+  let version: any = null;
+  if (taxDoc.current_version_id) {
+    const { data: vById, error: vErr } = await supabase
+      .from("tax_document_versions")
+      .select("*")
+      .eq("id", taxDoc.current_version_id)
+      .maybeSingle();
+    if (!vErr && vById) version = vById;
+  } else if (taxDoc.current_version != null) {
+    const { data: vByNum, error: vErr } = await supabase
+      .from("tax_document_versions")
+      .select("*")
+      .eq("document_id", taxDoc.id)
+      .eq("version_number", taxDoc.current_version)
+      .maybeSingle();
+    if (!vErr && vByNum) version = vByNum;
+  }
+
+  if (!version) {
+    return {
+      cleared: false,
+      status: "VERSION_NOT_FOUND",
+      reason: "Current tax document version could not be found.",
+    };
+  }
+
+  if (version.quarantine_status && version.quarantine_status !== "PASSED") {
+    return {
+      cleared: false,
+      status: "QUARANTINED",
+      reason: `Tax document file quarantine status is '${version.quarantine_status}'.`,
+    };
+  }
+
+  if (version.is_superseded === true) {
+    return {
+      cleared: false,
+      status: "SUPERSEDED",
+      reason: "Current tax document version has been superseded by a newer version.",
+    };
+  }
+
+  return {
+    cleared: true,
+    status: "CLEARED",
+    documentType: version.document_type || taxDoc.document_type,
   };
 }

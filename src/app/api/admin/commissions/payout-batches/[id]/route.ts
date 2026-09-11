@@ -6,6 +6,10 @@ import {
   cancelPayoutBatch,
   isPhase6SettlementEnabled,
   markPayoutBatchSettled,
+  recordManualDisbursementIntent,
+  initiateManualDisbursementIntent,
+  recordBankTraceForDisbursement,
+  abortPreBankDisbursementIntent,
   submitPayoutBatchForApproval,
 } from "@/lib/commissions/payout-generator";
 
@@ -104,6 +108,67 @@ export async function PATCH(
         reason,
       });
       return NextResponse.json({ success: true, message: "Batch cancelled and items released." });
+    }
+
+    if (action === "initiate-disbursement") {
+      const result = await initiateManualDisbursementIntent({
+        batchId: id,
+        adminUserId: session.userId,
+        notes,
+      });
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    if (action === "record-bank-trace") {
+      const { bankTraceReference } = body;
+      if (!bankTraceReference?.trim()) {
+        return NextResponse.json(
+          { success: false, error: "Missing required 'bankTraceReference' field." },
+          { status: 400 }
+        );
+      }
+
+      const result = await recordBankTraceForDisbursement({
+        batchId: id,
+        adminUserId: session.userId,
+        bankTraceReference: bankTraceReference.trim(),
+        notes,
+      });
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    if (action === "abort-disbursement") {
+      if (!reason?.trim()) {
+        return NextResponse.json(
+          { success: false, error: "Missing required 'reason' field to abort disbursement intent." },
+          { status: 400 }
+        );
+      }
+
+      const result = await abortPreBankDisbursementIntent({
+        batchId: id,
+        adminUserId: session.userId,
+        reason: reason.trim(),
+      });
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    if (action === "record-disbursement") {
+      const { bankTraceReference } = body;
+      if (!bankTraceReference?.trim()) {
+        return NextResponse.json(
+          { success: false, error: "Missing required 'bankTraceReference' field." },
+          { status: 400 }
+        );
+      }
+
+      const result = await recordManualDisbursementIntent({
+        batchId: id,
+        adminUserId: session.userId,
+        bankTraceReference: bankTraceReference.trim(),
+        notes,
+      });
+      return NextResponse.json({ success: true, ...result });
     }
 
     if (action === "settle") {

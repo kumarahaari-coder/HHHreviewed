@@ -7,6 +7,11 @@ import {
   markPayoutBatchSettled,
   validateBatchSettlementPreconditions,
   createPayoutPaymentAttempt,
+  recordManualDisbursementIntent,
+  initiateManualDisbursementIntent,
+  recordBankTraceForDisbursement,
+  abortPreBankDisbursementIntent,
+  checkPartnerTaxClearance,
   isPhase6SettlementEnabled,
   isPhase6ExternalPayoutsEnabled,
 } from "../commissions/payout-generator";
@@ -26,6 +31,8 @@ interface MockApprovalState {
   application_audit_logs: any[];
   payout_payment_attempts: any[];
   idempotencyKeys: Set<string>;
+  creator_tax_documents: Map<string, any>;
+  tax_document_versions: Map<string, any>;
 }
 
 function createApprovalMockClient(state: MockApprovalState) {
@@ -233,6 +240,30 @@ function createApprovalMockClient(state: MockApprovalState) {
 
       if (tableName === "payout_payment_attempts") {
         return {
+          select: (_cols?: string) => ({
+            eq: (col1: string, val1: any) => ({
+              eq: (col2: string, val2: any) => ({
+                then: async (resolve: any) => {
+                  const rows = state.payout_payment_attempts.filter(
+                    (a) => a[col1] === val1 && a[col2] === val2
+                  );
+                  resolve({ data: rows.map((r) => ({ ...r })), error: null });
+                },
+              }),
+              in: (inCol: string, inVals: any[]) => ({
+                then: async (resolve: any) => {
+                  const rows = state.payout_payment_attempts.filter(
+                    (a) => a[col1] === val1 && inVals.includes(a[inCol])
+                  );
+                  resolve({ data: rows.map((r) => ({ ...r })), error: null });
+                },
+              }),
+              then: async (resolve: any) => {
+                const rows = state.payout_payment_attempts.filter((a) => a[col1] === val1);
+                resolve({ data: rows.map((r) => ({ ...r })), error: null });
+              },
+            }),
+          }),
           insert: (payload: any) => ({
             select: (_cols?: string) => ({
               single: async () => {
@@ -240,6 +271,50 @@ function createApprovalMockClient(state: MockApprovalState) {
                 const row = { ...payload, id, created_at: new Date().toISOString() };
                 state.payout_payment_attempts.push(row);
                 return { data: row, error: null };
+              },
+            }),
+          }),
+          update: (payload: any) => ({
+            eq: (col1: string, val1: any) => {
+              const matched = state.payout_payment_attempts.find((a) => a[col1] === val1);
+              if (matched) Object.assign(matched, payload);
+              return {
+                select: (_cols?: string) => ({
+                  single: async () => ({ data: matched ? { ...matched } : null, error: null }),
+                }),
+                eq: (col2: string, val2: any) => {
+                  for (const a of state.payout_payment_attempts) {
+                    if (a[col1] === val1 && a[col2] === val2) Object.assign(a, payload);
+                  }
+                  return Promise.resolve({ error: null });
+                },
+                then: (resolve: any) => resolve({ error: null }),
+              };
+            },
+          }),
+        };
+      }
+
+      if (tableName === "creator_tax_documents") {
+        return {
+          select: (_cols?: string) => ({
+            eq: (col: string, val: any) => ({
+              maybeSingle: async () => {
+                const doc = state.creator_tax_documents.get(val);
+                return { data: doc ? { ...doc } : null, error: null };
+              },
+            }),
+          }),
+        };
+      }
+
+      if (tableName === "tax_document_versions") {
+        return {
+          select: (_cols?: string) => ({
+            eq: (col: string, val: any) => ({
+              maybeSingle: async () => {
+                const ver = state.tax_document_versions.get(val);
+                return { data: ver ? { ...ver } : null, error: null };
               },
             }),
           }),
@@ -271,6 +346,8 @@ export async function runPayoutApprovalAndSettlementReadinessSuite() {
     application_audit_logs: [],
     payout_payment_attempts: [],
     idempotencyKeys: new Set(),
+    creator_tax_documents: new Map(),
+    tax_document_versions: new Map(),
   };
 
   const client = createApprovalMockClient(state);
@@ -632,8 +709,311 @@ export async function runPayoutApprovalAndSettlementReadinessSuite() {
     else delete process.env.PHASE6_EXTERNAL_PAYOUTS_ENABLED;
   }
 
+  // --------------------------------------------------------------------------
+  // Scenario 14: Manual ACH Execution-State Safety & In-Flight Lock
+  // --------------------------------------------------------------------------
+  console.log("[Scenario 14] Testing Manual ACH Execution-State Safety & In-Flight Lock...");
+  {
+    // Setup a fresh approved batch for manual ACH
+    const BATCH_ID_ACH = "batch-manual-ach-test";
+    const ITEM_ID_ACH = "item-manual-ach-test";
+    const RES_ACH = "res-manual-ach-test";
+
+    state.reservations.set(RES_ACH, {
+      id: RES_ACH,
+      partner_id: PARTNER_ID,
+      confirmation_code: "CONF-ACH",
+      payment_status: "PAID",
+      amount_received: 1000,
+    });
+
+    state.commission_ledger_events.set("evt-realized-ach", {
+      id: "evt-realized-ach",
+      partner_id: PARTNER_ID,
+      reservation_id: RES_ACH,
+      event_type: "PAYMENT_REALIZED",
+      delta_amount: 100.0,
+      calculated_commission: 100.0,
+      created_at: new Date().toISOString(),
+    });
+
+    state.commission_ledger_events.set("evt-rel-ach", {
+      id: "evt-rel-ach",
+      partner_id: PARTNER_ID,
+      reservation_id: RES_ACH,
+      event_type: "ELIGIBILITY_RELEASE",
+      delta_amount: 0,
+      calculated_commission: 100.0,
+      created_at: new Date().toISOString(),
+    });
+
+    state.payout_batches.set(BATCH_ID_ACH, {
+      id: BATCH_ID_ACH,
+      partner_id: PARTNER_ID,
+      batch_number: "BATCH-ACH-001",
+      total_amount: 100.0,
+      payout_rail: "MANUAL_ACH",
+      status: "APPROVED",
+      created_by: USER_CREATOR,
+      submitted_by: USER_SUBMITTER,
+      approved_by: USER_APPROVER_SUPERADMIN,
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    state.payout_items.set(ITEM_ID_ACH, {
+      id: ITEM_ID_ACH,
+      payout_batch_id: BATCH_ID_ACH,
+      partner_id: PARTNER_ID,
+      reservation_id: RES_ACH,
+      disbursed_amount: 100.0,
+      status: "PENDING",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    // 14a. Step 1: Pre-bank submission intent locking
+    // HHH records intent BEFORE Treasury clicks final submit in bank portal
+    const preBankIntent = await initiateManualDisbursementIntent({
+      batchId: BATCH_ID_ACH,
+      adminUserId: USER_CREATOR,
+      notes: "Prepared in Chase Commercial Treasury portal",
+      supabaseClient: client,
+    });
+
+    assert.strictEqual(preBankIntent.batch.status, "PROCESSING");
+    assert.strictEqual(preBankIntent.paymentAttempt.status, "PENDING");
+    assert.strictEqual(preBankIntent.paymentAttempt.provider_transfer_id, null);
+    assert.strictEqual(preBankIntent.paymentAttempt.payment_provider, "MANUAL_ACH");
+    assert.ok(preBankIntent.intentReference, "Unique intent reference returned");
+
+    // 14b. Test edge case 1: Crash / abort after HHH locks batch but before bank submission
+    const abortResult = await abortPreBankDisbursementIntent({
+      batchId: BATCH_ID_ACH,
+      adminUserId: USER_APPROVER_SUPERADMIN,
+      reason: "Portal session expired before bank confirmation",
+      supabaseClient: client,
+    });
+    assert.strictEqual(abortResult.batch.status, "APPROVED");
+    assert.strictEqual(abortResult.paymentAttempt.status, "FAILED");
+
+    // Clean out failed attempt for fresh live run
+    state.payout_payment_attempts = state.payout_payment_attempts.filter((a) => a.id !== abortResult.paymentAttempt.id);
+
+    // Re-initiate intent for live path
+    const liveIntent = await initiateManualDisbursementIntent({
+      batchId: BATCH_ID_ACH,
+      adminUserId: USER_CREATOR,
+      notes: "Re-prepared in Chase portal",
+      supabaseClient: client,
+    });
+    assert.strictEqual(liveIntent.batch.status, "PROCESSING");
+    assert.strictEqual(liveIntent.paymentAttempt.status, "PENDING");
+
+    // 14c. Test edge case 2: Duplicate attempt creation prohibited while PROCESSING
+    let dupAttemptBlocked = false;
+    try {
+      await initiateManualDisbursementIntent({
+        batchId: BATCH_ID_ACH,
+        adminUserId: USER_CREATOR,
+        supabaseClient: client,
+      });
+    } catch (err: any) {
+      dupAttemptBlocked = true;
+      assert(err.message.includes("Duplicate attempt creation is prohibited"));
+    }
+    assert.strictEqual(dupAttemptBlocked, true, "Duplicate attempt creation must be prohibited while PROCESSING");
+
+    // 14d. Test edge case 3: Another operator trying to cancel or regenerate while PROCESSING
+    let cancelBlocked = false;
+    try {
+      await cancelPayoutBatch({
+        batchId: BATCH_ID_ACH,
+        adminUserId: USER_APPROVER_SUPERADMIN,
+        reason: "Accidental cancel attempt",
+        supabaseClient: client,
+      });
+    } catch (err: any) {
+      cancelBlocked = true;
+      assert(err.message.includes("PROCESSING") || err.message.includes("active disbursement"));
+    }
+    assert.strictEqual(cancelBlocked, true, "Cancellation must be strictly blocked while PROCESSING");
+
+    // 14e. Test edge case 4: Attempt to settle before bank trace is recorded fails closed
+    const origSettlement = process.env.PHASE6_SETTLEMENT_ENABLED;
+    try {
+      process.env.PHASE6_SETTLEMENT_ENABLED = "true";
+      let settlePreTraceBlocked = false;
+      try {
+        await markPayoutBatchSettled({
+          batchId: BATCH_ID_ACH,
+          adminUserId: USER_APPROVER_SUPERADMIN,
+          supabaseClient: client,
+        });
+      } catch (err: any) {
+        settlePreTraceBlocked = true;
+        assert(err.message.includes("Bank trace has not been recorded"));
+      }
+      assert.strictEqual(settlePreTraceBlocked, true, "Settlement must be blocked before bank trace is recorded");
+    } finally {
+      if (origSettlement !== undefined) process.env.PHASE6_SETTLEMENT_ENABLED = origSettlement;
+      else delete process.env.PHASE6_SETTLEMENT_ENABLED;
+    }
+
+    // 14f. Step 2: Treasury submits in bank portal and records bank trace
+    // Simulating: Bank submission succeeds, trace recorded
+    const achTrace = "ACH-FEDWIRE-20260911-001";
+    const traceResult = await recordBankTraceForDisbursement({
+      batchId: BATCH_ID_ACH,
+      adminUserId: USER_CREATOR,
+      bankTraceReference: achTrace,
+      notes: "Submitted via Chase Commercial Treasury",
+      supabaseClient: client,
+    });
+    assert.strictEqual(traceResult.paymentAttempt.provider_transfer_id, achTrace);
+
+    // 14g. Test edge case 5: Bank submission succeeds but trace recording request is retried (idempotent duplicate submission)
+    const retryTraceResult = await recordBankTraceForDisbursement({
+      batchId: BATCH_ID_ACH,
+      adminUserId: USER_CREATOR,
+      bankTraceReference: achTrace,
+      supabaseClient: client,
+    });
+    assert.strictEqual(retryTraceResult.paymentAttempt.provider_transfer_id, achTrace);
+
+    // 14h. Test edge case 6: Different trace submitted against an existing attempt throws conflict error
+    let conflictTraceBlocked = false;
+    try {
+      await recordBankTraceForDisbursement({
+        batchId: BATCH_ID_ACH,
+        adminUserId: USER_CREATOR,
+        bankTraceReference: "CONFLICTING-ACH-TRACE-999",
+        supabaseClient: client,
+      });
+    } catch (err: any) {
+      conflictTraceBlocked = true;
+      assert(err.message.includes("Trace conflict prohibited"));
+    }
+    assert.strictEqual(conflictTraceBlocked, true, "Conflicting bank trace submission must be blocked");
+
+    // 14i. Test edge case 7: Settlement reference not matching the recorded attempt throws error
+    try {
+      process.env.PHASE6_SETTLEMENT_ENABLED = "true";
+      let mismatchSettleBlocked = false;
+      try {
+        await markPayoutBatchSettled({
+          batchId: BATCH_ID_ACH,
+          adminUserId: USER_APPROVER_SUPERADMIN,
+          transactionReference: "WRONG-REFERENCE-12345",
+          supabaseClient: client,
+        });
+      } catch (err: any) {
+        mismatchSettleBlocked = true;
+        assert(err.message.includes("Settlement reference mismatch"));
+      }
+      assert.strictEqual(mismatchSettleBlocked, true, "Settlement reference mismatch must be blocked");
+
+      // 14j. Test edge case 8: Attempt / batch amount mismatch blocks settlement
+      const currentAttempt = state.payout_payment_attempts.find((a) => a.payout_batch_id === BATCH_ID_ACH);
+      const originalAmount = currentAttempt.requested_amount;
+      currentAttempt.requested_amount = 99999.0; // Tamper attempt amount to induce mismatch
+      let amountMismatchBlocked = false;
+      try {
+        await markPayoutBatchSettled({
+          batchId: BATCH_ID_ACH,
+          adminUserId: USER_APPROVER_SUPERADMIN,
+          transactionReference: achTrace,
+          supabaseClient: client,
+        });
+      } catch (err: any) {
+        amountMismatchBlocked = true;
+        assert(err.message.includes("does not match batch total"));
+      }
+      assert.strictEqual(amountMismatchBlocked, true, "Attempt/batch amount mismatch must be blocked");
+      currentAttempt.requested_amount = originalAmount; // Restore correct amount
+
+      // 14k. Valid settlement recording: matching reference, amount verified, status transitions to SUCCEEDED and SETTLED
+      const settleResult = await markPayoutBatchSettled({
+        batchId: BATCH_ID_ACH,
+        adminUserId: USER_APPROVER_SUPERADMIN,
+        transactionReference: achTrace,
+        notes: "ACH confirmed on bank statement",
+        supabaseClient: client,
+      });
+
+      assert.strictEqual(settleResult.batch.status, "SETTLED");
+      assert.strictEqual(currentAttempt.status, "SUCCEEDED");
+    } finally {
+      if (origSettlement !== undefined) process.env.PHASE6_SETTLEMENT_ENABLED = origSettlement;
+      else delete process.env.PHASE6_SETTLEMENT_ENABLED;
+    }
+
+    console.log("✔ Scenario 14 Passed: Two-phase manual ACH execution-state safety verified across all 8 failure, timeout, crash, and mismatch edge cases.\n");
+  }
+
+  // --------------------------------------------------------------------------
+  // Scenario 15: Tax Compliance Policy & Clearance Invariants
+  // --------------------------------------------------------------------------
+  console.log("[Scenario 15] Verifying Tax Compliance Policy & Fail-Closed Clearance Invariants...");
+  {
+    const TAX_PARTNER_ID = "partner-tax-compliance-test";
+
+    // 15a. No tax document on file -> fail-closed hold
+    const resNoDoc = await checkPartnerTaxClearance(TAX_PARTNER_ID, client);
+    assert.strictEqual(resNoDoc.cleared, false);
+    assert.strictEqual(resNoDoc.status, "NOT_SUBMITTED");
+
+    // 15b. Tax document in review (not APPROVED) -> fail-closed hold
+    const docId = "tax-doc-uuid-1";
+    const verId = "tax-ver-uuid-1";
+    state.creator_tax_documents.set(TAX_PARTNER_ID, {
+      id: docId,
+      partner_id: TAX_PARTNER_ID,
+      status: "UNDER_REVIEW",
+      current_version_id: verId,
+    });
+    state.tax_document_versions.set(verId, {
+      id: verId,
+      document_id: docId,
+      document_type: "W_9",
+      quarantine_status: "PASSED",
+      is_superseded: false,
+    });
+
+    const resReview = await checkPartnerTaxClearance(TAX_PARTNER_ID, client);
+    assert.strictEqual(resReview.cleared, false);
+    assert.strictEqual(resReview.status, "UNDER_REVIEW");
+
+    // 15c. Approved but quarantined file -> fail-closed hold
+    state.creator_tax_documents.get(TAX_PARTNER_ID).status = "APPROVED";
+    state.tax_document_versions.get(verId).quarantine_status = "QUARANTINED";
+
+    const resQuarantine = await checkPartnerTaxClearance(TAX_PARTNER_ID, client);
+    assert.strictEqual(resQuarantine.cleared, false);
+    assert.strictEqual(resQuarantine.status, "QUARANTINED");
+
+    // 15d. Approved but superseded version -> fail-closed hold
+    state.tax_document_versions.get(verId).quarantine_status = "PASSED";
+    state.tax_document_versions.get(verId).is_superseded = true;
+
+    const resSuperseded = await checkPartnerTaxClearance(TAX_PARTNER_ID, client);
+    assert.strictEqual(resSuperseded.cleared, false);
+    assert.strictEqual(resSuperseded.status, "SUPERSEDED");
+
+    // 15e. Approved, non-superseded, PASSED W-9 -> CLEARED for payout
+    state.tax_document_versions.get(verId).is_superseded = false;
+
+    const resCleared = await checkPartnerTaxClearance(TAX_PARTNER_ID, client);
+    assert.strictEqual(resCleared.cleared, true);
+    assert.strictEqual(resCleared.status, "CLEARED");
+    assert.strictEqual(resCleared.documentType, "W_9");
+
+    console.log("✔ Scenario 15 Passed: Tax compliance policy fail-closed invariants verified with zero arbitrary $600/24% withholding assumptions.\n");
+  }
+
   console.log("=================================================================");
-  console.log("  ALL 13 PAYOUT APPROVAL & SETTLEMENT-READINESS TESTS PASSED!    ");
+  console.log("  ALL 15 PAYOUT APPROVAL & SETTLEMENT-READINESS TESTS PASSED!    ");
   console.log("=================================================================");
 }
 

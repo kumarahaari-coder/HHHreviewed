@@ -284,42 +284,107 @@ export default function IntegrationsPage() {
 
       const data = await response.json();
 
-      if (!response.ok || !data.success) {
-        addLog(`OwnerRez Sync error: ${data.error || "Server sync failed"}`);
+      if (!response.ok || !data || data.success !== true) {
+        const errorMsg = data?.error || `Server sync failed with HTTP status ${response.status}`;
+        addLog(`[OwnerRez Sync Failure] ${errorMsg}`);
+        setLastSyncStats({
+          fetched: 0,
+          inserted: 0,
+          updated: 0,
+          unchanged: 0,
+          failed: 1,
+          unattributed: 0,
+          attributed: 0,
+          reviewRequired: 0,
+          blocksFiltered: 0,
+          timestamp: new Date().toISOString(),
+          success: false,
+          provider: "ownerrez"
+        });
+        return;
+      }
+
+      const res = data.result ?? data;
+      if (!res || typeof res !== "object") {
+        addLog(`[OwnerRez Sync Failure] Received malformed sync response envelope.`);
+        setLastSyncStats({
+          fetched: 0,
+          inserted: 0,
+          updated: 0,
+          unchanged: 0,
+          failed: 1,
+          unattributed: 0,
+          attributed: 0,
+          reviewRequired: 0,
+          blocksFiltered: 0,
+          timestamp: new Date().toISOString(),
+          success: false,
+          provider: "ownerrez"
+        });
         return;
       }
 
       if (syncAll) {
         const stats: SyncStats = {
-          fetched: data.totalBookingsFetched || 0,
-          inserted: data.inserted || 0,
-          updated: data.updated || 0,
-          unchanged: data.unchanged || 0,
-          failed: data.failed || 0,
-          unattributed: data.unattributed || 0,
-          attributed: data.attributed || 0,
-          reviewRequired: data.reviewRequired || 0,
-          blocksFiltered: data.totalBlocksFiltered || 0,
+          fetched: res.totalFetched ?? res.totalBookingsFetched ?? 0,
+          inserted: res.inserted ?? 0,
+          updated: res.updated ?? 0,
+          unchanged: res.unchanged ?? 0,
+          failed: res.failed ?? 0,
+          unattributed: res.unattributed ?? 0,
+          attributed: res.attributed ?? 0,
+          reviewRequired: res.reviewRequired ?? 0,
+          blocksFiltered: res.blocksFiltered ?? res.totalBlocksFiltered ?? 0,
           timestamp: new Date().toISOString(),
           success: true,
           provider: "ownerrez"
         };
         setLastSyncStats(stats);
 
-        addLog(`[OwnerRez Primary Sync] Complete: ${data.totalBookingsFetched} real booking(s) fetched, ${data.totalBlocksFiltered} block(s) dynamically filtered.`);
-        addLog(`[Attribution Outcome] ${data.attributed} Attributed (100% deterministic), ${data.reviewRequired} Review Required (0% unmapped), ${data.unattributed} Unattributed.`);
-        addLog(`[Database Outcome] ${data.inserted} inserted, ${data.updated} updated, ${data.unchanged} unchanged, ${data.failed} failed.`);
-        if (data.crossoverLinked > 0) {
-          addLog(`[Crossover Linking] Linked ${data.crossoverLinked} stay(s) across providers safely.`);
+        addLog(
+          `[OwnerRez Primary Sync] Complete: ${
+            res.bookingsProcessed ?? res.totalFetched ?? 0
+          } booking(s) processed (${res.totalFetched ?? 0} fetched), ${
+            res.blocksFiltered ?? 0
+          } block(s) dynamically filtered.`
+        );
+        addLog(
+          `[Attribution Outcome] ${res.attributed ?? 0} Attributed (100% deterministic), ${
+            res.reviewRequired ?? 0
+          } Review Required, ${res.unattributed ?? 0} Unattributed.`
+        );
+        addLog(
+          `[Database Outcome] ${res.inserted ?? 0} inserted, ${
+            res.updated ?? 0
+          } updated, ${res.unchanged ?? 0} unchanged, ${
+            res.failed ?? 0
+          } failed.`
+        );
+        if (res.crossoverLinked > 0) {
+          addLog(`[Crossover Linking] Linked ${res.crossoverLinked} stay(s) across providers safely.`);
         }
         addLog(`Safeguards confirmed: Zero commissions created. Zero payouts created.`);
       } else {
-        const res = data.result;
-        addLog(`[OwnerRez Single Sync] Booking #${data.bookingId}: Action = ${res.action.toUpperCase()}, Attribution = ${res.attributionStatus}, Score = ${res.confidenceScore}%.`);
+        const single = res;
+        addLog(`[OwnerRez Single Sync] Booking #${single.bookingId ?? specificBookingId ?? singleBookingId}: Action = ${(single.action || (single.inserted ? "inserted" : single.updated ? "updated" : "unchanged")).toUpperCase()}, Attribution = ${single.attributionTier || single.attributionStatus || "ATTRIBUTED"}, Numeric Source = ${single.numericSourceId || "N/A"}.`);
         addLog(`Financial safeguards verified: resort fee excluded from service_fee.`);
       }
     } catch (err: any) {
       addLog(`OwnerRez Sync failed: ${err?.message || "Network error"}`);
+      setLastSyncStats({
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+        unchanged: 0,
+        failed: 1,
+        unattributed: 0,
+        attributed: 0,
+        reviewRequired: 0,
+        blocksFiltered: 0,
+        timestamp: new Date().toISOString(),
+        success: false,
+        provider: "ownerrez"
+      });
     } finally {
       setIsOwnerRezSyncing(false);
     }

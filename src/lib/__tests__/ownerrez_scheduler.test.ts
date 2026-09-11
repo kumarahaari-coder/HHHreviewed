@@ -238,8 +238,186 @@ export async function runSchedulerUnitTests() {
     console.log("  ✔ Test 4 Passed: 420s lease provides guaranteed 120s safety buffer beyond 300s maxDuration.\n");
   }
 
+  // --------------------------------------------------------------------------
+  // Test 5: Scheduled Cron Pipeline Integration with processCompletedStaysEligibility()
+  // --------------------------------------------------------------------------
+  {
+    console.log("[Test 5] Scheduled cron eligibility release pipeline verification...");
+
+    const mockReservations = [
+      {
+        id: "res_unpaid_test",
+        confirmation_code: "CONF_UNPAID",
+        partner_id: "partner_1",
+        site_id: "site_1",
+        reservation_status: "BOOKED",
+        payment_status: "UNPAID",
+        amount_received: 0,
+        gross_amount: 1500,
+        check_out_date: "2026-09-01T10:00:00Z",
+      },
+      {
+        id: "res_future_test",
+        confirmation_code: "CONF_FUTURE",
+        partner_id: "partner_1",
+        site_id: "site_1",
+        reservation_status: "BOOKED",
+        payment_status: "PAID",
+        amount_received: 1500,
+        gross_amount: 1500,
+        check_out_date: "2026-10-01T10:00:00Z",
+      },
+      {
+        id: "res_completed_paid_test",
+        confirmation_code: "CONF_COMPLETED",
+        partner_id: "partner_1",
+        site_id: "site_1",
+        reservation_status: "BOOKED",
+        payment_status: "PAID",
+        amount_received: 1500,
+        gross_amount: 1500,
+        check_out_date: "2026-09-01T10:00:00Z",
+      },
+    ];
+
+    const mockLedgerEvents: any[] = [
+      {
+        id: "evt_accrual_completed",
+        reservation_id: "res_completed_paid_test",
+        partner_id: "partner_1",
+        event_type: "INITIAL_ACCRUAL",
+        delta_amount: 0,
+        calculated_commission: 150,
+      },
+      {
+        id: "evt_realized_completed",
+        reservation_id: "res_completed_paid_test",
+        partner_id: "partner_1",
+        event_type: "PAYMENT_REALIZED",
+        delta_amount: 150,
+        calculated_commission: 150,
+      },
+      {
+        id: "evt_accrual_future",
+        reservation_id: "res_future_test",
+        partner_id: "partner_1",
+        event_type: "INITIAL_ACCRUAL",
+        delta_amount: 0,
+        calculated_commission: 150,
+      },
+      {
+        id: "evt_realized_future",
+        reservation_id: "res_future_test",
+        partner_id: "partner_1",
+        event_type: "PAYMENT_REALIZED",
+        delta_amount: 150,
+        calculated_commission: 150,
+      },
+    ];
+
+    const mockSupabase = {
+      from: (tableName: string) => ({
+        select: (fields: string) => ({
+          eq: (col: string, val: any) => {
+            if (tableName === "reservations") {
+              const r = mockReservations.find((res) => (res as any)[col] === val);
+              return {
+                single: async () => ({ data: r || null, error: r ? null : { message: "Not found" } }),
+                maybeSingle: async () => ({ data: r || null, error: null }),
+              };
+            }
+            if (tableName === "commission_ledger_events") {
+              const matched = mockLedgerEvents.filter((ev) => (ev as any)[col] === val);
+              return {
+                order: (_sortCol: string, _opts?: any) => Promise.resolve({ data: matched, error: null }),
+                then: (resolve: any) => resolve({ data: matched, error: null }),
+              };
+            }
+            if (tableName === "properties") {
+              return {
+                maybeSingle: async () => ({ data: { timezone: "America/New_York" }, error: null }),
+              };
+            }
+            return {
+              maybeSingle: async () => ({ data: null, error: null }),
+            };
+          },
+          neq: (col: string, val: any) => ({
+            order: (_col2: string, _opts: any) => ({
+              limit: async (_l: number) => ({
+                data: mockReservations.filter((r) => (r as any)[col] !== val),
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        insert: (record: any) => {
+          if (tableName === "commission_ledger_events") {
+            const newEv = {
+              id: "evt_rel_" + (mockLedgerEvents.length + 1),
+              ...record,
+              created_at: new Date().toISOString(),
+            };
+            mockLedgerEvents.push(newEv);
+            return {
+              select: () => ({
+                single: async () => ({ data: newEv, error: null }),
+              }),
+            };
+          }
+          return {
+            select: () => ({
+              single: async () => ({ data: record, error: null }),
+            }),
+          };
+        },
+      }),
+    };
+
+    // Import and run processCompletedStaysEligibility with fixed time
+    const { processCompletedStaysEligibility } = require("../commissions/eligibility");
+    const evaluationTime = new Date("2026-09-05T12:00:00Z");
+
+    const batchRes = await processCompletedStaysEligibility({
+      now: evaluationTime,
+      supabaseClient: mockSupabase,
+    });
+
+    // 1. Total scanned should be 3
+    assert.strictEqual(batchRes.totalScanned, 3);
+
+    // 2. Unpaid reservation is skipped (0 rows)
+    const unpaidOutcome = batchRes.results.find((r: any) => r.reservationId === "res_unpaid_test");
+    assert.ok(unpaidOutcome, "Unpaid reservation must be evaluated");
+    assert.strictEqual(unpaidOutcome.status, "UNPAID_INELIGIBLE");
+    assert.strictEqual(unpaidOutcome.rowsCreated, 0);
+
+    // 3. Future reservation is skipped (0 rows)
+    const futureOutcome = batchRes.results.find((r: any) => r.reservationId === "res_future_test");
+    assert.ok(futureOutcome, "Future reservation must be evaluated");
+    assert.strictEqual(futureOutcome.status, "STAY_NOT_COMPLETED");
+    assert.strictEqual(futureOutcome.rowsCreated, 0);
+
+    // 4. Completed paid reservation creates exactly 1 ELIGIBILITY_RELEASE
+    const completedOutcome = batchRes.results.find((r: any) => r.reservationId === "res_completed_paid_test");
+    assert.ok(completedOutcome, "Completed reservation must be evaluated");
+    assert.strictEqual(completedOutcome.status, "ELIGIBLE_RELEASED");
+    assert.strictEqual(completedOutcome.rowsCreated, 1);
+    assert.strictEqual(batchRes.eligibleReleased, 1);
+
+    // 5. Repeat run creates 0 rows (idempotent ALREADY_RELEASED)
+    const repeatRes = await processCompletedStaysEligibility({
+      now: evaluationTime,
+      supabaseClient: mockSupabase,
+    });
+    assert.strictEqual(repeatRes.eligibleReleased, 0);
+    assert.strictEqual(repeatRes.alreadyReleased, 1);
+
+    console.log("  ✔ Test 5 Passed: Cron eligibility pipeline verified (unpaid=no-op, future=no-op, paid completed=exactly 1 release, repeat=0 duplicate).\n");
+  }
+
   console.log("=================================================================");
-  console.log("  ALL OWNERREZ SCHEDULER & LOCKING UNIT TESTS PASSED 100%!       ");
+  console.log("  ALL 5 OWNERREZ SCHEDULER & LOCKING UNIT TESTS PASSED 100%!     ");
   console.log("=================================================================");
 }
 

@@ -232,6 +232,19 @@ function createLifecycleMockClient(state: MockLifecycleState) {
         };
       }
 
+      if (tableName === "payout_payment_attempts") {
+        return {
+          select: (_cols?: string) => ({
+            eq: (_col: string, _val: any) => ({
+              in: (_inCol: string, _inVals: any[]) => ({
+                then: async (resolve: any) => resolve({ data: [], error: null }),
+              }),
+              then: async (resolve: any) => resolve({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+
       throw new Error(`Unhandled lifecycle mock table: ${tableName}`);
     },
   };
