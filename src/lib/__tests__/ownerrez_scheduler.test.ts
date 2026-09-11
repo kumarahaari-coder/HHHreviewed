@@ -238,6 +238,111 @@ export async function runSchedulerUnitTests() {
     console.log("  ✔ Test 4 Passed: 420s lease provides guaranteed 120s safety buffer beyond 300s maxDuration.\n");
   }
 
+  // --------------------------------------------------------------------------
+  // Test 5: Database Table Fallback Lock via hospitable_sync_logs (when RPC absent)
+  // --------------------------------------------------------------------------
+  {
+    console.log("[Test 5] Proving distributed lock & leader election via hospitable_sync_logs when RPC is absent...");
+    interface SyncLogRow {
+      id: string;
+      sync_type: string;
+      status: string;
+      started_at: string;
+      completed_at?: string;
+      metadata?: any;
+    }
+    const mockLogsTable: SyncLogRow[] = [];
+
+    const mockSupabaseWithoutRpc = {
+      rpc: async () => {
+        // RPC is not available in database
+        return { data: null, error: { code: "PGRST202", message: "function not found" } };
+      },
+      from: (tableName: string) => {
+        assert.strictEqual(tableName, "hospitable_sync_logs");
+        return {
+          select: (fields: string) => ({
+            eq: (col1: string, val1: any) => ({
+              eq: (col2: string, val2: any) => ({
+                gte: (col3: string, val3: any) => ({
+                  order: (sortCol: string, { ascending }: { ascending: boolean }) => {
+                    const filtered = mockLogsTable.filter(
+                      (r) =>
+                        r[col1 as keyof SyncLogRow] === val1 &&
+                        r[col2 as keyof SyncLogRow] === val2 &&
+                        (r[col3 as keyof SyncLogRow] as string) >= val3
+                    );
+                    filtered.sort((a, b) =>
+                      ascending
+                        ? a.started_at.localeCompare(b.started_at) || a.id.localeCompare(b.id)
+                        : b.started_at.localeCompare(a.started_at)
+                    );
+                    return Promise.resolve({ data: filtered, error: null });
+                  },
+                }),
+              }),
+            }),
+          }),
+          insert: (record: any) => ({
+            select: () => ({
+              single: async () => {
+                const newRow: SyncLogRow = {
+                  id: "log_" + (mockLogsTable.length + 1),
+                  sync_type: record.sync_type,
+                  status: record.status,
+                  started_at: record.started_at,
+                  metadata: record.metadata,
+                };
+                mockLogsTable.push(newRow);
+                return { data: { id: newRow.id, started_at: newRow.started_at }, error: null };
+              },
+            }),
+          }),
+          update: (updates: any) => ({
+            eq: (col: string, val: any) => {
+              const row = mockLogsTable.find((r) => r[col as keyof SyncLogRow] === val);
+              if (row) {
+                Object.assign(row, updates);
+              }
+              return {
+                eq: (col2: string, val2: any) => {
+                  const target = mockLogsTable.find((r) => r[col as keyof SyncLogRow] === val && r[col2 as keyof SyncLogRow] === val2);
+                  if (target) {
+                    Object.assign(target, updates);
+                  }
+                  return Promise.resolve({ error: null });
+                },
+                then: (resolve: any) => resolve({ error: null }),
+              };
+            },
+          }),
+        };
+      },
+    };
+
+    const lockName = "DISTRIBUTED_CRON_LOCK_" + Date.now();
+
+    // 5a. First instance acquires lease via table
+    const lease1 = await acquireOwnerRezSyncLease(lockName, "cron-1", 420, mockSupabaseWithoutRpc);
+    assert.ok(lease1 !== null, "Instance 1 must acquire lease via table");
+    assert.strictEqual(lease1.lockName, lockName);
+
+    // 5b. Overlapping instance attempts to acquire simultaneously -> rejected!
+    const lease2 = await acquireOwnerRezSyncLease(lockName, "cron-2", 420, mockSupabaseWithoutRpc);
+    assert.strictEqual(lease2, null, "Instance 2 must be denied acquisition (overlap protection via table)");
+
+    // 5c. Instance 1 releases lease
+    const releaseOk = await releaseOwnerRezSyncLease(lease1, mockSupabaseWithoutRpc);
+    assert.strictEqual(releaseOk, true, "Instance 1 release must succeed");
+
+    // 5d. Instance 3 attempts to acquire after release -> succeeds!
+    const lease3 = await acquireOwnerRezSyncLease(lockName, "cron-3", 420, mockSupabaseWithoutRpc);
+    assert.ok(lease3 !== null, "Instance 3 must acquire freed lease");
+    await releaseOwnerRezSyncLease(lease3, mockSupabaseWithoutRpc);
+
+    console.log("  ✔ Test 5 Passed: hospitable_sync_logs table lock ensures strict mutual exclusion across instances when RPC is absent.\n");
+  }
+
   console.log("=================================================================");
   console.log("  ALL OWNERREZ SCHEDULER & LOCKING UNIT TESTS PASSED 100%!       ");
   console.log("=================================================================");
