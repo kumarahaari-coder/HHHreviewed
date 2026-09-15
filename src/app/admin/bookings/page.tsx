@@ -46,11 +46,38 @@ function BookingsListContent() {
   // Selection/Detail drawer state
   const [selectedRes, setSelectedRes] = useState<Reservation | null>(null);
   const [adminNoteInput, setAdminNoteInput] = useState("");
+  const [isRefreshingOwnerRez, setIsRefreshingOwnerRez] = useState(false);
   
   // Reassignment state (manual reconciliation)
   const [showReassignPanel, setShowReassignPanel] = useState(false);
   const [reassignPartnerId, setReassignPartnerId] = useState("");
   const [reassignSiteId, setReassignSiteId] = useState("");
+
+  const handleRefreshOwnerRez = async () => {
+    setIsRefreshingOwnerRez(true);
+    try {
+      const res = await fetch("/api/ownerrez/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        db.addNotification(
+          "SUCCESS",
+          `OwnerRez sync complete: ${data.result?.bookingsProcessed ?? 0} bookings processed (${data.result?.inserted ?? 0} new, ${data.result?.updated ?? 0} updated, ${data.result?.unchanged ?? 0} unchanged).`
+        );
+      } else {
+        db.addNotification("ALERT", `OwnerRez refresh failed: ${data.error || "Unknown error"}`);
+      }
+      await refreshData();
+    } catch (err: any) {
+      db.addNotification("ALERT", `OwnerRez refresh failed: ${err?.message || "Network error"}`);
+      await refreshData();
+    } finally {
+      setIsRefreshingOwnerRez(false);
+    }
+  };
 
   const refreshData = async () => {
     try {
@@ -271,7 +298,17 @@ function BookingsListContent() {
           </p>
         </div>
         
-        <div className="flex space-x-3 self-end sm:self-auto">
+        <div className="flex flex-wrap gap-2 sm:gap-3 self-end sm:self-auto">
+          <button
+            onClick={handleRefreshOwnerRez}
+            disabled={isRefreshingOwnerRez}
+            className="flex items-center space-x-1.5 bg-brand-cream border border-brand-blush hover:border-brand-plum text-brand-plum px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-plum cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Sync all OwnerRez bookings and refresh local table"
+          >
+            <RefreshCw size={14} className={isRefreshingOwnerRez ? "animate-spin" : "animate-hover-spin"} />
+            <span>{isRefreshingOwnerRez ? "Refreshing OwnerRez..." : "Refresh OwnerRez"}</span>
+          </button>
+
           <button
             onClick={handleRecalculate}
             className="flex items-center space-x-1.5 bg-brand-cream border border-brand-blush hover:border-brand-plum text-brand-plum px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-plum cursor-pointer"

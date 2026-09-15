@@ -619,7 +619,7 @@ export async function getAllSites(): Promise<Site[]> {
   const supabase = assertSupabaseClient();
   const { data: sitesData, error: sitesErr } = await supabase
     .from("sites")
-    .select("id, partner_id, site_code, site_name, website_url, tracking_code, hospitable_widget_id, status, created_at")
+    .select("id, partner_id, site_code, site_name, website_url, tracking_code, hospitable_widget_id, status, created_at, ownerrez_listing_site_id, ownerrez_listing_site_name, ownerrez_listing_site_domain")
     .order("created_at", { ascending: false });
 
   if (sitesErr) {
@@ -656,6 +656,9 @@ export async function getAllSites(): Promise<Site[]> {
     hospitableWidgetId: s.hospitable_widget_id || "",
     status: s.status === "active" ? "ACTIVE" : "PAUSED",
     launchDate: s.created_at,
+    ownerrezListingSiteId: s.ownerrez_listing_site_id ? Number(s.ownerrez_listing_site_id) : undefined,
+    ownerrezListingSiteName: s.ownerrez_listing_site_name || undefined,
+    ownerrezListingSiteDomain: s.ownerrez_listing_site_domain || undefined,
     siteProperties: sitePropertiesBySiteId.get(s.id) || []
   }));
 }

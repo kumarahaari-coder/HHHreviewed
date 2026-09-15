@@ -18,7 +18,7 @@ import {
   Cpu
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
-import { Property, Site, Reservation } from "@/lib/db/schema";
+import { Property, Site, Reservation, Partner } from "@/lib/db/schema";
 import { Card, Badge } from "@/components/ui/custom";
 import { attributeReservation } from "@/lib/attribution";
 import { appConfig } from "@/lib/config";
@@ -53,6 +53,9 @@ export interface SyncStats {
 export default function IntegrationsPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [discoveredSources, setDiscoveredSources] = useState<any[]>([]);
+  const [showMappingRegistry, setShowMappingRegistry] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOwnerRezSyncing, setIsOwnerRezSyncing] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -197,9 +200,39 @@ export default function IntegrationsPage() {
     }
   };
 
-  const refreshData = () => {
+  const refreshData = async () => {
     setProperties(db.properties);
-    setSites(db.sites);
+    try {
+      const [sitesRes, partnersRes] = await Promise.all([
+        fetch("/api/admin/sites"),
+        fetch("/api/admin/partners"),
+      ]);
+
+      if (sitesRes.ok) {
+        const sData = await sitesRes.json();
+        if (sData.success && Array.isArray(sData.sites)) {
+          setSites(sData.sites);
+        } else {
+          setSites(db.sites);
+        }
+      } else {
+        setSites(db.sites);
+      }
+
+      if (partnersRes.ok) {
+        const pData = await partnersRes.json();
+        if (pData.success && Array.isArray(pData.partners)) {
+          setPartners(pData.partners);
+        } else {
+          setPartners(db.partners);
+        }
+      } else {
+        setPartners(db.partners);
+      }
+    } catch {
+      setSites(db.sites);
+      setPartners(db.partners);
+    }
   };
 
   useEffect(() => {
@@ -369,6 +402,11 @@ export default function IntegrationsPage() {
         addLog(`[OwnerRez Single Sync] Booking #${single.bookingId ?? specificBookingId ?? singleBookingId}: Action = ${(single.action || (single.inserted ? "inserted" : single.updated ? "updated" : "unchanged")).toUpperCase()}, Attribution = ${single.attributionTier || single.attributionStatus || "ATTRIBUTED"}, Numeric Source = ${single.numericSourceId || "N/A"}.`);
         addLog(`Financial safeguards verified: resort fee excluded from service_fee.`);
       }
+
+      if (Array.isArray(res.sourcesDiscovered)) {
+        setDiscoveredSources(res.sourcesDiscovered);
+      }
+      await refreshData();
     } catch (err: any) {
       addLog(`OwnerRez Sync failed: ${err?.message || "Network error"}`);
       setLastSyncStats({
@@ -452,6 +490,16 @@ export default function IntegrationsPage() {
         return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">ERROR</span>;
     }
   };
+
+  // Dynamic OwnerRez mapping derivations (strictly authoritative via sites.ownerrez_listing_site_id)
+  const ownerRezMappedSites = sites.filter(
+    s => Boolean(s.ownerrezListingSiteId) && (s.status === "ACTIVE" || !s.status)
+  );
+  const activeMappedSourcesCount = ownerRezMappedSites.length;
+  const activeMappedPartnerIds = new Set(
+    ownerRezMappedSites.map(s => s.partnerId).filter(Boolean)
+  );
+  const activeMappedPartnersCount = activeMappedPartnerIds.size;
 
   return (
     <div className="space-y-8 font-sans">
@@ -548,10 +596,117 @@ export default function IntegrationsPage() {
                 <span className="text-zinc-500">Source Registry:</span>
                 <span className="text-emerald-700 font-semibold">GET /v2/listingsites</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Mapped Partner:</span>
-                <span className="text-zinc-700">Megbrass (792965226)</span>
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500">Mapped Sources:</span>
+                <span className="font-bold text-emerald-800">{activeMappedSourcesCount} Active</span>
               </div>
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500">Mapped Partners:</span>
+                <span className="font-bold text-brand-plum">{activeMappedPartnersCount} Active</span>
+              </div>
+
+              {/* Collapsible toggle for deterministic mapping details */}
+              <button
+                type="button"
+                onClick={() => setShowMappingRegistry(prev => !prev)}
+                className="w-full flex items-center justify-between pt-1.5 mt-0.5 border-t border-brand-blush/40 text-[11px] text-emerald-800 font-sans font-semibold hover:text-emerald-950 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Layers size={13} className="text-emerald-700" />
+                  <span>Deterministic Mappings ({activeMappedSourcesCount})</span>
+                </span>
+                <span className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
+                  {showMappingRegistry ? "Hide" : "View"}
+                  {showMappingRegistry ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </span>
+              </button>
+
+              {/* Expandable Deterministic Mappings Registry */}
+              {showMappingRegistry && (
+                <div className="pt-2 border-t border-brand-blush/40 space-y-2 font-sans">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center justify-between">
+                    <span>Authoritative Source Mappings</span>
+                    <span className="text-[9px] text-zinc-400 font-mono">Key: sites.ownerrez_listing_site_id</span>
+                  </div>
+
+                  {ownerRezMappedSites.length === 0 ? (
+                    <div className="p-2 rounded bg-zinc-50 border border-zinc-200 text-xs text-zinc-500 italic">
+                      No active OwnerRez listing site mappings configured.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
+                      {ownerRezMappedSites.map(site => {
+                        const partner = partners.find(p => p.id === site.partnerId);
+                        const partnerName = partner
+                          ? (partner.businessName || partner.contactName || "Partner")
+                          : (site.partnerId ? `Partner (${site.partnerId.slice(0, 8)})` : "Unassigned");
+
+                        return (
+                          <div
+                            key={site.id}
+                            className="p-2 bg-white rounded border border-emerald-200/80 shadow-2xs text-[11px] space-y-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1 font-mono font-semibold text-emerald-900">
+                                <span>{site.ownerrezListingSiteName || "OwnerRez Source"}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  ID: {site.ownerrezListingSiteId}
+                                </span>
+                              </div>
+                              <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                ATTRIBUTED
+                              </span>
+                            </div>
+
+                            <div className="text-zinc-600 flex items-center gap-1 text-[11px]">
+                              <span className="text-zinc-400 text-[10px]">↳ Site:</span>
+                              <span className="font-medium text-zinc-800">{site.siteName}</span>
+                              {site.trackingCode && (
+                                <span className="text-zinc-400 font-mono text-[10px]">({site.trackingCode})</span>
+                              )}
+                            </div>
+
+                            <div className="text-zinc-600 flex items-center gap-1 text-[11px]">
+                              <span className="text-zinc-400 text-[10px]">↳ Partner:</span>
+                              <span className="font-semibold text-brand-plum">{partnerName}</span>
+                              {partner?.partnerCode && (
+                                <span className="text-zinc-400 font-mono text-[10px]">[{partner.partnerCode}]</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Visibly unmapped discovered sources from OwnerRez sync */}
+                  {discoveredSources
+                    .filter(ds => ds.status !== "ATTRIBUTED" || !ds.siteId)
+                    .map((src, idx) => (
+                      <div
+                        key={idx}
+                        className="p-2 bg-amber-50/70 rounded border border-amber-300 shadow-2xs text-[11px] space-y-1"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1 font-mono font-semibold text-amber-900">
+                            <span>{src.sourceName}</span>
+                            {src.numericSourceId && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-200 text-amber-900">
+                                ID: {src.numericSourceId}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                            UNMAPPED / REVIEW REQUIRED
+                          </span>
+                        </div>
+                        <div className="text-amber-800 text-[10px] italic">
+                          Discovered from booking sync ({src.bookingCount || 1} booking{src.bookingCount === 1 ? "" : "s"}). No active HHH site mapping exists for ID {src.numericSourceId || "unresolved"}.
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-zinc-500">Duplicate Guard:</span>
                 <span className="text-emerald-700 font-semibold">Crossover Protection</span>

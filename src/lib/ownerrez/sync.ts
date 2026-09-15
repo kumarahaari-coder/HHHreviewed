@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ownerRezRequest } from "./client";
-import { reconcileReservationPaymentRealization } from "@/lib/commissions/ledger";
+import { reconcileReservationPaymentRealization, createInitialAccrual } from "@/lib/commissions/ledger";
+import { resolveCommissionRule } from "./commission-preview";
 
 export interface OwnerRezCharge {
   type?: string;
@@ -57,6 +58,22 @@ export interface ListingSite {
 
 export type AttributionTier = "ATTRIBUTED" | "REVIEW_REQUIRED" | "UNATTRIBUTED";
 
+export interface SingleAccrualResult {
+  attempted: boolean;
+  status:
+    | "ACCRUAL_CREATED"
+    | "ALREADY_ACCRUED"
+    | "NOT_ATTRIBUTED"
+    | "NO_ACTIVE_RULE"
+    | "CALCULATION_ZERO"
+    | "ERROR";
+  calculatedCommission: number;
+  commissionRuleId?: string | null;
+  idempotencyKey?: string;
+  reason?: string;
+  error?: string;
+}
+
 export interface SingleReconciliationResult {
   attempted: boolean;
   status:
@@ -85,6 +102,7 @@ export interface SingleSyncResult {
   siteId?: string;
   partnerId?: string;
   propertyId?: string;
+  initialAccrual?: SingleAccrualResult;
   reconciliation?: SingleReconciliationResult;
   error?: string;
 }
@@ -124,6 +142,184 @@ export interface BatchSyncResult {
   sourcesDiscovered: DiscoveredSource[];
   reconciliationSummary: BatchReconciliationSummary;
   errors: string[];
+}
+
+/**
+ * Safely creates an INITIAL_ACCRUAL event for newly ingested, deterministically attributed OwnerRez reservations.
+ * 
+ * Enforced Invariants:
+ * 1. Invoked only after deterministic attribution resolves partner_id, site_id, and applicable commission rule.
+ * 2. INITIAL_ACCRUAL.delta_amount remains strictly 0.00 (non-financial forecast).
+ * 3. Snapshots calculated_commission, commission_rule_id, partner, site, booking channel, provider booking ID,
+ *    and charge/rate calculation metadata.
+ * 4. Deterministic idempotency key (`evt_accrual_${reservationId}`) prevents duplicate accruals across retries/refreshes.
+ * 5. Does not create accrual for unattributed or review-required reservations.
+ * 6. Does not create accrual if commission rule is missing or ambiguous (fails closed).
+ * 7. Never mutates or alters an existing historical accrual if rules change later.
+ */
+export async function executeSafeInitialAccrual(params: {
+  reservationId: string;
+  booking: OwnerRezBooking;
+  attributionTier: AttributionTier;
+  resolvedPartnerId: string | null;
+  resolvedSiteId: string | null;
+  bookingChannel: string;
+  grossAmount: number;
+  cleaningFee: number;
+  serviceFee: number;
+  taxesAmount: number;
+  supabaseClient?: any;
+}): Promise<SingleAccrualResult> {
+  const supabase = params.supabaseClient || createAdminClient();
+
+  // Guard 1: Must be deterministically attributed to an active partner and site
+  if (
+    params.attributionTier !== "ATTRIBUTED" ||
+    !params.resolvedPartnerId ||
+    !params.resolvedSiteId
+  ) {
+    return {
+      attempted: false,
+      status: "NOT_ATTRIBUTED",
+      calculatedCommission: 0,
+      reason: `Reservation is not deterministically attributed (tier = ${params.attributionTier}, partnerId = ${params.resolvedPartnerId}, siteId = ${params.resolvedSiteId}). Accrual skipped.`,
+    };
+  }
+
+  try {
+    // Guard 2: Idempotent check for existing historical accrual
+    const { data: existingAccruals, error: checkErr } = await supabase
+      .from("commission_ledger_events")
+      .select("id, calculated_commission, commission_rule_id, delta_amount, idempotency_key")
+      .eq("reservation_id", params.reservationId)
+      .eq("event_type", "INITIAL_ACCRUAL");
+
+    if (checkErr) {
+      throw new Error(`Failed to query existing initial accruals: ${checkErr.message}`);
+    }
+
+    if (existingAccruals && existingAccruals.length > 0) {
+      const existing = existingAccruals[0];
+      return {
+        attempted: true,
+        status: "ALREADY_ACCRUED",
+        calculatedCommission: Number(existing.calculated_commission || 0),
+        commissionRuleId: existing.commission_rule_id,
+        idempotencyKey: existing.idempotency_key,
+        reason: "Historical INITIAL_ACCRUAL event already exists (immutable snapshot preserved).",
+      };
+    }
+
+    // Guard 3: Authoritative commission rule resolution
+    const ruleRes = await resolveCommissionRule(
+      params.resolvedPartnerId,
+      params.resolvedSiteId,
+      supabase
+    );
+
+    if (!ruleRes.rule) {
+      console.warn(
+        `[OwnerRez Accrual] No active commission rule found for partner ${params.resolvedPartnerId} and site ${params.resolvedSiteId}. Failing closed: zero accruals.`
+      );
+      return {
+        attempted: true,
+        status: "NO_ACTIVE_RULE",
+        calculatedCommission: 0,
+        reason: `No active commission rule configured in public.commission_rules for partner ${params.resolvedPartnerId} and site ${params.resolvedSiteId}.`,
+      };
+    }
+
+    const rule = ruleRes.rule;
+
+    // Calculation of commissionable accommodation rent base
+    const charges = Array.isArray(params.booking.charges) ? params.booking.charges : [];
+    let contractedRent = 0;
+    for (const c of charges) {
+      if (String(c.type || "").toLowerCase() === "rent") {
+        contractedRent += Number(c.amount || 0);
+      }
+    }
+    if (contractedRent <= 0) {
+      contractedRent = Math.max(
+        0,
+        params.grossAmount - params.cleaningFee - params.serviceFee - params.taxesAmount
+      );
+    }
+
+    let calculatedCommission = 0;
+    if (rule.rule_type === "percentage" && rule.percentage != null) {
+      calculatedCommission =
+        Math.round(contractedRent * (Number(rule.percentage) / 100) * 100) / 100;
+    } else if (rule.rule_type === "fixed" && rule.fixed_amount != null) {
+      calculatedCommission = Number(rule.fixed_amount);
+    }
+
+    if (calculatedCommission <= 0) {
+      return {
+        attempted: true,
+        status: "CALCULATION_ZERO",
+        calculatedCommission: 0,
+        reason: "Calculated commission base or rate yielded zero or negative amount.",
+      };
+    }
+
+    const idempotencyKey = `evt_accrual_${params.reservationId}`;
+
+    const event = await createInitialAccrual({
+      partnerId: params.resolvedPartnerId,
+      siteId: params.resolvedSiteId,
+      reservationId: params.reservationId,
+      commissionRuleId: rule.id,
+      sourceProvider: "ownerrez",
+      bookingChannel: params.bookingChannel,
+      providerBookingId: String(params.booking.id),
+      ownerrezBookingId: params.booking.id,
+      calculatedCommission,
+      idempotencyKey,
+      metadata: {
+        rule_id: rule.id,
+        rule_type: rule.rule_type,
+        percentage: rule.percentage,
+        fixed_amount: rule.fixed_amount,
+        rule_scope: ruleRes.scope,
+        commissionable_base: contractedRent,
+        gross_amount: params.grossAmount,
+        cleaning_fee: params.cleaningFee,
+        service_fee: params.serviceFee,
+        taxes_amount: params.taxesAmount,
+        ingestion_source: "ownerrez_sync",
+      },
+      supabaseClient: supabase,
+    });
+
+    return {
+      attempted: true,
+      status: "ACCRUAL_CREATED",
+      calculatedCommission,
+      commissionRuleId: rule.id,
+      idempotencyKey,
+      reason: `INITIAL_ACCRUAL event recorded successfully (rule: ${rule.id}, base: $${contractedRent.toFixed(2)}, commission: $${calculatedCommission.toFixed(2)}).`,
+    };
+  } catch (err: any) {
+    const rawMsg = err?.message || "Internal initial accrual error";
+    const sanitizedError = String(rawMsg)
+      .replace(/(bearer\s+[a-zA-Z0-9_\-\.]+)/gi, "bearer [REDACTED]")
+      .replace(/(key|secret|password|token)=[^\s&]+/gi, "$1=[REDACTED]")
+      .split("\n")[0]
+      .substring(0, 200);
+
+    console.warn(
+      `[OwnerRez Accrual] Initial accrual error for res ${params.reservationId}:`,
+      sanitizedError
+    );
+
+    return {
+      attempted: true,
+      status: "ERROR",
+      calculatedCommission: 0,
+      error: sanitizedError,
+    };
+  }
 }
 
 /**
@@ -507,6 +703,21 @@ export async function syncSingleBookingRecord(
       isQuoteEqual &&
       isPlatformEqual
     ) {
+      // Step 8a: Ensure initial accrual exists for deterministically attributed unchanged booking
+      const initialAccrual = await executeSafeInitialAccrual({
+        reservationId: existingRow.id,
+        booking,
+        attributionTier,
+        resolvedPartnerId,
+        resolvedSiteId,
+        bookingChannel,
+        grossAmount,
+        cleaningFee,
+        serviceFee,
+        taxesAmount,
+        supabaseClient: supabase,
+      });
+
       // Step 9a: Automatically reconcile ledger payment realization for unchanged booking
       const reconciliation = await executeSafeReconciliation(existingRow.id, supabase);
 
@@ -523,6 +734,7 @@ export async function syncSingleBookingRecord(
         siteId: resolvedSiteId || undefined,
         partnerId: resolvedPartnerId || undefined,
         propertyId: hhhPropertyId || undefined,
+        initialAccrual,
         reconciliation,
       };
     }
@@ -615,6 +827,21 @@ export async function syncSingleBookingRecord(
     console.warn("Could not upsert reservation_attributions:", attrErr.message);
   }
 
+  // 8b. Automatic Phase 6 Initial Accrual for Deterministically Attributed Reservations
+  const initialAccrual = await executeSafeInitialAccrual({
+    reservationId,
+    booking,
+    attributionTier,
+    resolvedPartnerId,
+    resolvedSiteId,
+    bookingChannel,
+    grossAmount,
+    cleaningFee,
+    serviceFee,
+    taxesAmount,
+    supabaseClient: supabase,
+  });
+
   // 9. Automatic Phase 6 Commission Payment Realization Reconciliation
   const reconciliation = await executeSafeReconciliation(reservationId, supabase);
 
@@ -631,6 +858,7 @@ export async function syncSingleBookingRecord(
     siteId: resolvedSiteId || undefined,
     partnerId: resolvedPartnerId || undefined,
     propertyId: hhhPropertyId || undefined,
+    initialAccrual,
     reconciliation,
   };
 }

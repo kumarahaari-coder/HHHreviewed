@@ -145,6 +145,7 @@ export async function createInitialAccrual(params: {
   calculatedCommission: number;
   idempotencyKey?: string;
   metadata?: Record<string, unknown>;
+  supabaseClient?: any;
 }): Promise<CommissionLedgerEvent | null> {
   const defaultKey = params.commissionRuleId
     ? `evt_accrual_${params.reservationId}_${params.commissionRuleId}`
@@ -164,6 +165,7 @@ export async function createInitialAccrual(params: {
     calculatedCommission: params.calculatedCommission,
     idempotencyKey: params.idempotencyKey ?? defaultKey,
     metadata: params.metadata,
+    supabaseClient: params.supabaseClient,
   });
 }
 

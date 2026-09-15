@@ -90,9 +90,10 @@ export interface CommissionPreviewItem {
  */
 export async function resolveCommissionRule(
   partnerId: string,
-  siteId?: string | null
+  siteId?: string | null,
+  supabaseClient?: any
 ): Promise<{ rule: CommissionRuleRecord | null; scope: "site_specific" | "partner_default" | "none" }> {
-  const supabase = createAdminClient();
+  const supabase = supabaseClient || createAdminClient();
 
   // 1. Check active site-specific rule
   if (siteId) {
