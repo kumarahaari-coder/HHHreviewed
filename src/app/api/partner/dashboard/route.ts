@@ -36,7 +36,10 @@ export async function GET(req: NextRequest) {
         }
       }
     } else if (isCreatorRole(session.role)) {
-      effectivePartnerId = session.partnerId || requestedPreviewPartnerId || undefined;
+      if (!session.partnerId) {
+        return NextResponse.json({ success: false, error: "No partner account associated with this user." }, { status: 403 });
+      }
+      effectivePartnerId = session.partnerId;
     }
 
     if (!effectivePartnerId) {

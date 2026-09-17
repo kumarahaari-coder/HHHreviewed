@@ -8,6 +8,16 @@ import { db as mockDb } from "@/lib/db/mockDb";
  * Controlled strictly by DATA_STORE environment variable ("supabase" | "mock").
  */
 export function isSupabaseEnabled(): boolean {
+  const isNodeProd = process.env.NODE_ENV === "production";
+  const isVercelProd = process.env.VERCEL_ENV === "production";
+
+  if (isNodeProd || isVercelProd) {
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      throw new Error("[DataStore Fatal Error] Missing required Supabase environment variables in production context.");
+    }
+    return true;
+  }
+
   if (process.env.DATA_STORE === "mock") return false;
   return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }

@@ -2,33 +2,26 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Link from "next/link";
 import {
   LayoutDashboard,
   CalendarDays,
-  Users2,
-  Globe2,
-  Home,
-  DollarSign,
-  Cpu,
+  Users,
+  Globe,
+  Building2,
+  Wallet,
+  Blocks,
+  FileText,
   Settings,
-  Bell,
-  LogOut,
-  ChevronDown,
-  Activity,
   Loader2
 } from "lucide-react";
+import { AppShell, NavItem } from "@/components/shell";
 import { db } from "@/lib/db/mockDb";
-import { User, SystemNotification } from "@/lib/db/schema";
-import { Badge } from "@/components/ui/custom";
-import { RoleSwitcher } from "@/components/RoleSwitcher";
+import { User } from "@/lib/db/schema";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [notifications, setNotifications] = useState<SystemNotification[]>([]);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -46,38 +39,30 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           if (authUser.role === "SUPER_ADMIN" || authUser.role === "FINANCE_ADMIN" || authUser.role === "ADMIN") {
             db.currentUser = authUser;
             setCurrentUser(authUser);
-            setNotifications(db.notifications);
             setLoading(false);
             return;
           }
+        } else if (process.env.NODE_ENV !== "production") {
+          const devUser: User = {
+            id: "user-admin-1",
+            email: "hiddenhoneyace@gmail.com",
+            name: "Hidden Honey Admin",
+            role: "SUPER_ADMIN",
+            status: "ACTIVE",
+            createdAt: new Date().toISOString()
+          };
+          db.currentUser = devUser;
+          setCurrentUser(devUser);
+          setLoading(false);
+          return;
         }
 
-        // Fallback default Super Admin user
-        const defaultAdmin: User = {
-          id: "user-admin-1",
-          name: "Super Admin",
-          email: "hiddenhoneyace@gmail.com",
-          role: "SUPER_ADMIN",
-          createdAt: new Date().toISOString(),
-          status: "ACTIVE"
-        };
-        db.currentUser = defaultAdmin;
-        setCurrentUser(defaultAdmin);
-        setNotifications(db.notifications);
-        setLoading(false);
+        // Unauthenticated or unauthorized role -> Redirect to sign-in
+        router.push("/sign-in");
       } catch (err) {
         console.error(`[Admin Layout Error]`, err);
         if (isSubscribed) {
-          const defaultAdmin: User = {
-            id: "user-admin-1",
-            name: "Super Admin",
-            email: "hiddenhoneyace@gmail.com",
-            role: "SUPER_ADMIN",
-            createdAt: new Date().toISOString(),
-            status: "ACTIVE"
-          };
-          setCurrentUser(defaultAdmin);
-          setLoading(false);
+          router.push("/sign-in");
         }
       }
     }
@@ -94,187 +79,79 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     router.push("/login");
   };
 
-  const handlePersonaSwitch = (userId: string) => {
-    const targetUser = db.users.find(u => u.id === userId);
-    if (targetUser) {
-      db.currentUser = targetUser;
-      setCurrentUser(targetUser);
-      if (targetUser.role === "PARTNER_OWNER" || targetUser.role === "CREATOR") {
-        router.push("/partner");
-      } else {
-        router.refresh();
-      }
-    }
-  };
-
-  const markAllRead = () => {
-    notifications.forEach(n => db.markNotificationRead(n.id));
-    setNotifications(db.notifications);
-  };
-
   if (loading || !currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-brand-bg">
-        <div className="flex flex-col items-center space-y-3">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-plum" />
-          <span className="text-xs font-serif italic text-zinc-500">Loading Admin Portal...</span>
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
+        <div className="flex flex-col items-center space-y-3 font-sans">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <span className="text-xs text-secondary font-medium">Loading Admin Portal...</span>
         </div>
       </div>
     );
   }
 
-  const menuItems = [
-    { name: "Overview", href: "/admin", icon: LayoutDashboard },
-    { name: "Bookings", href: "/admin/bookings", icon: CalendarDays },
-    { name: "Partners", href: "/admin/partners", icon: Users2 },
-    { name: "Sites & Widgets", href: "/admin/sites", icon: Globe2 },
-    { name: "Properties", href: "/admin/properties", icon: Home },
-    { name: "Payouts Queue", href: "/admin/payouts", icon: DollarSign },
-    { name: "Integrations & Simulator", href: "/admin/integrations", icon: Cpu },
-    { name: "Settings & Audits", href: "/admin/settings", icon: Settings }
+  // Canonical Admin Navigation Architecture
+  const adminPrimaryNav: NavItem[] = [
+    { id: "overview", label: "Overview", href: "/admin", icon: LayoutDashboard },
+    { id: "bookings", label: "Bookings", href: "/admin/bookings", icon: CalendarDays },
+    { id: "partners", label: "Partners", href: "/admin/partners", icon: Users },
+    { id: "sites", label: "Sites", href: "/admin/sites", icon: Globe },
+    { id: "properties", label: "Properties", href: "/admin/properties", icon: Building2 },
+    { id: "payouts", label: "Payouts", href: "/admin/payouts", icon: Wallet },
+    { id: "integrations", label: "Integrations", href: "/admin/integrations", icon: Blocks }
   ];
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const adminSecondaryNav: NavItem[] = [
+    { id: "tax_documents", label: "Tax documents", href: "/admin/tax-documents", icon: FileText },
+    { id: "settings", label: "Settings", href: "/admin/settings", icon: Settings }
+  ];
+
+  const getActiveNavId = (path: string) => {
+    if (path === "/admin") return "overview";
+    if (path.startsWith("/admin/bookings")) return "bookings";
+    if (path.startsWith("/admin/partners")) return "partners";
+    if (path.startsWith("/admin/sites")) return "sites";
+    if (path.startsWith("/admin/properties")) return "properties";
+    if (path.startsWith("/admin/payouts")) return "payouts";
+    if (path.startsWith("/admin/integrations")) return "integrations";
+    if (path.startsWith("/admin/tax-documents")) return "tax_documents";
+    if (path.startsWith("/admin/settings")) return "settings";
+    return "overview";
+  };
+
+  const getHeaderTitle = (path: string) => {
+    if (path === "/admin") return "Overview";
+    if (path.startsWith("/admin/bookings")) return "Bookings";
+    if (path.startsWith("/admin/partners")) return "Partner Directory";
+    if (path.startsWith("/admin/sites")) return "Sites & Referral Channels";
+    if (path.startsWith("/admin/properties")) return "Properties";
+    if (path.startsWith("/admin/payouts")) return "Payouts Queue";
+    if (path.startsWith("/admin/integrations")) return "Integrations & Simulator";
+    if (path.startsWith("/admin/tax-documents")) return "Tax Documents";
+    if (path.startsWith("/admin/settings")) return "Settings & Audits";
+    return "Admin Portal";
+  };
 
   return (
-    <div className="flex min-h-screen bg-brand-bg text-brand-text font-sans">
-      {/* SIDEBAR */}
-      <aside className="w-64 border-r border-brand-blush bg-brand-cream shrink-0 flex flex-col no-print">
-        {/* Brand */}
-        <div className="p-6 border-b border-brand-blush">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-brand-plum flex items-center justify-center text-brand-cream font-bold">
-              H
-            </div>
-            <div>
-              <h1 className="font-extrabold text-brand-plum tracking-tight leading-none text-base">
-                Hidden Honey
-              </h1>
-              <span className="text-[10px] text-zinc-400 font-serif italic">
-                Dashboard Portal
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Menu Items */}
-        <nav className="flex-1 p-4 space-y-1">
-          {menuItems.map(item => {
-            const isActive = pathname === item.href;
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-150 ${
-                  isActive
-                    ? "bg-brand-plum text-brand-cream shadow-sm"
-                    : "text-zinc-600 hover:bg-brand-blush/30 hover:text-brand-plum"
-                }`}
-              >
-                <Icon size={16} />
-                <span>{item.name}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* User Info & Switcher */}
-        <div className="p-4 border-t border-brand-blush space-y-3">
-          <div className="p-3 bg-brand-bg/60 rounded-xl border border-brand-blush/60">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-brand-plum truncate">
-                {currentUser.name}
-              </span>
-              <Badge type={currentUser.role === "SUPER_ADMIN" ? "success" : "info"}>
-                {currentUser.role}
-              </Badge>
-            </div>
-            <div className="text-[10px] text-zinc-400 font-mono truncate mt-0.5">
-              {currentUser.email}
-            </div>
-          </div>
-
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center justify-center space-x-2 p-2 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 transition-colors"
-          >
-            <LogOut size={14} />
-            <span>Sign Out</span>
-          </button>
-        </div>
-      </aside>
-
-      {/* MAIN CONTENT AREA */}
-      <main className="flex-1 flex flex-col min-w-0">
-        {/* Top Header */}
-        <header className="h-16 border-b border-brand-blush bg-brand-cream/80 backdrop-blur-md px-6 flex items-center justify-between shrink-0 no-print">
-          <div className="flex items-center space-x-3">
-            <span className="text-xs font-bold text-brand-wine uppercase tracking-widest bg-brand-blush/40 px-2.5 py-1 rounded-full">
-              HHH Admin Management
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-4">
-            <RoleSwitcher />
-            {/* Notification Bell */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="p-2 rounded-xl border border-brand-blush hover:bg-brand-blush/20 text-zinc-600 relative transition-colors"
-              >
-                <Bell size={18} />
-                {unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white rounded-full text-[9px] font-bold flex items-center justify-center">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
-
-              {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 bg-brand-cream border border-brand-blush shadow-2xl rounded-2xl p-4 z-50">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-bold text-sm text-brand-plum">Notifications</h4>
-                    <button
-                      onClick={markAllRead}
-                      className="text-[10px] text-brand-wine font-bold hover:underline"
-                    >
-                      Mark all read
-                    </button>
-                  </div>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="text-xs text-zinc-400 italic text-center py-4">No notifications</p>
-                    ) : (
-                      notifications.map(n => (
-                        <div
-                          key={n.id}
-                          className={`p-2.5 rounded-xl border text-xs ${
-                            n.read
-                              ? "bg-brand-bg/30 border-brand-blush/40 text-zinc-500"
-                              : "bg-brand-cream border-brand-blush text-brand-plum font-medium"
-                          }`}
-                        >
-                          <div className="flex justify-between items-start">
-                            <span className="font-bold uppercase text-[9px] text-brand-wine">
-                              {n.type}
-                            </span>
-                            <span className="text-[9px] text-zinc-400">{n.createdAt ? n.createdAt.split("T")[1]?.slice(0, 5) : "Just now"}</span>
-                          </div>
-                          <p className="mt-1 leading-snug">{n.message}</p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* Dynamic Children */}
-        <div className="flex-1 p-6 sm:p-8 overflow-y-auto">{children}</div>
-      </main>
-    </div>
+    <AppShell
+      brandVariant="clean"
+      contextTag="Admin"
+      primaryNav={adminPrimaryNav}
+      secondaryNav={adminSecondaryNav}
+      activeNavId={getActiveNavId(pathname)}
+      onNavigate={(id, href) => {
+        if (href) router.push(href);
+      }}
+      headerTitle={getHeaderTitle(pathname)}
+      headerSubtitle="HHH Operational Platform"
+      user={{
+        name: currentUser.name || "Admin User",
+        email: currentUser.email || "",
+        role: currentUser.role || "ADMIN"
+      }}
+      onSignOut={handleLogout}
+    >
+      {children}
+    </AppShell>
   );
 }

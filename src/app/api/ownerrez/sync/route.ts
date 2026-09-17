@@ -8,7 +8,13 @@ export async function POST(req: Request) {
   try {
     // 1. Enforce Server-Side Admin Authorization
     const session = await getCurrentSession();
-    if (!session || !isAdminRole(session.role)) {
+    if (!session) {
+      return NextResponse.json(
+        { success: false, error: "Unauthenticated: Login required." },
+        { status: 401 }
+      );
+    }
+    if (!isAdminRole(session.role)) {
       return NextResponse.json(
         { success: false, error: "Forbidden: Admin authorization required to trigger OwnerRez sync." },
         { status: 403 }

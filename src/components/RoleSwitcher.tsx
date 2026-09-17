@@ -4,8 +4,9 @@ import React, { useState, useEffect } from "react";
 import { ShieldCheck, UserCheck, RefreshCw } from "lucide-react";
 
 export function RoleSwitcher() {
-  const [currentRole, setCurrentRole] = useState<string>("SUPER_ADMIN");
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const isMock = process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only";
 
   useEffect(() => {
     fetch("/api/auth/session")
@@ -13,10 +14,19 @@ export function RoleSwitcher() {
       .then(data => {
         if (data.session?.role) {
           setCurrentRole(data.session.role);
+        } else {
+          setCurrentRole(null);
         }
       })
-      .catch(() => {});
+      .catch(() => setCurrentRole(null));
   }, []);
+
+  const isAdmin = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN" || currentRole === "FINANCE_ADMIN";
+
+  // In production, hide RoleSwitcher completely unless current user is an authenticated Admin
+  if (!isMock && !isAdmin) {
+    return null;
+  }
 
   async function switchRole(targetRole: "SUPER_ADMIN" | "PARTNER_OWNER") {
     try {
@@ -44,7 +54,7 @@ export function RoleSwitcher() {
         disabled={loading}
         onClick={() => switchRole("SUPER_ADMIN")}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-all ${
-          currentRole === "SUPER_ADMIN"
+          isAdmin
             ? "bg-amber-500 text-zinc-950 font-bold shadow-md"
             : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
         }`}
@@ -58,7 +68,7 @@ export function RoleSwitcher() {
         disabled={loading}
         onClick={() => switchRole("PARTNER_OWNER")}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-all ${
-          currentRole === "PARTNER_OWNER" || currentRole === "CREATOR"
+          !isAdmin
             ? "bg-emerald-500 text-zinc-950 font-bold shadow-md"
             : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
         }`}

@@ -1,16 +1,10 @@
 import type { Metadata } from "next";
-import { Assistant } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
-const assistant = Assistant({
-  variable: "--font-assistant",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "HHH Partner Booking and Payout Dashboard",
-  description: "Centralized partner tracking and payment portal for Hidden Honey Homes retreats.",
+  title: "HHH — Hidden Honey Homes Operational Platform",
+  description: "Centralized partner tracking, reservation attribution, and payout portal for Hidden Honey Homes retreats.",
 };
 
 export default function RootLayout({
@@ -22,9 +16,9 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`${assistant.variable} h-full antialiased`}
+        className="h-full antialiased font-sans"
       >
-        <body className="min-h-full flex flex-col bg-brand-bg text-brand-text">
+        <body className="min-h-full flex flex-col bg-canvas text-primary">
           {children}
         </body>
       </html>

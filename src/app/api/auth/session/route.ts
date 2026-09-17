@@ -5,6 +5,15 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getClerkAuthSession();
 
+    if (!session) {
+      return NextResponse.json({
+        authenticated: false,
+        status: "UNAUTHENTICATED",
+        session: null,
+        user: null
+      });
+    }
+
     return NextResponse.json({
       authenticated: true,
       status: "APPROVED",
@@ -20,18 +29,10 @@ export async function GET(req: NextRequest) {
   } catch (error: any) {
     console.error("[Auth Session API Error]", error);
     return NextResponse.json({
-      authenticated: true,
-      status: "APPROVED",
-      session: {
-        userId: "user-admin-1",
-        email: "hiddenhoneyace@gmail.com",
-        role: "SUPER_ADMIN"
-      },
-      user: {
-        id: "user-admin-1",
-        email: "hiddenhoneyace@gmail.com",
-        role: "SUPER_ADMIN"
-      }
+      authenticated: false,
+      status: "UNAUTHENTICATED",
+      session: null,
+      user: null
     });
   }
 }

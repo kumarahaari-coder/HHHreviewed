@@ -7,7 +7,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const session = await getCurrentSession();
-    if (!session || !isAdminRole(session.role)) {
+    if (!session) {
+      return NextResponse.json(
+        { success: false, error: "Unauthenticated: Login required." },
+        { status: 401 }
+      );
+    }
+    if (!isAdminRole(session.role)) {
       return NextResponse.json(
         { success: false, error: "Forbidden: Admin access required." },
         { status: 403 }

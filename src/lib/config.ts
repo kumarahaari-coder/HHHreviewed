@@ -58,12 +58,22 @@ export interface AppConfig {
   };
 }
 
+export function isMockAuthAllowed(): boolean {
+  const isNodeProd = process.env.NODE_ENV === "production";
+  const isVercelProd = process.env.VERCEL_ENV === "production";
+  const serverAuthMode = process.env.AUTH_MODE;
+  
+  if (isNodeProd || isVercelProd) {
+    return false;
+  }
+  
+  return serverAuthMode === "mock_dev_only";
+}
+
 export function loadAppConfig(): AppConfig {
   const nodeEnv = (process.env.NODE_ENV || "development") as AppConfig["env"];
-  const isProd = nodeEnv === "production";
 
-  const authModeSetting = process.env.NEXT_PUBLIC_AUTH_MODE || "clerk";
-  const authMode: AppConfig["authMode"] = isProd ? "clerk" : (authModeSetting === "mock_dev_only" ? "mock_dev_only" : "clerk");
+  const authMode: AppConfig["authMode"] = isMockAuthAllowed() ? "mock_dev_only" : "clerk";
 
   const clerkSecret = process.env.CLERK_SECRET_KEY;
   const clerkPub = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;

@@ -1,8 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { getClerkAuthSession, isAdminRole } from "@/lib/authorization";
+import { isMockAuthAllowed } from "@/lib/config";
 
 export async function POST(req: NextRequest) {
   try {
+    const isMock = isMockAuthAllowed();
+
+    if (!isMock) {
+      const session = await getClerkAuthSession();
+      if (!session) {
+        return NextResponse.json({ success: false, error: "Unauthenticated" }, { status: 401 });
+      }
+
+      const body = await req.json().catch(() => ({}));
+      const targetRole = body.role;
+      const targetPartnerId = body.partnerId;
+
+      // In production, role comes strictly from Clerk -> Supabase. Roles cannot be mutated.
+      if (targetRole && targetRole !== session.role) {
+        return NextResponse.json({ success: false, error: "Forbidden: Production roles cannot be mutated." }, { status: 403 });
+      }
+
+      // Admin partner preview request
+      if (isAdminRole(session.role) && targetPartnerId) {
+        return NextResponse.json({
+          success: true,
+          role: session.role,
+          partnerId: targetPartnerId,
+          redirectUrl: `/partner?previewPartnerId=${encodeURIComponent(targetPartnerId)}`
+        });
+      }
+
+      const redirectUrl = isAdminRole(session.role) ? "/admin" : "/partner";
+      return NextResponse.json({
+        success: true,
+        role: session.role,
+        redirectUrl
+      });
+    }
+
+    // Mock dev-only mode
     const body = await req.json().catch(() => ({}));
     const role = body.role || "SUPER_ADMIN";
     const email = body.email || (role === "SUPER_ADMIN" ? "hiddenhoneyace@gmail.com" : "kumarahaari@gmail.com");

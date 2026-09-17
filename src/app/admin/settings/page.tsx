@@ -46,22 +46,24 @@ export default function SettingsAndAudits() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* SIMULATION CONTROLS */}
         <div className="lg:col-span-1 space-y-6">
-          <Card className="space-y-4 border-rose-200 bg-rose-50/10">
-            <h3 className="text-sm font-bold uppercase tracking-widest text-rose-800 flex items-center gap-2">
-              <RotateCcw size={16} />
-              Reset Demonstration
-            </h3>
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              Resets the browser's `localStorage` state, restoring the database to its pristine mock state containing 4 retreats, 3 partners, 5 websites, and 10 bookings.
-            </p>
-            <button
-              onClick={handleReset}
-              className="w-full bg-rose-500 hover:bg-rose-600 text-white py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center space-x-2"
-            >
-              <RotateCcw size={14} />
-              <span>Reset Database Simulation</span>
-            </button>
-          </Card>
+          {process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only" && (
+            <Card className="space-y-4 border-rose-200 bg-rose-50/10">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-rose-800 flex items-center gap-2">
+                <RotateCcw size={16} />
+                Reset Demonstration
+              </h3>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                Resets the browser's `localStorage` state, restoring the database to its pristine mock state containing 4 retreats, 3 partners, 5 websites, and 10 bookings.
+              </p>
+              <button
+                onClick={handleReset}
+                className="w-full bg-rose-500 hover:bg-rose-600 text-white py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center space-x-2"
+              >
+                <RotateCcw size={14} />
+                <span>Reset Database Simulation</span>
+              </button>
+            </Card>
+          )}
 
           <Card className="space-y-4">
             <h3 className="text-sm font-bold uppercase tracking-widest text-brand-wine flex items-center gap-2">

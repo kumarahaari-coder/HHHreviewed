@@ -19,6 +19,11 @@ export default function LoginPage() {
   const [activeAccount, setActiveAccount] = useState<string | null>(null);
 
   useEffect(() => {
+    if (process.env.NODE_ENV === "production" || process.env.NEXT_PUBLIC_AUTH_MODE !== "mock_dev_only") {
+      router.replace("/sign-in");
+      return;
+    }
+
     async function loadPartners() {
       try {
         const res = await fetch("/api/admin/partners");
@@ -33,7 +38,7 @@ export default function LoginPage() {
       }
     }
     loadPartners();
-  }, []);
+  }, [router]);
 
   async function loginAsUser(params: {
     role: "SUPER_ADMIN" | "FINANCE_ADMIN" | "PARTNER_OWNER";
