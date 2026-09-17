@@ -213,7 +213,6 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
         if (href) router.push(href);
       }}
       headerTitle={getPartnerHeaderTitle(pathname)}
-      headerSubtitle={partner ? partner.businessName : "Partner Portal"}
       user={{
         name: currentUser ? currentUser.name : partner ? partner.contactName : "Partner Owner",
         email: currentUser ? currentUser.email : partner ? partner.email : "",

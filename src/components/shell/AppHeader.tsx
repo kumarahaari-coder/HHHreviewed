@@ -76,23 +76,9 @@ export function AppHeader({
           <div className="xl:hidden flex items-center">
             <BrandMark variant={brandVariant} contextTag={contextTag} subtitle={false} />
           </div>
-
-          {/* Desktop Section Header Title */}
-          {title && (
-            <div className="hidden xl:block min-w-0">
-              <h2 className="text-sm font-semibold text-primary truncate leading-tight">
-                {title}
-              </h2>
-              {subtitle && (
-                <p className="text-[11px] text-secondary truncate mt-0.5 leading-tight">
-                  {subtitle}
-                </p>
-              )}
-            </div>
-          )}
         </div>
 
-        {/* Right Side: Notifications + User Profile */}
+        {/* Right Side: Notifications + User Profile Controls */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <button
             type="button"
@@ -103,16 +89,14 @@ export function AppHeader({
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent" />
           </button>
 
-          <div className="xl:hidden">
-            <UserMenu
-              user={user}
-              isPreviewActive={isPreviewActive}
-              previewPartnerName={previewPartnerName}
-              onReturnFromPreview={onReturnFromPreview}
-              onSignOut={onSignOut}
-              align="bottom"
-            />
-          </div>
+          <UserMenu
+            user={user}
+            isPreviewActive={isPreviewActive}
+            previewPartnerName={previewPartnerName}
+            onReturnFromPreview={onReturnFromPreview}
+            onSignOut={onSignOut}
+            align="bottom"
+          />
         </div>
       </div>
     </header>

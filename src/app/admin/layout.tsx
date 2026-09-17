@@ -143,7 +143,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         if (href) router.push(href);
       }}
       headerTitle={getHeaderTitle(pathname)}
-      headerSubtitle="HHH Operational Platform"
       user={{
         name: currentUser.name || "Admin User",
         email: currentUser.email || "",

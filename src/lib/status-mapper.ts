@@ -65,3 +65,20 @@ export function getStatusTypeForState(rawState: string): StatusType {
 
   return "neutral";
 }
+
+/**
+ * Maps raw backend role enums (e.g. SUPER_ADMIN, PARTNER_OWNER)
+ * into human-friendly presentation labels without altering stored DB or auth values.
+ */
+export function formatRoleLabel(role?: string): string {
+  if (!role) return "";
+  const mappings: Record<string, string> = {
+    SUPER_ADMIN: "Super Admin",
+    FINANCE_ADMIN: "Finance Admin",
+    ADMIN: "Admin",
+    PARTNER_OWNER: "Partner Owner",
+    CREATOR: "Creator"
+  };
+
+  return mappings[role] || role.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+}

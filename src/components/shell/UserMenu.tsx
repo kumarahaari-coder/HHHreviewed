@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
-import { User, LogOut, ShieldAlert, ChevronUp, UserCheck } from "lucide-react";
+import { User, LogOut, ShieldAlert, ChevronUp } from "lucide-react";
+import { formatRoleLabel } from "@/lib/status-mapper";
 
 export interface UserMenuProps {
   user: {
@@ -80,7 +81,7 @@ export function UserMenu({
               {user.name}
             </p>
             <p className="text-[11px] text-secondary truncate mt-0.5 leading-tight">
-              {user.role}
+              {formatRoleLabel(user.role)}
             </p>
           </div>
         </div>
@@ -96,7 +97,7 @@ export function UserMenu({
             <p className="text-[11px] text-secondary truncate">{user.email}</p>
             <div className="pt-1 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-success" />
-              <span className="text-[10px] text-tertiary uppercase font-medium tracking-wider">{user.role}</span>
+              <span className="text-[10px] text-tertiary font-medium tracking-wider">{formatRoleLabel(user.role)}</span>
             </div>
           </div>
 

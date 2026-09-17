@@ -143,7 +143,6 @@ function ShellPreviewContent() {
       activeNavId={activeNavId}
       onNavigate={setActiveNavId}
       headerTitle={activeNavId.toUpperCase()}
-      headerSubtitle="HHH Operational Platform"
       user={activeUser}
       isPreviewActive={isAdminPreview}
       previewPartnerName="Haari"

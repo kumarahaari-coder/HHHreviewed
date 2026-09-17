@@ -66,21 +66,23 @@ export function AppShell({
       </div>
 
       {/* 2. Mobile & Tablet SlideOver Navigation Drawer */}
-      <MobileNavigation
-        isOpen={isMobileNavOpen}
-        onClose={() => setIsMobileNavOpen(false)}
-        brandVariant={brandVariant}
-        contextTag={contextTag}
-        primaryNav={primaryNav}
-        secondaryNav={secondaryNav}
-        activeId={activeNavId}
-        onNavigate={onNavigate}
-        user={user}
-        isPreviewActive={isPreviewActive}
-        previewPartnerName={previewPartnerName}
-        onReturnFromPreview={onReturnFromPreview}
-        onSignOut={onSignOut}
-      />
+      <div className="xl:hidden">
+        <MobileNavigation
+          isOpen={isMobileNavOpen}
+          onClose={() => setIsMobileNavOpen(false)}
+          brandVariant={brandVariant}
+          contextTag={contextTag}
+          primaryNav={primaryNav}
+          secondaryNav={secondaryNav}
+          activeId={activeNavId}
+          onNavigate={onNavigate}
+          user={user}
+          isPreviewActive={isPreviewActive}
+          previewPartnerName={previewPartnerName}
+          onReturnFromPreview={onReturnFromPreview}
+          onSignOut={onSignOut}
+        />
+      </div>
 
       {/* 3. Main Workspace Container */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">

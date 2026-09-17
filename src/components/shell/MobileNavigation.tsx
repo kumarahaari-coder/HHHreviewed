@@ -4,6 +4,7 @@ import { SlideOver } from "../ui/slide-over";
 import { BrandMark } from "./BrandMark";
 import { NavItem } from "./Sidebar";
 import { LogOut, ShieldAlert } from "lucide-react";
+import { formatRoleLabel } from "@/lib/status-mapper";
 
 export interface MobileNavigationProps {
   isOpen: boolean;
@@ -179,6 +180,7 @@ export function MobileNavigation({
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-primary truncate">{user.name}</p>
               <p className="text-[11px] text-secondary truncate">{user.email}</p>
+              <p className="text-[10px] text-tertiary font-medium mt-0.5 truncate">{formatRoleLabel(user.role)}</p>
             </div>
           </div>
 
