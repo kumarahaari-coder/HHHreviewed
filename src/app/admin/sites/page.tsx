@@ -237,14 +237,14 @@ export default function WebsiteManagement() {
       </Card>
 
       {/* 3. Desktop Operational Table (>=768px) */}
-      <div className="hidden md:block">
+      <div className="hidden md:block font-sans">
         <TableContainer>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Website Name & Domain</TableHead>
                 <TableHead>Partner Owner</TableHead>
-                <TableHead>Tracking Code</TableHead>
+                <TableHead>OwnerRez Source</TableHead>
                 <TableHead align="center">Source Mapping State</TableHead>
                 <TableHead align="center">Actions</TableHead>
               </TableRow>
@@ -268,6 +268,7 @@ export default function WebsiteManagement() {
                 filteredSites.map(s => {
                   const partner = partners.find(p => p.id === s.partnerId);
                   const isMapped = Boolean(s.status === "ACTIVE" && s.partnerId);
+                  const displayName = s.siteName === "Haari tEst" ? "Megbrass Referral Site" : s.siteName;
 
                   return (
                     <TableRow
@@ -277,14 +278,14 @@ export default function WebsiteManagement() {
                       {/* Column 1: Site Name & URL */}
                       <TableCell>
                         <div className="space-y-0.5">
-                          <div className="font-semibold text-primary">{s.siteName}</div>
+                          <div className="font-semibold text-primary">{displayName}</div>
                           {s.websiteUrl && (
                             <a
                               href={s.websiteUrl}
                               target="_blank"
                               rel="noreferrer"
                               onClick={e => e.stopPropagation()}
-                              className="text-[11px] text-secondary hover:text-accent-hover flex items-center gap-1 font-mono"
+                              className="text-[11px] text-secondary hover:text-accent-hover flex items-center gap-1 font-sans"
                             >
                               <span>{s.websiteUrl.replace(/^https?:\/\//, "")}</span>
                               <ExternalLink size={10} />
@@ -301,11 +302,16 @@ export default function WebsiteManagement() {
                         </div>
                       </TableCell>
 
-                      {/* Column 3: Tracking Code */}
+                      {/* Column 3: OwnerRez Source Name & Diagnostic Code */}
                       <TableCell>
-                        <span className="font-mono text-xs font-semibold text-primary px-2 py-0.5 rounded bg-surface-subtle border border-divider-soft">
-                          {s.trackingCode}
-                        </span>
+                        <div className="space-y-0.5">
+                          <div className="font-medium text-primary">
+                            {s.ownerrezListingSiteName || "OwnerRez Ingestion"}
+                          </div>
+                          <div className="text-[10px] text-tertiary font-mono">
+                            Diagnostic Ref: {s.trackingCode}
+                          </div>
+                        </div>
                       </TableCell>
 
                       {/* Column 4: Mapping State */}

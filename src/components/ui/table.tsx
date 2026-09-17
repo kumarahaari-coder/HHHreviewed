@@ -8,7 +8,7 @@ export function TableContainer({
   className?: string;
 }) {
   return (
-    <div className={`w-full overflow-x-auto rounded-lg border border-divider bg-surface ${className}`}>
+    <div className={`w-full overflow-x-auto rounded-lg border border-divider-soft bg-surface shadow-xs ${className}`}>
       {children}
     </div>
   );
@@ -36,7 +36,7 @@ export function TableHeader({
   className?: string;
 }) {
   return (
-    <thead className={`bg-surface-subtle border-b border-divider text-xs font-medium text-secondary ${className}`}>
+    <thead className={`bg-surface-subtle border-b border-divider-soft text-xs font-semibold text-secondary ${className}`}>
       {children}
     </thead>
   );
@@ -151,22 +151,22 @@ export function TableMobileCard({
   className?: string;
 }) {
   return (
-    <div className={`bg-surface border border-divider rounded-lg p-4 space-y-3 font-sans shadow-xs ${className}`}>
-      <div className="flex items-start justify-between gap-3 border-b border-divider-soft pb-2.5">
-        <div>
-          <div className="text-xs font-semibold text-primary">{title}</div>
-          {subtitle && <div className="text-[11px] text-secondary mt-0.5">{subtitle}</div>}
+    <div className={`bg-surface border border-divider-soft rounded-xl p-3.5 sm:p-4 space-y-3 font-sans shadow-xs min-w-0 max-w-full overflow-hidden ${className}`}>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 border-b border-divider-soft pb-2.5">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-primary truncate">{title}</div>
+          {subtitle && <div className="text-[11px] text-secondary mt-0.5 truncate">{subtitle}</div>}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 max-w-[50%] justify-end">
           {badge}
           {action}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 pt-0.5">
+      <div className="grid grid-cols-2 gap-2 pt-0.5 min-w-0">
         {details.map((d, i) => (
-          <div key={i} className="space-y-0.5">
-            <span className="text-[10px] text-tertiary uppercase font-medium tracking-wider block">{d.label}</span>
-            <div className={`text-xs font-medium text-primary ${d.numeric ? "tabular-nums" : ""}`}>
+          <div key={i} className="space-y-0.5 min-w-0">
+            <span className="text-[10px] text-tertiary uppercase font-medium tracking-wider block truncate">{d.label}</span>
+            <div className={`text-xs font-medium text-primary truncate ${d.numeric ? "tabular-nums" : ""}`}>
               {d.value}
             </div>
           </div>

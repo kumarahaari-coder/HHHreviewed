@@ -2,16 +2,16 @@ import { SignIn } from "@clerk/nextjs";
 
 export default function SignInPage() {
   return (
-    <div className="flex-1 flex flex-col justify-center items-center px-4 py-12 bg-brand-bg relative font-sans min-h-screen">
+    <div className="flex-1 flex flex-col justify-center items-center px-4 py-12 bg-canvas relative font-sans min-h-screen">
       {/* Branding Header */}
       <div className="text-center mb-8 max-w-md">
-        <span className="text-xs uppercase tracking-widest text-brand-wine font-semibold bg-brand-blush/40 px-3 py-1 rounded-full">
+        <span className="text-xs uppercase tracking-widest text-secondary font-semibold bg-surface border border-divider-soft px-3 py-1 rounded-full">
           Hidden Honey Homes
         </span>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight mt-3">
+        <h1 className="text-3xl font-bold text-primary tracking-tight mt-3">
           Partner & Creator Portal
         </h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-2">
+        <p className="text-secondary text-sm mt-2 font-normal">
           Secure sign in for approved creators, partners, and administrators.
         </p>
       </div>
@@ -21,19 +21,16 @@ export default function SignInPage() {
         <SignIn
           appearance={{
             elements: {
-              card: "shadow-xl border border-brand-blush bg-brand-cream rounded-2xl p-6",
-              headerTitle: "text-xl font-bold text-brand-plum",
-              headerSubtitle: "text-xs text-zinc-500",
-              formButtonPrimary: "bg-brand-plum hover:bg-brand-wine text-brand-cream text-xs uppercase tracking-wider font-bold py-2.5 rounded-lg transition-all shadow-md",
-              formFieldInput: "bg-brand-bg/50 border border-brand-blush text-sm text-brand-text rounded-lg focus:border-brand-plum focus:ring-1 focus:ring-brand-plum/20",
-              footerAction: "hidden", // Hide "Don't have an account? Sign up"
-              footerActionLink: "hidden",
-              footer: "hidden"
+              card: "shadow-sm border border-divider-soft bg-surface rounded-2xl p-6 font-sans",
+              headerTitle: "text-xl font-bold text-primary font-sans",
+              headerSubtitle: "text-xs text-secondary font-sans",
+              formButtonPrimary: "bg-primary hover:bg-primary/90 text-surface text-xs uppercase tracking-wider font-bold py-2.5 rounded-lg transition-all shadow-xs font-sans",
+              formFieldInput: "bg-surface-subtle border border-divider-soft text-sm text-primary rounded-lg focus:border-primary focus:ring-1 focus:ring-primary/20 font-sans"
             }
           }}
           routing="path"
           path="/sign-in"
-          signUpUrl={undefined}
+          signUpUrl={null as any}
           fallbackRedirectUrl="/auth/resolve"
           forceRedirectUrl="/auth/resolve"
         />

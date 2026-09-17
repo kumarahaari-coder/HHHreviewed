@@ -345,8 +345,9 @@ export default function AdminOverview() {
               variant="secondary"
               size="sm"
               icon={RefreshCw}
+              iconClassName={isRefreshing ? "animate-spin" : ""}
+              disabled={isRefreshing}
               onClick={handleManualSync}
-              className={isRefreshing ? "animate-spin" : ""}
             >
               Refresh Data
             </Button>

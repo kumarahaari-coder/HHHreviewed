@@ -44,18 +44,18 @@ export function PageHeader({
         </nav>
       )}
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
+      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-6 sm:gap-8">
+        <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-primary tracking-tight">
             {title}
           </h1>
           {description && (
-            <p className="text-xs text-secondary mt-1 max-w-3xl leading-relaxed">
+            <p className="text-xs sm:text-sm text-secondary mt-1 max-w-2xl leading-relaxed">
               {description}
             </p>
           )}
         </div>
-        {action && <div className="shrink-0 flex items-center gap-3">{action}</div>}
+        {action && <div className="shrink-0 flex items-center gap-3 sm:pt-0.5">{action}</div>}
       </div>
     </div>
   );

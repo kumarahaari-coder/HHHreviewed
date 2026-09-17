@@ -6,6 +6,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   size?: "sm" | "md" | "lg";
   loading?: boolean;
   icon?: LucideIcon;
+  iconClassName?: string;
   iconPosition?: "left" | "right";
   children?: React.ReactNode;
 }
@@ -17,6 +18,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       size = "md",
       loading = false,
       icon: Icon,
+      iconClassName = "",
       iconPosition = "left",
       disabled,
       className = "",
@@ -58,9 +60,9 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           <Loader2 className="animate-spin" size={iconSizes[size]} />
         ) : (
           <>
-            {Icon && iconPosition === "left" && <Icon size={iconSizes[size]} />}
+            {Icon && iconPosition === "left" && <Icon size={iconSizes[size]} className={iconClassName} />}
             {children && <span>{children}</span>}
-            {Icon && iconPosition === "right" && <Icon size={iconSizes[size]} />}
+            {Icon && iconPosition === "right" && <Icon size={iconSizes[size]} className={iconClassName} />}
           </>
         )}
       </button>

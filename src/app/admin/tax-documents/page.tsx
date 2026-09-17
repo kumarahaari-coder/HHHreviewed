@@ -164,21 +164,21 @@ export default function AdminTaxDocumentsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 font-sans pb-8">
       <PageHeader
         title="Tax Documents"
         description="Operational compliance readiness for partner W-9 and W-8 submissions. Sensitive PII, Tax IDs, and S3 credentials remain masked."
       />
 
       {/* Security Banner */}
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center justify-between">
+      <div className="rounded-xl border border-divider-soft bg-surface p-4 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-md bg-[var(--canvas)] text-[var(--primary)]">
+          <div className="p-2 rounded-lg bg-surface-subtle text-primary border border-divider-soft">
             <Lock size={18} />
           </div>
           <div>
-            <div className="text-sm font-semibold text-[var(--primary)]">PII Protection Active</div>
-            <div className="text-xs text-[var(--secondary)]">
+            <div className="text-sm font-semibold text-primary">PII Protection Active</div>
+            <div className="text-xs text-secondary">
               SSNs, EINs, and bank routing credentials are encrypted at rest and never exposed in the interface.
             </div>
           </div>
@@ -187,16 +187,16 @@ export default function AdminTaxDocumentsPage() {
       </div>
 
       {/* FILTERS */}
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="rounded-xl border border-divider-soft bg-surface p-4 shadow-xs">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="relative">
-            <Search size={16} className="absolute left-3 top-3 text-[var(--secondary)]" />
+            <Search size={16} className="absolute left-3 top-3 text-secondary" />
             <input
               type="text"
               placeholder="Search partner..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs focus:outline-none focus:border-[var(--primary)]"
+              className="w-full pl-9 pr-4 py-2 bg-surface-subtle border border-divider-soft rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
@@ -204,7 +204,7 @@ export default function AdminTaxDocumentsPage() {
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
-              className="w-full bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs py-2 px-3 focus:outline-none focus:border-[var(--primary)] font-medium text-[var(--primary)]"
+              className="w-full bg-surface-subtle border border-divider-soft rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary font-medium text-primary"
             >
               <option value="ALL">All Review Statuses</option>
               <option value="SUBMITTED">Submitted / Under Review</option>
@@ -219,7 +219,7 @@ export default function AdminTaxDocumentsPage() {
             <select
               value={docTypeFilter}
               onChange={e => setDocTypeFilter(e.target.value)}
-              className="w-full bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs py-2 px-3 focus:outline-none focus:border-[var(--primary)] font-medium text-[var(--primary)]"
+              className="w-full bg-surface-subtle border border-divider-soft rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary font-medium text-primary"
             >
               <option value="ALL">All Form Categories (W-9 / W-8)</option>
               <option value="W_9">W-9 Forms Only</option>

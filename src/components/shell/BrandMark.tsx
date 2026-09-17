@@ -24,7 +24,7 @@ export function BrandMark({
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold tracking-tight text-primary">HHH</span>
             {contextTag && (
-              <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider px-1.5 py-0.2 rounded bg-surface-muted border border-divider-soft">
+              <span className="hidden sm:inline-flex text-[10px] font-semibold text-secondary uppercase tracking-wider px-1.5 py-0.2 rounded bg-surface-muted border border-divider-soft">
                 {contextTag}
               </span>
             )}
@@ -45,7 +45,7 @@ export function BrandMark({
       <div className="flex items-center gap-2">
         <span className="text-lg font-bold tracking-tight text-primary">HHH</span>
         {contextTag && (
-          <span className="text-[10px] font-semibold text-secondary uppercase tracking-wider px-1.5 py-0.5 rounded bg-surface-muted border border-divider-soft">
+          <span className="hidden sm:inline-flex text-[10px] font-semibold text-secondary uppercase tracking-wider px-1.5 py-0.5 rounded bg-surface-muted border border-divider-soft">
             {contextTag}
           </span>
         )}

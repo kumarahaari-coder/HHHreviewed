@@ -79,7 +79,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-extrabold text-brand-plum tracking-tight">
             Account Switcher
           </h1>
-          <p className="text-xs text-zinc-500 font-serif italic">
+          <p className="text-xs text-secondary font-normal">
             Select an account to log in directly into the Admin or Partner Portal.
           </p>
         </div>

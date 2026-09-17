@@ -17,6 +17,7 @@ import {
 import { AppShell, NavItem } from "@/components/shell";
 import { db } from "@/lib/db/mockDb";
 import { User } from "@/lib/db/schema";
+import { isMockAuthAllowed } from "@/lib/config";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -42,7 +43,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             setLoading(false);
             return;
           }
-        } else if (process.env.NODE_ENV !== "production") {
+        } else if (isMockAuthAllowed()) {
           const devUser: User = {
             id: "user-admin-1",
             email: "hiddenhoneyace@gmail.com",

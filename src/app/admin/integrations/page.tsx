@@ -386,61 +386,61 @@ export default function IntegrationsPage() {
       {/* HEALTH MATRIX */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {healthMatrix.map((item, index) => (
-          <div key={index} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+          <div key={index} className="rounded-xl border border-divider-soft bg-surface p-4 space-y-3 shadow-xs font-sans">
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="font-semibold text-[var(--primary)] text-sm">{item.name}</h3>
-                <span className="text-[10px] text-[var(--secondary)] font-medium uppercase tracking-wider block mt-0.5">{item.category}</span>
+                <h3 className="font-semibold text-primary text-sm">{item.name}</h3>
+                <span className="text-[10px] text-tertiary font-medium uppercase tracking-wider block mt-0.5">{item.category}</span>
               </div>
               {getStatusBadge(item.status)}
             </div>
 
-            <div className="bg-[var(--canvas)] p-3 rounded-md space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-[var(--secondary)]">Env:</span>
-                <span className="font-mono text-[var(--primary)] uppercase font-semibold">{item.environment}</span>
+            <div className="bg-surface-subtle p-3 rounded-lg space-y-1.5 text-xs border border-divider-soft">
+              <div className="flex justify-between items-center">
+                <span className="text-secondary">Env:</span>
+                <span className="text-primary uppercase font-semibold text-[11px]">{item.environment}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--secondary)] font-mono">Last Sync:</span>
-                <span className="text-[var(--primary)] font-mono text-[11px]">{item.lastSuccess}</span>
+              <div className="flex justify-between items-center">
+                <span className="text-secondary">Last Sync:</span>
+                <span className="text-primary text-[11px]">{item.lastSuccess}</span>
               </div>
-              <div className="flex justify-between border-t border-[var(--border)] pt-1 mt-1">
-                <span className="text-[var(--secondary)]">Auth:</span>
-                <span className="font-mono text-[var(--primary)] text-[10px] truncate max-w-[130px]">{item.nonSecretId}</span>
+              <div className="flex justify-between items-center border-t border-divider-soft pt-1.5 mt-1">
+                <span className="text-secondary">Auth:</span>
+                <span className="text-tertiary text-[10px] truncate max-w-[130px] font-mono">{item.nonSecretId}</span>
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 font-sans">
         {/* OWNERREZ CARD */}
-        <div className="rounded-lg border-2 border-emerald-500/30 bg-[var(--surface)] p-5 space-y-4">
-          <div className="flex justify-between items-start border-b border-[var(--border)] pb-3">
+        <div className="rounded-xl border border-divider-soft bg-surface p-5 space-y-4 shadow-xs">
+          <div className="flex justify-between items-start border-b border-divider-soft pb-3">
             <div>
               <div className="flex items-center gap-2">
-                <Database size={16} className="text-emerald-700" />
-                <h3 className="font-bold text-[var(--primary)] text-sm">OwnerRez Direct PMS</h3>
+                <Database size={16} className="text-primary" />
+                <h3 className="font-bold text-primary text-sm">OwnerRez Direct PMS</h3>
               </div>
-              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded mt-1 inline-block">
+              <span className="text-[10px] font-semibold text-primary bg-surface-subtle border border-divider-soft px-2 py-0.5 rounded-full mt-1.5 inline-block">
                 PRIMARY BOOKING INGESTION
               </span>
             </div>
             <StatusBadge variant="success">PRIMARY</StatusBadge>
           </div>
 
-          <p className="text-xs text-[var(--secondary)]">
+          <p className="text-xs text-secondary leading-relaxed">
             Authoritative source for stay dates, gross revenues, and deterministic partner referral attribution.
           </p>
 
-          <div className="space-y-2 text-xs bg-[var(--canvas)] p-3 rounded-md font-mono">
+          <div className="space-y-2 text-xs bg-surface-subtle p-3 rounded-lg border border-divider-soft">
             <div className="flex justify-between">
-              <span className="text-[var(--secondary)]">Mapped Sources:</span>
-              <span className="font-bold text-[var(--primary)]">{activeMappedSourcesCount} Active Sites</span>
+              <span className="text-secondary">Mapped Sources:</span>
+              <span className="font-bold text-primary">{activeMappedSourcesCount} Active Sites</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-[var(--secondary)]">Attributed Partners:</span>
-              <span className="font-bold text-[var(--primary)]">{activeMappedPartnersCount} Partners</span>
+              <span className="text-secondary">Attributed Partners:</span>
+              <span className="font-bold text-primary">{activeMappedPartnersCount} Partners</span>
             </div>
           </div>
 
@@ -448,7 +448,7 @@ export default function IntegrationsPage() {
             <button
               onClick={() => handleOwnerRezSync(true)}
               disabled={isOwnerRezSyncing}
-              className="flex-1 py-2.5 rounded-md text-xs font-semibold bg-emerald-800 text-white hover:bg-emerald-900 transition-colors"
+              className="flex-1 py-2.5 rounded-lg text-xs font-bold bg-primary text-surface hover:bg-primary/90 transition-colors shadow-xs"
             >
               {isOwnerRezSyncing ? "Syncing..." : "Sync All OwnerRez Stays"}
             </button>

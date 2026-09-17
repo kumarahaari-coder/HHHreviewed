@@ -82,3 +82,27 @@ export function formatRoleLabel(role?: string): string {
 
   return mappings[role] || role.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
 }
+
+/**
+ * Canonical Currency Formatter
+ * Formats numeric values into currency strings ($X.XX or -$X.XX).
+ * Normalizes negative zero (-0.00) or insignificant floating point zeroes to $0.00.
+ */
+export function formatCurrency(amount: number | null | undefined, forceNegativeSign: boolean = false): string {
+  const numeric = typeof amount === "number" ? amount : 0;
+  const rounded = Math.round((numeric + Number.EPSILON) * 100) / 100;
+  
+  if (Math.abs(rounded) === 0 || Object.is(rounded, -0)) {
+    return "$0.00";
+  }
+
+  if (rounded < 0) {
+    return `-$${Math.abs(rounded).toFixed(2)}`;
+  }
+
+  if (forceNegativeSign) {
+    return `-$${rounded.toFixed(2)}`;
+  }
+
+  return `$${rounded.toFixed(2)}`;
+}

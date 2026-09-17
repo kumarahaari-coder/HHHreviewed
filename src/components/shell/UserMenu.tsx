@@ -67,16 +67,16 @@ export function UserMenu({
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-surface-subtle transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary text-left"
+        className="w-full sm:w-auto flex items-center justify-between p-1.5 sm:p-2 rounded-lg hover:bg-surface-subtle transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary text-left min-h-[44px] min-w-[44px]"
         aria-haspopup="true"
         aria-expanded={isOpen}
         aria-label="User account menu"
       >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-full bg-surface-muted border border-divider-soft flex items-center justify-center text-xs font-semibold text-primary shrink-0">
             {initials}
           </div>
-          <div className="min-w-0">
+          <div className="hidden sm:block min-w-0">
             <p className="text-xs font-semibold text-primary truncate leading-tight">
               {user.name}
             </p>
@@ -85,7 +85,7 @@ export function UserMenu({
             </p>
           </div>
         </div>
-        <ChevronUp size={14} className={`text-tertiary transition-transform duration-150 shrink-0 ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronUp size={14} className={`hidden sm:block text-tertiary transition-transform duration-150 shrink-0 ${isOpen ? "rotate-180" : ""}`} />
       </button>
 
       {/* Popover Menu */}

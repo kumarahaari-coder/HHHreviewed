@@ -63,9 +63,6 @@ export default function PropertiesListing() {
                     <StatusBadge variant="success">
                       Active
                     </StatusBadge>
-                    <span className="text-[10px] text-tertiary font-mono">
-                      Ref: {prop.hospitablePropertyId}
-                    </span>
                   </div>
 
                   <h3 className="text-lg font-bold text-primary tracking-tight">
@@ -90,8 +87,8 @@ export default function PropertiesListing() {
                     <CheckCircle2 size={14} />
                     <span>Provider Synced</span>
                   </span>
-                  <span className="text-[10px] text-tertiary font-mono">
-                    ID: {prop.id.slice(0, 8)}...
+                  <span className="text-xs text-tertiary font-sans">
+                    Hospitable & OwnerRez Mapped
                   </span>
                 </div>
               </div>

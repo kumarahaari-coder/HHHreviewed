@@ -25,6 +25,7 @@ import {
   PartnerFinancialProjection,
   PayoutRail,
 } from "@/lib/commissions/types";
+import { formatCurrency } from "@/lib/status-mapper";
 
 export function Phase6LedgerPanel() {
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
@@ -45,16 +46,34 @@ export function Phase6LedgerPanel() {
       try {
         const res = await fetch("/api/admin/partners");
         const data = await res.json();
-        const list = (data.partners || []).map((p: any) => ({
-          id: p.id,
-          name: p.business_name || p.contact_name || p.id,
-        }));
-        setPartners(list);
-        if (list.length > 0) {
-          setSelectedPartnerId(list[0].id);
+        const rawList = (data.success && Array.isArray(data.partners) && data.partners.length > 0)
+          ? data.partners
+          : (require("@/lib/db/mockDb").db.partners || []);
+
+        const formattedList = rawList.map((p: any) => {
+          const bName = p.business_name || p.businessName;
+          const cName = p.contact_name || p.contactName || p.name;
+          const displayName = (bName && bName.trim()) ? bName.trim() : ((cName && cName.trim()) ? cName.trim() : "Unnamed Partner");
+          return {
+            id: p.id,
+            name: displayName,
+          };
+        });
+
+        setPartners(formattedList);
+        if (formattedList.length > 0) {
+          setSelectedPartnerId((prev) => prev || formattedList[0].id);
         }
       } catch (err: any) {
-        console.error("Failed to load partners:", err);
+        console.error("Failed to load partners API, using db.partners:", err);
+        const fallbackList = (require("@/lib/db/mockDb").db.partners || []).map((p: any) => ({
+          id: p.id,
+          name: (p.businessName && p.businessName.trim()) ? p.businessName.trim() : ((p.contactName && p.contactName.trim()) ? p.contactName.trim() : "Unnamed Partner"),
+        }));
+        setPartners(fallbackList);
+        if (fallbackList.length > 0) {
+          setSelectedPartnerId((prev) => prev || fallbackList[0].id);
+        }
       }
     }
     loadPartners();
@@ -181,14 +200,14 @@ export function Phase6LedgerPanel() {
   return (
     <div className="space-y-6">
       {/* Partner Selector Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-surface border border-divider-soft p-4 rounded-lg gap-4 shadow-xs">
         <div>
           <div className="flex items-center space-x-2">
-            <Layers className="text-[var(--primary)]" size={20} />
-            <h2 className="text-base font-bold text-[var(--primary)]">Phase 6 Commission Ledger & Batches</h2>
+            <Layers className="text-primary" size={18} />
+            <h2 className="text-sm font-bold text-primary">Commission Ledger & Payout Batches</h2>
           </div>
-          <p className="text-xs text-[var(--secondary)] mt-0.5">
-            Append-only event ledger, FIFO negative carry-forward recovery, and maker-checker batching.
+          <p className="text-xs text-secondary mt-0.5">
+            Review commission activity and prepare eligible balances for payout.
           </p>
         </div>
 
@@ -196,11 +215,14 @@ export function Phase6LedgerPanel() {
           <select
             value={selectedPartnerId}
             onChange={(e) => setSelectedPartnerId(e.target.value)}
-            className="bg-[var(--canvas)] border border-[var(--border)] text-[var(--primary)] text-xs rounded-md px-3 py-2 font-medium focus:outline-none"
+            className="bg-surface border border-divider-soft text-primary text-xs rounded-md px-3 py-2 font-medium focus:outline-none focus:ring-1 focus:ring-primary min-w-[200px] cursor-pointer"
           >
+            {(!selectedPartnerId || partners.length === 0) && (
+              <option value="">Select partner</option>
+            )}
             {partners.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {p.name || "Select partner"}
               </option>
             ))}
           </select>
@@ -208,23 +230,23 @@ export function Phase6LedgerPanel() {
           <button
             onClick={fetchData}
             disabled={loading}
-            className="p-2 border border-[var(--border)] bg-[var(--canvas)] hover:bg-[var(--surface)] rounded-md text-[var(--primary)] disabled:opacity-50 transition-colors"
+            className="p-2 border border-divider-soft bg-surface hover:bg-surface-subtle rounded-md text-primary disabled:opacity-50 transition-colors cursor-pointer"
             title="Refresh Data"
           >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
       </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-800 text-xs flex items-center space-x-2">
+        <div className="p-3 bg-danger-surface border border-danger-border rounded-md text-danger text-xs flex items-center space-x-2">
           <AlertCircle size={16} className="shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {successMessage && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-xs flex items-center space-x-2">
+        <div className="p-3 bg-success-surface border border-success-border rounded-md text-success text-xs flex items-center space-x-2">
           <CheckCircle size={16} className="shrink-0" />
           <span>{successMessage}</span>
         </div>
@@ -233,50 +255,50 @@ export function Phase6LedgerPanel() {
       {/* Financial Metrics Cards */}
       {projection && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg">
-            <div className="text-[11px] uppercase tracking-wider text-[var(--secondary)] font-semibold">
+          <div className="bg-surface border border-divider-soft p-4 rounded-lg shadow-xs">
+            <div className="text-[11px] uppercase tracking-wider text-secondary font-semibold">
               Accounting Liability
             </div>
-            <div className="text-xl font-bold tabular-nums font-mono text-[var(--primary)] mt-1">
-              ${projection.partnerAccountingOutstanding.toFixed(2)}
+            <div className="text-xl font-bold tabular-nums font-mono text-primary mt-1">
+              {formatCurrency(projection.partnerAccountingOutstanding)}
             </div>
-            <div className="text-[10px] text-[var(--secondary)] mt-1">
+            <div className="text-[10px] text-tertiary mt-1">
               Total balance sheet payable (includes future stays)
             </div>
           </div>
 
-          <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg">
-            <div className="text-[11px] uppercase tracking-wider text-emerald-700 font-semibold">
+          <div className="bg-surface border border-divider-soft p-4 rounded-lg shadow-xs">
+            <div className="text-[11px] uppercase tracking-wider text-success font-semibold">
               Completed Eligible
             </div>
-            <div className="text-xl font-bold tabular-nums font-mono text-emerald-700 mt-1">
-              ${projection.eligiblePositive.toFixed(2)}
+            <div className="text-xl font-bold tabular-nums font-mono text-primary mt-1">
+              {formatCurrency(projection.eligiblePositive)}
             </div>
-            <div className="text-[10px] text-[var(--secondary)] mt-1">
+            <div className="text-[10px] text-tertiary mt-1">
               Passed departure + hold, zero open disputes
             </div>
           </div>
 
-          <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg">
-            <div className="text-[11px] uppercase tracking-wider text-rose-700 font-semibold">
+          <div className="bg-surface border border-divider-soft p-4 rounded-lg shadow-xs">
+            <div className="text-[11px] uppercase tracking-wider text-danger font-semibold">
               Negative Carry-Forward
             </div>
-            <div className="text-xl font-bold tabular-nums font-mono text-rose-700 mt-1">
-              -${projection.negativeCarryForward.toFixed(2)}
+            <div className="text-xl font-bold tabular-nums font-mono text-danger mt-1">
+              {formatCurrency(projection.negativeCarryForward, true)}
             </div>
-            <div className="text-[10px] text-[var(--secondary)] mt-1">
+            <div className="text-[10px] text-tertiary mt-1">
               Recoverable post-payout refund clawbacks
             </div>
           </div>
 
-          <div className="bg-[var(--primary)] text-white border border-[var(--primary)] p-4 rounded-lg">
-            <div className="text-[11px] uppercase tracking-wider text-white/70 font-semibold">
+          <div className="bg-surface border border-divider-soft p-4 rounded-lg shadow-xs">
+            <div className="text-[11px] uppercase tracking-wider text-primary font-semibold">
               Payout Available
             </div>
-            <div className="text-xl font-bold tabular-nums font-mono text-white mt-1">
-              ${projection.partnerPayoutAvailable.toFixed(2)}
+            <div className="text-xl font-bold tabular-nums font-mono text-primary mt-1">
+              {formatCurrency(projection.partnerPayoutAvailable)}
             </div>
-            <div className="text-[10px] text-white/70 mt-1">
+            <div className="text-[10px] text-tertiary mt-1">
               Net available = Max(0, Eligible - Recoverable)
             </div>
           </div>
@@ -285,19 +307,19 @@ export function Phase6LedgerPanel() {
 
       {/* Batch Generator Control */}
       {projection && (
-        <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="bg-surface border border-divider-soft p-4 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-xs">
           <div>
-            <h3 className="font-bold text-[var(--primary)] text-sm">Generate Payout Batch</h3>
-            <p className="text-xs text-[var(--secondary)] mt-0.5">
-              Snapshots and locks eligible liabilities into a new payout batch with deterministic FIFO netting deduction.
+            <h3 className="font-bold text-primary text-sm">Generate Payout Batch</h3>
+            <p className="text-xs text-secondary mt-0.5">
+              Snapshots and locks currently eligible liabilities into a new payout batch with deterministic FIFO netting deduction.
             </p>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-3 shrink-0">
             <select
               value={selectedRail}
               onChange={(e) => setSelectedRail(e.target.value as PayoutRail)}
-              className="bg-[var(--canvas)] border border-[var(--border)] text-[var(--primary)] text-xs rounded-md px-3 py-2 font-medium"
+              className="bg-surface border border-divider-soft text-primary text-xs rounded-md px-3 py-2 font-medium focus:outline-none"
             >
               <option value="MANUAL_ACH">Manual ACH</option>
               <option value="BANK_WIRE">Bank Wire</option>
@@ -308,7 +330,7 @@ export function Phase6LedgerPanel() {
             <button
               onClick={handleCreateDraftBatch}
               disabled={isCreatingBatch || !projection || projection.partnerPayoutAvailable <= 0}
-              className="bg-[var(--primary)] text-white hover:bg-[#333336] disabled:opacity-40 px-4 py-2 rounded-md text-xs font-semibold transition-all flex items-center space-x-1.5"
+              className="bg-primary text-surface hover:bg-primary/90 disabled:opacity-50 px-4 py-2 rounded-md text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer shadow-xs"
             >
               <DollarSign size={14} />
               <span>Draft Batch (${projection.partnerPayoutAvailable.toFixed(2)})</span>
@@ -318,75 +340,75 @@ export function Phase6LedgerPanel() {
       )}
 
       {/* Batches Table */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
-        <div className="p-3 border-b border-[var(--border)] bg-[var(--canvas)] flex justify-between items-center">
-          <h3 className="text-xs uppercase tracking-wider font-bold text-[var(--primary)]">
+      <div className="bg-surface border border-divider-soft rounded-lg overflow-hidden shadow-xs">
+        <div className="p-3.5 border-b border-divider-soft bg-surface-subtle flex justify-between items-center">
+          <h3 className="text-xs font-semibold text-secondary">
             Payout Batches ({batches.length})
           </h3>
-          <span className="text-[11px] text-[var(--secondary)]">Maker-Checker Approval Required</span>
+          <span className="text-[11px] text-tertiary">Maker-Checker Approval Required</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-[var(--canvas)] border-b border-[var(--border)] text-[var(--primary)] font-bold">
-                <th className="p-3">Batch Number</th>
-                <th className="p-3">Rail</th>
-                <th className="p-3">Gross</th>
-                <th className="p-3">Netting Deduction</th>
-                <th className="p-3">Disbursed Amount</th>
-                <th className="p-3">Status</th>
-                <th className="p-3 text-center">Actions</th>
+              <tr className="bg-surface-subtle/50 border-b border-divider-soft text-secondary font-semibold">
+                <th className="py-3 px-4">Batch Number</th>
+                <th className="py-3 px-4">Rail</th>
+                <th className="py-3 px-4">Gross</th>
+                <th className="py-3 px-4">Netting Deduction</th>
+                <th className="py-3 px-4">Disbursed Amount</th>
+                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--border)]">
+            <tbody className="divide-y divide-divider-soft">
               {batches.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-[var(--secondary)]">
-                    No payout batches found for this partner.
+                  <td colSpan={7} className="py-8 text-center text-xs text-secondary">
+                    No payout batches yet. Eligible liabilities will appear here when a batch is created.
                   </td>
                 </tr>
               ) : (
                 batches.map((b) => (
-                  <tr key={b.id} className="hover:bg-[var(--canvas)] transition-colors">
-                    <td className="p-3 font-bold font-mono text-[var(--primary)]">{b.batch_number}</td>
-                    <td className="p-3 font-mono text-[11px]">{b.payout_rail}</td>
-                    <td className="p-3 tabular-nums font-mono">${Number(b.total_gross_amount).toFixed(2)}</td>
-                    <td className="p-3 text-rose-700 font-medium tabular-nums font-mono">
+                  <tr key={b.id} className="hover:bg-surface-subtle/40 transition-colors">
+                    <td className="py-3.5 px-4 font-semibold font-mono text-primary">{b.batch_number}</td>
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-secondary">{b.payout_rail}</td>
+                    <td className="py-3.5 px-4 tabular-nums font-mono text-primary">${Number(b.total_gross_amount).toFixed(2)}</td>
+                    <td className="py-3.5 px-4 text-danger font-medium tabular-nums font-mono">
                       {Number(b.total_netting_deduction) > 0
                         ? `-$${Number(b.total_netting_deduction).toFixed(2)}`
                         : "—"}
                     </td>
-                    <td className="p-3 font-bold tabular-nums font-mono text-[var(--primary)]">
+                    <td className="py-3.5 px-4 font-bold tabular-nums font-mono text-primary">
                       ${Number(b.total_amount).toFixed(2)}
                     </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    <td className="py-3.5 px-4">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                         b.status === "SETTLED"
-                          ? "bg-emerald-100 text-emerald-800"
+                          ? "bg-success-surface text-success border-success-border"
                           : b.status === "APPROVED"
-                          ? "bg-blue-100 text-blue-800"
+                          ? "bg-info-surface text-info border-info-border"
                           : b.status === "PENDING_APPROVAL"
-                          ? "bg-amber-100 text-amber-800"
+                          ? "bg-warning-surface text-warning border-warning-border"
                           : b.status === "CANCELLED"
-                          ? "bg-zinc-100 text-zinc-600"
-                          : "bg-purple-100 text-purple-800"
+                          ? "bg-surface-muted text-secondary border-divider-soft"
+                          : "bg-accent-subtle text-accent-hover border-accent/20"
                       }`}>
-                        {b.status}
+                        {b.status === "PENDING_APPROVAL" ? "Pending Approval" : b.status}
                       </span>
                     </td>
-                    <td className="p-3 text-center space-x-1.5">
+                    <td className="py-3.5 px-4 text-center space-x-1.5">
                       {b.status === "DRAFT" && (
                         <>
                           <button
                             onClick={() => handleTransitionBatch(b.id, "submit")}
-                            className="px-2.5 py-1 bg-amber-600 text-white rounded-md text-[10px] font-bold hover:bg-amber-700 transition-colors"
+                            className="px-2.5 py-1 bg-warning text-surface rounded-md text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
                           >
                             Submit
                           </button>
                           <button
                             onClick={() => handleTransitionBatch(b.id, "cancel")}
-                            className="px-2.5 py-1 bg-zinc-200 text-zinc-700 rounded-md text-[10px] font-bold hover:bg-zinc-300 transition-colors"
+                            className="px-2.5 py-1 bg-surface-muted text-secondary rounded-md text-xs font-medium hover:bg-surface-subtle transition-colors cursor-pointer"
                           >
                             Discard
                           </button>
@@ -397,13 +419,13 @@ export function Phase6LedgerPanel() {
                         <>
                           <button
                             onClick={() => handleTransitionBatch(b.id, "approve")}
-                            className="px-2.5 py-1 bg-blue-600 text-white rounded-md text-[10px] font-bold hover:bg-blue-700 transition-colors"
+                            className="px-2.5 py-1 bg-info text-surface rounded-md text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
                           >
                             Approve
                           </button>
                           <button
                             onClick={() => handleTransitionBatch(b.id, "cancel")}
-                            className="px-2.5 py-1 bg-zinc-200 text-zinc-700 rounded-md text-[10px] font-bold hover:bg-zinc-300 transition-colors"
+                            className="px-2.5 py-1 bg-surface-muted text-secondary rounded-md text-xs font-medium hover:bg-surface-subtle transition-colors cursor-pointer"
                           >
                             Reject
                           </button>
@@ -414,13 +436,13 @@ export function Phase6LedgerPanel() {
                         <div className="flex items-center justify-center space-x-1">
                           <button
                             onClick={() => handleTransitionBatch(b.id, "settle")}
-                            className="px-2.5 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-bold hover:bg-emerald-700 transition-colors"
+                            className="px-2.5 py-1 bg-success text-surface rounded-md text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
                           >
                             Settle
                           </button>
                           <button
                             onClick={() => handleTransitionBatch(b.id, "cancel")}
-                            className="px-2.5 py-1 bg-zinc-200 text-zinc-700 rounded-md text-[10px] font-bold hover:bg-zinc-300 transition-colors"
+                            className="px-2.5 py-1 bg-surface-muted text-secondary rounded-md text-xs font-medium hover:bg-surface-subtle transition-colors cursor-pointer"
                           >
                             Cancel
                           </button>
@@ -428,7 +450,7 @@ export function Phase6LedgerPanel() {
                       )}
 
                       {b.status === "SETTLED" && (
-                        <span className="text-[10px] text-[var(--secondary)] font-mono">Settled & Locked</span>
+                        <span className="text-xs text-secondary font-medium">Settled & Locked</span>
                       )}
                     </td>
                   </tr>
@@ -440,76 +462,80 @@ export function Phase6LedgerPanel() {
       </div>
 
       {/* Append-Only Event Ledger Table */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
-        <div className="p-3 border-b border-[var(--border)] bg-[var(--canvas)] flex justify-between items-center">
+      <div className="bg-surface border border-divider-soft rounded-lg overflow-hidden shadow-xs">
+        <div className="p-3.5 border-b border-divider-soft bg-surface-subtle flex justify-between items-center">
           <div className="flex items-center space-x-2">
-            <FileText size={16} className="text-[var(--primary)]" />
-            <h3 className="text-xs uppercase tracking-wider font-bold text-[var(--primary)]">
+            <FileText size={16} className="text-primary" />
+            <h3 className="text-xs font-semibold text-secondary">
               Append-Only Commission Ledger ({ledgerEvents.length} Events)
             </h3>
           </div>
-          <span className="text-[10px] text-[var(--secondary)] font-mono">public.commission_ledger_events</span>
+          <span className="text-[11px] text-tertiary">Ledger Invariant Audit</span>
         </div>
 
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-[var(--canvas)] border-b border-[var(--border)] text-[var(--primary)] font-bold sticky top-0 bg-[var(--surface)]">
-                <th className="p-3">Event Type</th>
-                <th className="p-3">Reservation / Booking</th>
-                <th className="p-3">Provider / Channel</th>
-                <th className="p-3">Delta Amount</th>
-                <th className="p-3">Idempotency Key</th>
-                <th className="p-3">Created At</th>
+              <tr className="bg-surface-subtle/50 border-b border-divider-soft text-secondary font-semibold sticky top-0 bg-surface">
+                <th className="py-3 px-4">Event Type</th>
+                <th className="py-3 px-4">Booking Ref</th>
+                <th className="py-3 px-4">Provider / Channel</th>
+                <th className="py-3 px-4">Delta Amount</th>
+                <th className="py-3 px-4">Idempotency Key</th>
+                <th className="py-3 px-4">Created At</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--border)]">
+            <tbody className="divide-y divide-divider-soft">
               {ledgerEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-[var(--secondary)]">
-                    Zero ledger events posted for this partner.
+                  <td colSpan={6} className="py-8 text-center text-xs text-secondary">
+                    No commission ledger events posted yet for this partner.
                   </td>
                 </tr>
               ) : (
-                ledgerEvents.map((ev) => (
-                  <tr key={ev.id} className="hover:bg-[var(--canvas)] transition-colors">
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                        ev.event_type === "INITIAL_ACCRUAL"
-                          ? "bg-zinc-100 text-zinc-700"
-                          : ev.event_type === "PAYMENT_REALIZED"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : ev.event_type === "REFUND_CLAWBACK"
-                          ? "bg-rose-100 text-rose-800"
-                          : ev.event_type === "PAYOUT_SETTLEMENT"
-                          ? "bg-blue-100 text-blue-800"
-                          : "bg-amber-100 text-amber-800"
+                ledgerEvents.map((ev) => {
+                  const eventLabels: Record<string, { label: string; style: string }> = {
+                    INITIAL_ACCRUAL: { label: "Initial Accrual", style: "bg-surface-muted text-secondary border-divider-soft" },
+                    PAYMENT_REALIZED: { label: "Payment Realized", style: "bg-success-surface text-success border-success-border" },
+                    REFUND_CLAWBACK: { label: "Refund Clawback", style: "bg-danger-surface text-danger border-danger-border" },
+                    MANUAL_ADJUSTMENT: { label: "Manual Adjustment", style: "bg-warning-surface text-warning border-warning-border" },
+                    ELIGIBILITY_RELEASE: { label: "Eligibility Released", style: "bg-info-surface text-info border-info-border" },
+                    PAYOUT_SETTLEMENT: { label: "Payout Settled", style: "bg-accent-subtle text-accent-hover border-accent/20" },
+                  };
+                  const eventConfig = eventLabels[ev.event_type] || { label: ev.event_type, style: "bg-surface-muted text-secondary border-divider-soft" };
+                  const providerName = ev.source_provider === "ownerrez" ? "OwnerRez" : (ev.source_provider === "hospitable" ? "Hospitable" : ev.source_provider);
+                  const channelName = ev.booking_channel?.toUpperCase() === "DIRECT" ? "Direct" : (ev.booking_channel || "Direct");
+
+                  return (
+                    <tr key={ev.id} className="hover:bg-surface-subtle/40 transition-colors">
+                      <td className="py-3.5 px-4">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${eventConfig.style}`}>
+                          {eventConfig.label}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-xs text-primary font-semibold">REZ-{ev.provider_booking_id}</td>
+                      <td className="py-3.5 px-4 text-secondary">
+                        <span className="font-semibold text-primary">{providerName}</span> · {channelName}
+                      </td>
+                      <td className={`py-3.5 px-4 font-bold tabular-nums font-mono ${
+                        Number(ev.delta_amount) > 0
+                          ? "text-success"
+                          : Number(ev.delta_amount) < 0
+                          ? "text-danger"
+                          : "text-secondary"
                       }`}>
-                        {ev.event_type}
-                      </span>
-                    </td>
-                    <td className="p-3 font-mono text-[11px]">{ev.provider_booking_id}</td>
-                    <td className="p-3">
-                      <span className="font-semibold">{ev.source_provider}</span> / {ev.booking_channel}
-                    </td>
-                    <td className={`p-3 font-bold tabular-nums font-mono ${
-                      Number(ev.delta_amount) > 0
-                        ? "text-emerald-700"
-                        : Number(ev.delta_amount) < 0
-                        ? "text-rose-700"
-                        : "text-[var(--secondary)]"
-                    }`}>
-                      {Number(ev.delta_amount) > 0 ? "+" : ""}
-                      ${Number(ev.delta_amount).toFixed(2)}
-                    </td>
-                    <td className="p-3 font-mono text-[10px] text-[var(--secondary)] truncate max-w-xs" title={ev.idempotency_key}>
-                      {ev.idempotency_key}
-                    </td>
-                    <td className="p-3 text-[10px] text-[var(--secondary)] whitespace-nowrap">
-                      {new Date(ev.created_at).toLocaleString()}
-                    </td>
-                  </tr>
-                ))
+                        {Number(ev.delta_amount) > 0 ? "+" : ""}
+                        ${Number(ev.delta_amount).toFixed(2)}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-[10px] text-tertiary truncate max-w-xs" title={ev.idempotency_key}>
+                        {ev.idempotency_key}
+                      </td>
+                      <td className="py-3.5 px-4 text-[11px] text-tertiary whitespace-nowrap">
+                        {new Date(ev.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

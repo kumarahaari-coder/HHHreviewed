@@ -55,7 +55,7 @@ export default function PartnerManagement() {
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("ALL");
+  const [selectedStatus, setSelectedStatus] = useState("OPERATIONAL");
 
   // Selection / Detail Drawer State
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
@@ -78,15 +78,16 @@ export default function PartnerManagement() {
   const [formError, setFormError] = useState("");
 
   const refreshData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setError(null);
-      const [pRes, sRes] = await Promise.all([
-        fetch("/api/admin/partners").catch(() => null),
-        fetch("/api/admin/sites").catch(() => null)
+      const [partnersRes, sitesRes] = await Promise.all([
+        fetch("/api/admin/partners"),
+        fetch("/api/admin/sites")
       ]);
 
-      if (pRes && pRes.ok) {
-        const pData = await pRes.json();
+      if (partnersRes && partnersRes.ok) {
+        const pData = await partnersRes.json();
         if (pData.success && Array.isArray(pData.partners)) {
           setPartners(pData.partners);
         } else {
@@ -96,8 +97,8 @@ export default function PartnerManagement() {
         setPartners(db.partners);
       }
 
-      if (sRes && sRes.ok) {
-        const sData = await sRes.json();
+      if (sitesRes && sitesRes.ok) {
+        const sData = await sitesRes.json();
         if (sData.success && Array.isArray(sData.sites)) {
           setSites(sData.sites);
         } else {
@@ -193,7 +194,10 @@ export default function PartnerManagement() {
       if (!matchName && !matchBusiness && !matchEmail) return false;
     }
 
-    if (selectedStatus !== "ALL" && p.status !== selectedStatus) {
+    if (selectedStatus === "OPERATIONAL") {
+      // Focus default operational directory on Active & Invited partners
+      if (p.status !== "ACTIVE" && p.status !== "INVITED") return false;
+    } else if (selectedStatus !== "ALL_RECORDS" && p.status !== selectedStatus) {
       return false;
     }
 
@@ -255,11 +259,11 @@ export default function PartnerManagement() {
               onChange={e => setSelectedStatus(e.target.value)}
               className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option value="ALL">All Account States</option>
-              <option value="ACTIVE">Active</option>
-              <option value="INVITED">Invited</option>
-              <option value="SUSPENDED">Suspended</option>
-              <option value="ARCHIVED">Archived</option>
+              <option value="OPERATIONAL">Operational (Active & Invited)</option>
+              <option value="ACTIVE">Active Only</option>
+              <option value="INVITED">Invited Only</option>
+              <option value="SUSPENDED">Suspended Only</option>
+              <option value="ALL_RECORDS">All Records (Inc. Suspended)</option>
             </select>
           </div>
         </div>

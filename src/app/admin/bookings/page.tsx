@@ -442,8 +442,9 @@ function BookingsContent() {
               variant="secondary"
               size="sm"
               icon={RefreshCw}
+              iconClassName={isRefreshing ? "animate-spin" : ""}
+              disabled={isRefreshing}
               onClick={handleManualSync}
-              className={isRefreshing ? "animate-spin" : ""}
             >
               {isRefreshing ? "Syncing..." : "Sync OwnerRez"}
             </Button>
@@ -520,7 +521,7 @@ function BookingsContent() {
       </div>
 
       {/* 3. Search & Filter Bar */}
-      <Card variant="default" className="p-3.5 sm:p-4 space-y-3">
+      <div className="bg-surface border border-divider-soft rounded-xl p-3 sm:p-3.5 space-y-3 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           {/* Search Input */}
           <div className="relative flex-1 min-w-0">
@@ -620,7 +621,7 @@ function BookingsContent() {
             )}
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* 4. Desktop Operational Table (>=768px) */}
       <div className="hidden md:block">
@@ -634,13 +635,12 @@ function BookingsContent() {
                 <TableHead align="right">Payment</TableHead>
                 <TableHead align="right">Commission</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead align="center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredReservations.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-12">
+                  <TableCell colSpan={6} className="py-12">
                     <EmptyState
                       title="No reservations found"
                       description="No bookings match your selected operational filters or search query."
@@ -669,6 +669,10 @@ function BookingsContent() {
                     : preview
                     ? Number(preview.commissionCalculations?.calculatedCommission || 0)
                     : (res.grossAmount || res.bookingAmount || 0) * 0.10;
+
+                  const isHighAttnAttr = attrStatus === "UNATTRIBUTED" || attrStatus === "REVIEW_REQUIRED";
+                  const isHighAttnPayout = res.payoutStatus === "ON_HOLD" || res.payoutStatus === "ELIGIBLE";
+                  const isHighAttnStay = res.reservationStatus === "CHECKED_IN";
 
                   return (
                     <TableRow
@@ -711,13 +715,19 @@ function BookingsContent() {
 
                       {/* Column 3: Referral Source & Attribution */}
                       <TableCell>
-                        <div className="space-y-1">
+                        <div className="space-y-0.5">
                           <div className="text-xs font-medium text-primary truncate max-w-[180px]">
                             {site ? site.siteName : partner ? partner.contactName : <span className="text-tertiary italic">Unattributed</span>}
                           </div>
-                          <StatusBadge variant={getStatusTypeForState(attrStatus)}>
-                            {formatStatusLabel(attrStatus)}
-                          </StatusBadge>
+                          {isHighAttnAttr ? (
+                            <StatusBadge variant={getStatusTypeForState(attrStatus)}>
+                              {formatStatusLabel(attrStatus)}
+                            </StatusBadge>
+                          ) : (
+                            <div className="text-[11px] text-secondary font-medium">
+                              {formatStatusLabel(attrStatus)}
+                            </div>
+                          )}
                         </div>
                       </TableCell>
 
@@ -739,33 +749,29 @@ function BookingsContent() {
                           <div className="font-semibold text-primary">
                             ${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
-                          <div className="text-[11px]">
-                            <StatusBadge variant={getStatusTypeForState(res.payoutStatus || "ESTIMATED")}>
-                              {formatStatusLabel(res.payoutStatus || "ESTIMATED")}
+                          {isHighAttnPayout ? (
+                            <StatusBadge variant={getStatusTypeForState(res.payoutStatus)}>
+                              {formatStatusLabel(res.payoutStatus)}
                             </StatusBadge>
-                          </div>
+                          ) : (
+                            <div className="text-[11px] text-secondary font-medium">
+                              {formatStatusLabel(res.payoutStatus || "ESTIMATED")}
+                            </div>
+                          )}
                         </div>
                       </TableCell>
 
                       {/* Column 6: Stay / Operational Status */}
                       <TableCell>
-                        <StatusBadge variant={getStatusTypeForState(res.reservationStatus)}>
-                          {formatStatusLabel(res.reservationStatus)}
-                        </StatusBadge>
-                      </TableCell>
-
-                      {/* Column 7: Action Trigger */}
-                      <TableCell align="center">
-                        <Button
-                          variant="tertiary"
-                          size="sm"
-                          icon={Eye}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedRes(res);
-                            setAdminNoteInput(res.adminNotes || "");
-                          }}
-                        />
+                        {isHighAttnStay ? (
+                          <StatusBadge variant={getStatusTypeForState(res.reservationStatus)}>
+                            {formatStatusLabel(res.reservationStatus)}
+                          </StatusBadge>
+                        ) : (
+                          <span className={`text-xs font-medium ${res.reservationStatus === "CANCELLED" ? "text-danger" : "text-secondary"}`}>
+                            {formatStatusLabel(res.reservationStatus)}
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   );

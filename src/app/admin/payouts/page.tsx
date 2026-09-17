@@ -225,50 +225,50 @@ export default function PayoutProcessing() {
   });
 
   const tabList = [
-    { id: "phase6_ledger", label: "Ledger & Batches (Phase 6)" },
-    { id: "eligible", label: `Eligible Queue (${eligiblePayouts.length})` },
-    { id: "holds", label: `Admin Holds (${holdPayouts.length})` },
-    { id: "approved", label: `Approved Queue (${approvedPayouts.length})` },
-    { id: "batches", label: `Payment Batches (${batches.filter(b => b.status === "PENDING").length})` },
-    { id: "history", label: `Payout History` }
+    { id: "phase6_ledger", title: "Ledger & Batches", count: null },
+    { id: "eligible", title: "Eligible Queue", count: eligiblePayouts.length },
+    { id: "holds", title: "Admin Holds", count: holdPayouts.length },
+    { id: "approved", title: "Approved Queue", count: approvedPayouts.length },
+    { id: "batches", title: "Payment Batches", count: batches.filter(b => b.status === "PENDING").length },
+    { id: "history", title: "Payout History", count: null }
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 font-sans">
       <PageHeader
         title="Payout Operations"
-        description="Manage partner commission ledger, approve eligible balances, and review payout batch lifecycles under Phase 6 maker-checker rules."
+        description="Manage partner commission ledger, approve eligible balances, and review payout batch lifecycles."
       />
 
       {/* Operational Mode Alert */}
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-md bg-[var(--canvas)] text-[var(--primary)]">
-            <Lock size={18} />
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-[var(--primary)]">Settlement Engine Controlled</div>
-            <div className="text-xs text-[var(--secondary)]">
-              Settlement switch: <code className="font-mono text-[var(--primary)]">PHASE6_SETTLEMENT_ENABLED=false</code> | External payouts: <code className="font-mono text-[var(--primary)]">PHASE6_EXTERNAL_PAYOUTS_ENABLED=false</code>
-            </div>
+      <div className="rounded-xl border border-divider-soft bg-surface-subtle p-4 flex items-center gap-3 shadow-xs">
+        <div className="p-2 rounded-lg bg-surface border border-divider-soft text-primary shrink-0">
+          <Lock size={18} />
+        </div>
+        <div>
+          <div className="text-xs font-bold text-primary">Settlement disabled</div>
+          <div className="text-xs text-secondary mt-0.5">
+            External payout execution and settlement are currently disabled. Internal review and batch preparation remain available.
           </div>
         </div>
-        <StatusBadge variant="info">ReadOnly Settlement</StatusBadge>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-[var(--border)] flex gap-2 overflow-x-auto pb-px">
+      {/* Quieter Horizontal Tabs */}
+      <div className="border-b border-divider-soft flex items-center gap-6 overflow-x-auto pb-px">
         {tabList.map(t => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
-            className={`px-4 py-2 text-xs font-semibold whitespace-nowrap transition-colors border-b-2 ${
+            className={`py-2.5 text-xs whitespace-nowrap transition-colors border-b-2 font-medium cursor-pointer ${
               activeTab === t.id
-                ? "border-[var(--primary)] text-[var(--primary)]"
-                : "border-transparent text-[var(--secondary)] hover:text-[var(--primary)]"
+                ? "border-primary text-primary font-semibold"
+                : "border-transparent text-secondary hover:text-primary"
             }`}
           >
-            {t.label}
+            {t.title}
+            {t.count !== null && (
+              <span className="ml-1.5 text-tertiary font-normal">({t.count})</span>
+            )}
           </button>
         ))}
       </div>
