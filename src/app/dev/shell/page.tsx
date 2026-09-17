@@ -3,6 +3,7 @@
 import React, { useState, useEffect, Suspense } from "react";
 import { notFound, useSearchParams } from "next/navigation";
 import { AppShell, NavItem } from "@/components/shell";
+import AdminOverview from "@/app/admin/page";
 import {
   Button,
   Card,
@@ -150,7 +151,10 @@ function ShellPreviewContent() {
       onSignOut={() => alert("Signed out successfully")}
       initialMobileNavOpen={initialDrawerOpen}
     >
-      <div className="space-y-8 font-sans">
+      {portalMode === "admin" ? (
+        <AdminOverview />
+      ) : (
+        <div className="space-y-8 font-sans">
         {/* 0. Developer Controls Toolbar */}
         <div className="bg-surface border border-divider rounded-xl p-4 space-y-4 shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-divider-soft pb-3">
@@ -176,7 +180,7 @@ function ShellPreviewContent() {
                   type="button"
                   onClick={() => setPortalMode("admin")}
                   className={`flex-1 py-1 px-2 rounded text-xs font-medium cursor-pointer transition-colors ${
-                    portalMode === "admin" ? "bg-surface text-primary font-semibold shadow-xs" : "text-secondary hover:text-primary"
+                    (portalMode as string) === "admin" ? "bg-surface text-primary font-semibold shadow-xs" : "text-secondary hover:text-primary"
                   }`}
                 >
                   Admin Desktop
@@ -368,6 +372,7 @@ function ShellPreviewContent() {
           </div>
         </div>
       </div>
+      )}
     </AppShell>
   );
 }
