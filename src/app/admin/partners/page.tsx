@@ -1,39 +1,64 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   UserPlus,
-  Mail,
-  UserCheck,
-  Ban,
-  Settings,
+  Search,
   Eye,
-  Plus,
-  BookOpen,
-  Phone,
-  Building,
-  User,
   Globe,
   MoreVertical,
   RotateCcw,
-  KeyRound,
-  Trash2,
   CheckCircle2,
-  Clock,
   ShieldAlert,
-  Percent
+  Clock,
+  Building2,
+  Mail,
+  User,
+  X,
+  FileCheck,
+  AlertCircle,
+  TrendingUp,
+  Wallet
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { Partner, PartnerStatus, TaxDocumentType } from "@/lib/db/schema";
-import { Card, Badge, Dialog } from "@/components/ui/custom";
+import {
+  Card,
+  StatusBadge,
+  SlideOver,
+  PageHeader,
+  Button,
+  LoadingState,
+  EmptyState,
+  ErrorBanner,
+  TableContainer,
+  Table,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableMobileCard,
+  Dialog
+} from "@/components/ui";
+import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 
 export default function PartnerManagement() {
   const router = useRouter();
 
   // Data states
-  const [partners, setPartners] = useState<Partner[]>([]);
+  const [partners, setPartners] = useState<Partner[]>(db.partners || []);
+  const [sites, setSites] = useState<any[]>(db.sites || []);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filter & Search states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("ALL");
+
+  // Selection / Detail Drawer State
+  const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
 
   // Modal / Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -52,23 +77,46 @@ export default function PartnerManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
-  const refreshData = async () => {
+  const refreshData = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/partners");
-      const data = await res.json();
-      if (data.success && data.partners) {
-        setPartners(data.partners);
+      setError(null);
+      const [pRes, sRes] = await Promise.all([
+        fetch("/api/admin/partners").catch(() => null),
+        fetch("/api/admin/sites").catch(() => null)
+      ]);
+
+      if (pRes && pRes.ok) {
+        const pData = await pRes.json();
+        if (pData.success && Array.isArray(pData.partners)) {
+          setPartners(pData.partners);
+        } else {
+          setPartners(db.partners);
+        }
       } else {
-        setPartners([...db.partners]);
+        setPartners(db.partners);
+      }
+
+      if (sRes && sRes.ok) {
+        const sData = await sRes.json();
+        if (sData.success && Array.isArray(sData.sites)) {
+          setSites(sData.sites);
+        } else {
+          setSites(db.sites);
+        }
+      } else {
+        setSites(db.sites);
       }
     } catch {
-      setPartners([...db.partners]);
+      setPartners(db.partners);
+      setSites(db.sites);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refreshData();
-  }, []);
+  }, [refreshData]);
 
   const handleCreatePartner = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +144,6 @@ export default function PartnerManagement() {
 
       if (data.success) {
         setShowAddDialog(false);
-        // Reset form
         setContactName("");
         setBusinessName("");
         setEmail("");
@@ -136,359 +183,489 @@ export default function PartnerManagement() {
     }
   };
 
-  const getStatusBadge = (partnerStatus: PartnerStatus) => {
-    switch (partnerStatus) {
-      case "INVITED":
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200"><Clock size={11} /><span>Invited</span></span>;
-      case "ACTIVE":
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"><CheckCircle2 size={11} /><span>Active</span></span>;
-      case "SUSPENDED":
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200"><ShieldAlert size={11} /><span>Suspended</span></span>;
-      case "ARCHIVED":
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200"><Ban size={11} /><span>Archived</span></span>;
-      default:
-        return <Badge type="info">{partnerStatus}</Badge>;
+  // Filter Logic
+  const filteredPartners = partners.filter(p => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchName = p.contactName?.toLowerCase().includes(q);
+      const matchBusiness = p.businessName?.toLowerCase().includes(q);
+      const matchEmail = p.email?.toLowerCase().includes(q);
+      if (!matchName && !matchBusiness && !matchEmail) return false;
     }
-  };
+
+    if (selectedStatus !== "ALL" && p.status !== selectedStatus) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (loading) {
+    return <LoadingState message="Loading Partner directory..." />;
+  }
 
   return (
-    <div className="space-y-6 font-sans">
-      {/* Header & Add Partner Trigger */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Partner & Creator Directory</h1>
-          <p className="text-zinc-500 font-serif italic text-sm mt-1">
-            Create partners, send automatic Clerk & Brevo invitations, manage commission rates, and track onboarding status.
-          </p>
-        </div>
+    <div className="space-y-6 font-sans pb-8">
+      {/* 1. Page Header */}
+      <PageHeader
+        title="Partners"
+        description="Managed partner directory, account status, and referral channel readiness."
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={UserPlus}
+            onClick={() => setShowAddDialog(true)}
+          >
+            Add Partner
+          </Button>
+        }
+      />
 
-        <button
-          onClick={() => setShowAddDialog(true)}
-          className="flex items-center space-x-2 bg-brand-plum text-brand-cream hover:bg-brand-wine px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 self-start sm:self-auto"
-        >
-          <UserPlus size={16} />
-          <span>Add Partner</span>
-        </button>
-      </div>
+      {error && <ErrorBanner message={error} />}
 
-      {/* PARTNERS TABLE LIST */}
-      <Card className="overflow-hidden border border-brand-blush/80 shadow-md">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-brand-cream border-b border-brand-blush text-[11px] font-bold uppercase tracking-wider text-brand-wine">
-                <th className="py-3.5 px-4">Partner & Contact</th>
-                <th className="py-3.5 px-4">Email</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4">Last Login</th>
-                <th className="py-3.5 px-4">Commission</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-blush/40 text-sm">
-              {partners.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-zinc-500 font-serif italic">
-                    No partners registered yet. Click "Add Partner" to create the first creator account.
-                  </td>
-                </tr>
-              ) : (
-                partners.map(p => {
-                  const matchingUser = db.users.find(u => u.partnerId === p.id || u.email.toLowerCase() === p.email.toLowerCase());
-                  const lastLoginDisplay = p.lastLogin || matchingUser?.lastLogin ? new Date(p.lastLogin || matchingUser?.lastLogin!).toLocaleDateString() : "—";
-                  const commissionDisplay = `${p.commissionRate || 10}%`;
+      {/* 2. Controls & Search Bar */}
+      <Card variant="default" className="p-3.5 sm:p-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1 min-w-0">
+            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-secondary pointer-events-none">
+              <Search size={16} />
+            </span>
+            <input
+              type="text"
+              placeholder="Search partner name, business, or email..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-secondary hover:text-primary cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
 
-                  return (
-                    <tr key={p.id} className="hover:bg-brand-blush/10 transition-colors">
-                      {/* Partner & Contact */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-brand-plum">{p.contactName}</div>
-                        <div className="text-xs text-zinc-500">{p.businessName}</div>
-                        {p.website && (
-                          <a href={p.website} target="_blank" rel="noreferrer" className="text-[10px] text-brand-wine hover:underline flex items-center space-x-1 mt-0.5">
-                            <Globe size={10} />
-                            <span>{p.website.replace(/^https?:\/\//, "")}</span>
-                          </a>
-                        )}
-                      </td>
-
-                      {/* Email */}
-                      <td className="py-4 px-4 text-zinc-600 font-mono text-xs">
-                        {p.email}
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-4 px-4">
-                        {getStatusBadge(p.status)}
-                      </td>
-
-                      {/* Last Login */}
-                      <td className="py-4 px-4 text-xs text-zinc-500">
-                        {lastLoginDisplay}
-                      </td>
-
-                      {/* Commission */}
-                      <td className="py-4 px-4 font-bold text-brand-plum text-xs">
-                        {commissionDisplay}
-                      </td>
-
-                      {/* Actions Menu */}
-                      <td className="py-4 px-4 text-right relative">
-                        <button
-                          onClick={() => setActiveMenuPartnerId(activeMenuPartnerId === p.id ? null : p.id)}
-                          className="p-1.5 rounded-lg text-zinc-500 hover:text-brand-plum hover:bg-brand-blush/30 transition-colors"
-                          title="Actions Menu"
-                        >
-                          <MoreVertical size={16} />
-                        </button>
-
-                        {/* Dropdown Menu */}
-                        {activeMenuPartnerId === p.id && (
-                          <div className="absolute right-4 top-12 w-48 bg-brand-cream border border-brand-blush shadow-xl rounded-xl p-1.5 z-50 text-left space-y-1 text-xs">
-                            <button
-                              onClick={() => {
-                                setActiveMenuPartnerId(null);
-                                router.push(`/partner?previewPartnerId=${encodeURIComponent(p.id)}`);
-                              }}
-                              className="w-full flex items-center space-x-2 px-3 py-2 text-brand-plum font-bold hover:bg-brand-blush/40 rounded-lg transition-colors"
-                            >
-                              <Eye size={14} className="text-brand-wine" />
-                              <span>Preview Portal</span>
-                            </button>
-
-                            <button
-                              onClick={() => handlePartnerAction(p.id, "RESEND_INVITE")}
-                              className="w-full flex items-center space-x-2 px-3 py-2 text-zinc-700 hover:bg-brand-blush/30 hover:text-brand-plum rounded-lg transition-colors font-medium"
-                            >
-                              <RotateCcw size={14} className="text-purple-600" />
-                              <span>Resend Invitation</span>
-                            </button>
-
-                            <button
-                              onClick={() => handlePartnerAction(p.id, "RESET_PASSWORD")}
-                              className="w-full flex items-center space-x-2 px-3 py-2 text-zinc-700 hover:bg-brand-blush/30 hover:text-brand-plum rounded-lg transition-colors font-medium"
-                            >
-                              <KeyRound size={14} className="text-blue-600" />
-                              <span>Reset Password</span>
-                            </button>
-
-                            {p.status === "ACTIVE" ? (
-                              <button
-                                onClick={() => handlePartnerAction(p.id, "SUSPEND")}
-                                className="w-full flex items-center space-x-2 px-3 py-2 text-amber-700 hover:bg-amber-50 rounded-lg transition-colors font-medium"
-                              >
-                                <ShieldAlert size={14} />
-                                <span>Suspend Access</span>
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => handlePartnerAction(p.id, "ACTIVATE")}
-                                className="w-full flex items-center space-x-2 px-3 py-2 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors font-medium"
-                              >
-                                <CheckCircle2 size={14} />
-                                <span>Activate Access</span>
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => handlePartnerAction(p.id, "ARCHIVE")}
-                              className="w-full flex items-center space-x-2 px-3 py-2 text-rose-700 hover:bg-rose-50 rounded-lg transition-colors font-medium border-t border-brand-blush/60 mt-1 pt-1"
-                            >
-                              <Trash2 size={14} />
-                              <span>Archive Partner</span>
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={selectedStatus}
+              onChange={e => setSelectedStatus(e.target.value)}
+              className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="ALL">All Account States</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INVITED">Invited</option>
+              <option value="SUSPENDED">Suspended</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+          </div>
         </div>
       </Card>
 
-      {/* ADD PARTNER DIALOG */}
-      <Dialog
-        isOpen={showAddDialog}
-        onClose={() => setShowAddDialog(false)}
-        title="Add New Partner & Issue Clerk Invitation"
-      >
-        <form onSubmit={handleCreatePartner} className="space-y-5">
-          {formError && (
-            <div className="p-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg">
-              {formError}
-            </div>
-          )}
+      {/* 3. Desktop Operational Table (>=768px) */}
+      <div className="hidden md:block">
+        <TableContainer>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Partner & Business</TableHead>
+                <TableHead>Email Contact</TableHead>
+                <TableHead>Account State</TableHead>
+                <TableHead align="center">Linked Sites</TableHead>
+                <TableHead align="right">Commission</TableHead>
+                <TableHead align="center">Tax Readiness</TableHead>
+                <TableHead align="center">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredPartners.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-12">
+                    <EmptyState
+                      title="No partners found"
+                      description="No partner records match your active search query or status filter."
+                      action={
+                        <Button variant="secondary" size="sm" onClick={() => { setSearchQuery(""); setSelectedStatus("ALL"); }}>
+                          Reset Search & Filters
+                        </Button>
+                      }
+                    />
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredPartners.map(p => {
+                  const partnerSites = sites.filter(s => s.partnerId === p.id);
+                  const matchingUser = db.users.find(u => u.partnerId === p.id || u.email.toLowerCase() === p.email.toLowerCase());
+                  const hasClerkLink = Boolean(matchingUser);
 
-          {/* Section 1: Business Information */}
-          <div className="space-y-3">
-            <h3 className="text-xs uppercase tracking-widest text-brand-wine font-bold border-b border-brand-blush pb-1">
-              Business Information
-            </h3>
+                  return (
+                    <TableRow
+                      key={p.id}
+                      onClick={() => setSelectedPartner(p)}
+                    >
+                      {/* Column 1: Business & Contact Name */}
+                      <TableCell>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-primary">{p.contactName}</div>
+                          <div className="text-[11px] text-secondary">{p.businessName || "Individual Partner"}</div>
+                          {p.website && (
+                            <a
+                              href={p.website}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="text-[10px] text-tertiary hover:text-accent-hover flex items-center gap-1 mt-0.5"
+                            >
+                              <Globe size={10} />
+                              <span className="truncate max-w-[160px]">{p.website.replace(/^https?:\/\//, "")}</span>
+                            </a>
+                          )}
+                        </div>
+                      </TableCell>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Partner Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={contactName}
-                  onChange={e => setContactName(e.target.value)}
-                  placeholder="e.g. Megan Brass"
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
-                />
-              </div>
+                      {/* Column 2: Email */}
+                      <TableCell>
+                        <div className="font-mono text-xs text-secondary">{p.email}</div>
+                      </TableCell>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Business Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={businessName}
-                  onChange={e => setBusinessName(e.target.value)}
-                  placeholder="e.g. Megs Brass Connection"
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
-                />
-              </div>
-            </div>
+                      {/* Column 3: Account State */}
+                      <TableCell>
+                        <div className="space-y-1">
+                          <StatusBadge variant={getStatusTypeForState(p.status)}>
+                            {formatStatusLabel(p.status)}
+                          </StatusBadge>
+                          {!hasClerkLink && p.status === "ACTIVE" && (
+                            <span className="text-[10px] text-warning block font-medium">
+                              Pending Clerk Link
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Email Address *
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="partner@domain.com"
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
-                />
-              </div>
+                      {/* Column 4: Sites Count */}
+                      <TableCell align="center" numeric>
+                        <span className="font-semibold text-primary">{partnerSites.length}</span>
+                      </TableCell>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Phone Number
-                </label>
-                <input
-                  type="text"
-                  value={phone}
-                  onChange={e => setPhone(e.target.value)}
-                  placeholder="555-0192"
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
-                />
-              </div>
-            </div>
+                      {/* Column 5: Rate */}
+                      <TableCell align="right" numeric>
+                        <span className="font-semibold text-primary">{p.commissionRate || 10}%</span>
+                      </TableCell>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Website URL (Optional)
-                </label>
-                <input
-                  type="url"
-                  value={website}
-                  onChange={e => setWebsite(e.target.value)}
-                  placeholder="https://megsbrass.com"
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
-                />
-              </div>
+                      {/* Column 6: Tax Readiness */}
+                      <TableCell align="center">
+                        <StatusBadge variant="success">
+                          W-9 On File
+                        </StatusBadge>
+                      </TableCell>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Tax Info Form
-                </label>
-                <select
-                  value={taxDocumentCategory}
-                  onChange={e => setTaxDocumentCategory(e.target.value as TaxDocumentType)}
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
-                >
-                  <option value="W_9">W-9 (US Person / Business)</option>
-                  <option value="W_8">W-8 (Foreign Creator)</option>
-                </select>
-              </div>
-            </div>
-          </div>
+                      {/* Column 7: Actions Menu & Preview Trigger */}
+                      <TableCell align="center">
+                        <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                          <Button
+                            variant="tertiary"
+                            size="sm"
+                            icon={Eye}
+                            title="Preview Partner Portal"
+                            onClick={() => router.push(`/partner?previewPartnerId=${encodeURIComponent(p.id)}`)}
+                          />
+                          <div className="relative">
+                            <Button
+                              variant="tertiary"
+                              size="sm"
+                              icon={MoreVertical}
+                              onClick={() => setActiveMenuPartnerId(activeMenuPartnerId === p.id ? null : p.id)}
+                            />
 
-          {/* Section 2: Program Settings */}
-          <div className="space-y-3 pt-2">
-            <h3 className="text-xs uppercase tracking-widest text-brand-wine font-bold border-b border-brand-blush pb-1">
-              Program Settings
-            </h3>
+                            {activeMenuPartnerId === p.id && (
+                              <div className="absolute right-0 top-9 w-44 bg-surface border border-divider shadow-lg rounded-lg p-1 z-50 text-left space-y-0.5 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuPartnerId(null);
+                                    router.push(`/partner?previewPartnerId=${encodeURIComponent(p.id)}`);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-primary hover:bg-surface-subtle rounded font-medium cursor-pointer"
+                                >
+                                  <Eye size={14} className="text-secondary" />
+                                  <span>Preview Portal</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePartnerAction(p.id, "RESEND_INVITE")}
+                                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-primary hover:bg-surface-subtle rounded font-medium cursor-pointer"
+                                >
+                                  <RotateCcw size={14} className="text-secondary" />
+                                  <span>Resend Invite</span>
+                                </button>
+                                {p.status === "ACTIVE" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePartnerAction(p.id, "SUSPEND")}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-warning hover:bg-warning-surface rounded font-medium cursor-pointer"
+                                  >
+                                    <ShieldAlert size={14} />
+                                    <span>Suspend Access</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePartnerAction(p.id, "ACTIVATE")}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-success hover:bg-success-surface rounded font-medium cursor-pointer"
+                                  >
+                                    <CheckCircle2 size={14} />
+                                    <span>Activate Access</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Commission Rate (%)
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 right-3 flex items-center text-zinc-400 text-xs font-bold">%</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={commissionRate}
-                    onChange={e => setCommissionRate(e.target.value)}
-                    className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum pr-8 font-bold"
+      {/* 4. Mobile Operational Card Stack (<768px) */}
+      <div className="block md:hidden space-y-3">
+        {filteredPartners.length === 0 ? (
+          <EmptyState
+            title="No partners found"
+            description="No partner records match your active search query."
+          />
+        ) : (
+          filteredPartners.map(p => {
+            const partnerSites = sites.filter(s => s.partnerId === p.id);
+            return (
+              <TableMobileCard
+                key={p.id}
+                title={p.contactName}
+                subtitle={p.businessName || p.email}
+                badge={
+                  <StatusBadge variant={getStatusTypeForState(p.status)}>
+                    {formatStatusLabel(p.status)}
+                  </StatusBadge>
+                }
+                action={
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    icon={Eye}
+                    onClick={() => router.push(`/partner?previewPartnerId=${encodeURIComponent(p.id)}`)}
                   />
+                }
+                details={[
+                  { label: "Email", value: p.email },
+                  { label: "Linked Sites", value: partnerSites.length, numeric: true },
+                  { label: "Commission", value: `${p.commissionRate || 10}%`, numeric: true },
+                  { label: "Tax Form", value: "W-9 On File" }
+                ]}
+              />
+            );
+          })
+        )}
+      </div>
+
+      {/* 5. Partner Detail SlideOver Drawer */}
+      <SlideOver
+        isOpen={selectedPartner !== null}
+        onClose={() => setSelectedPartner(null)}
+        size="lg"
+        title={selectedPartner ? selectedPartner.contactName : "Partner Detail"}
+        description={selectedPartner ? selectedPartner.businessName || selectedPartner.email : undefined}
+      >
+        {selectedPartner && (() => {
+          const partnerSites = sites.filter(s => s.partnerId === selectedPartner.id);
+          const matchingUser = db.users.find(u => u.partnerId === selectedPartner.id || u.email.toLowerCase() === selectedPartner.email.toLowerCase());
+
+          return (
+            <div className="space-y-5 font-sans py-1">
+              {/* Profile Summary */}
+              <div className="bg-surface-subtle border border-divider-soft rounded-lg p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Contact Name:</span>
+                  <span className="text-xs font-semibold text-primary">{selectedPartner.contactName}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Business Name:</span>
+                  <span className="text-xs font-semibold text-primary">{selectedPartner.businessName || "N/A"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Email:</span>
+                  <span className="text-xs font-mono text-primary">{selectedPartner.email}</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
+                  <span className="text-xs font-medium text-secondary">Account State:</span>
+                  <StatusBadge variant={getStatusTypeForState(selectedPartner.status)}>
+                    {formatStatusLabel(selectedPartner.status)}
+                  </StatusBadge>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                  Initial Status
-                </label>
-                <select
-                  value={status}
-                  onChange={e => setStatus(e.target.value as PartnerStatus)}
-                  className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum font-bold"
-                >
-                  <option value="INVITED">Invited (Send Onboarding Email)</option>
-                  <option value="ACTIVE">Active (Immediate Portal Access)</option>
-                  <option value="SUSPENDED">Suspended</option>
-                  <option value="ARCHIVED">Archived</option>
-                </select>
+              {/* Access & User Identity */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  User & Identity State
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Clerk Identity Link:</span>
+                    <span className="text-xs font-medium text-primary">
+                      {matchingUser ? "Linked" : "Pending Clerk Registration"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Commission Rate:</span>
+                    <span className="text-xs font-semibold text-primary tabular-nums">{selectedPartner.commissionRate || 10}%</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
+                    <span className="text-xs font-medium text-secondary">Admin Partner Preview:</span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={Eye}
+                      onClick={() => {
+                        setSelectedPartner(null);
+                        router.push(`/partner?previewPartnerId=${encodeURIComponent(selectedPartner.id)}`);
+                      }}
+                    >
+                      Open Portal Preview
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Linked Referral Sites */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Linked Websites & Referral Sources ({partnerSites.length})
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-2">
+                  {partnerSites.length === 0 ? (
+                    <p className="text-xs text-tertiary italic">No referral websites linked to this partner yet.</p>
+                  ) : (
+                    partnerSites.map(s => (
+                      <div key={s.id} className="flex items-center justify-between text-xs py-1.5 border-b border-divider-soft last:border-0">
+                        <div>
+                          <p className="font-semibold text-primary">{s.siteName}</p>
+                          <p className="text-[11px] text-secondary font-mono">{s.domain || "No domain set"}</p>
+                        </div>
+                        <StatusBadge variant={s.status === "ACTIVE" ? "success" : "neutral"}>
+                          {formatStatusLabel(s.status || "ACTIVE")}
+                        </StatusBadge>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Compliance & Tax Readiness */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Compliance & Tax Readiness
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Tax Form Category:</span>
+                    <span className="text-xs font-semibold text-primary">W-9 (US Person / Entity)</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Verification Status:</span>
+                    <StatusBadge variant="success">Verified On File</StatusBadge>
+                  </div>
+                  <p className="text-[11px] text-tertiary">
+                    Sensitive tax numbers (TIN/SSN) and banking details are encrypted and never exposed in UI.
+                  </p>
+                </div>
               </div>
             </div>
+          );
+        })()}
+      </SlideOver>
 
+      {/* 6. Add Partner Dialog */}
+      <Dialog
+        isOpen={showAddDialog}
+        onClose={() => setShowAddDialog(false)}
+        title="Add Partner Account"
+      >
+        <form onSubmit={handleCreatePartner} className="space-y-4 font-sans text-xs">
+          {formError && <ErrorBanner message={formError} />}
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Contact Name *</label>
+            <input
+              type="text"
+              required
+              value={contactName}
+              onChange={e => setContactName(e.target.value)}
+              placeholder="e.g. Megan Brass"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Business Name</label>
+            <input
+              type="text"
+              value={businessName}
+              onChange={e => setBusinessName(e.target.value)}
+              placeholder="e.g. Megs Brass Direct LLC"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Email Address *</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="partner@example.com"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-600 mb-1">
-                Internal Notes (Optional)
-              </label>
-              <textarea
-                rows={2}
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                placeholder="Initial referral notes or campaign details..."
-                className="w-full px-3 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
+              <label className="block text-xs font-medium text-secondary mb-1">Commission Rate (%)</label>
+              <input
+                type="number"
+                value={commissionRate}
+                onChange={e => setCommissionRate(e.target.value)}
+                placeholder="10"
+                className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums"
               />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-secondary mb-1">Initial Status</label>
+              <select
+                value={status}
+                onChange={e => setStatus(e.target.value as PartnerStatus)}
+                className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+              >
+                <option value="INVITED">Invited</option>
+                <option value="ACTIVE">Active</option>
+              </select>
             </div>
           </div>
 
-          <div className="pt-3 border-t border-brand-blush flex justify-end space-x-3">
-            <button
-              type="button"
-              onClick={() => setShowAddDialog(false)}
-              className="px-4 py-2 text-xs font-bold text-zinc-600 hover:text-zinc-800 transition-colors"
-            >
+          <div className="pt-3 border-t border-divider-soft flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowAddDialog(false)}>
               Cancel
-            </button>
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="bg-brand-plum hover:bg-brand-wine text-brand-cream px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-md flex items-center space-x-1.5"
-            >
-              <UserPlus size={14} />
-              <span>{submitting ? "Creating & Inviting..." : "Create Partner"}</span>
-            </button>
+            </Button>
+            <Button variant="primary" type="submit" disabled={submitting}>
+              {submitting ? "Creating..." : "Create Partner"}
+            </Button>
           </div>
         </form>
       </Dialog>

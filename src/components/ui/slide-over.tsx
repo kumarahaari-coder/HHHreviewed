@@ -102,7 +102,7 @@ export function SlideOver({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden font-sans pointer-events-auto xl:hidden">
+    <div className="fixed inset-0 z-50 overflow-hidden font-sans pointer-events-auto">
       {/* Backdrop */}
       <div
         onClick={onClose}

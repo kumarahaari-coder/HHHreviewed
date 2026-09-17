@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Card, Badge, Dialog } from "@/components/ui/custom";
+import { PageHeader } from "@/components/ui/page-header";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableMobileCard } from "@/components/ui/table";
+import { StatusBadge } from "@/components/ui/badge";
+import { Dialog } from "@/components/ui/dialog";
 import {
   FileText,
   Filter,
@@ -14,7 +17,7 @@ import {
   Search,
   ShieldCheck,
   History,
-  MessageSquare
+  Lock
 } from "lucide-react";
 
 export default function AdminTaxDocumentsPage() {
@@ -147,39 +150,53 @@ export default function AdminTaxDocumentsPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "APPROVED":
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800"><CheckCircle size={12} /> Approved</span>;
+        return <StatusBadge variant="success">Approved</StatusBadge>;
       case "SUBMITTED":
       case "UNDER_REVIEW":
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800"><Clock size={12} /> Under Review</span>;
+        return <StatusBadge variant="info">Under Review</StatusBadge>;
       case "REJECTED":
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800"><AlertTriangle size={12} /> Rejected</span>;
+        return <StatusBadge variant="danger">Rejected</StatusBadge>;
       case "REPLACEMENT_REQUIRED":
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800"><RefreshCw size={12} /> Replace Req</span>;
+        return <StatusBadge variant="warning">Replace Req</StatusBadge>;
       default:
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-zinc-100 text-zinc-600">Missing</span>;
+        return <StatusBadge variant="gray">Missing</StatusBadge>;
     }
   };
 
   return (
-    <div className="space-y-8 font-sans">
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Creator Tax Documents</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Review, approve, download via short-lived signed URLs, and audit creator W-9 and W-8 tax submissions.
-        </p>
+    <div className="space-y-6">
+      <PageHeader
+        title="Tax Documents"
+        description="Operational compliance readiness for partner W-9 and W-8 submissions. Sensitive PII, Tax IDs, and S3 credentials remain masked."
+      />
+
+      {/* Security Banner */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-md bg-[var(--canvas)] text-[var(--primary)]">
+            <Lock size={18} />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-[var(--primary)]">PII Protection Active</div>
+            <div className="text-xs text-[var(--secondary)]">
+              SSNs, EINs, and bank routing credentials are encrypted at rest and never exposed in the interface.
+            </div>
+          </div>
+        </div>
+        <StatusBadge variant="success">Enforced</StatusBadge>
       </div>
 
-      {/* FILTERS AND METRICS */}
-      <Card className="space-y-4">
+      {/* FILTERS */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="relative">
-            <Search size={16} className="absolute left-3 top-3 text-zinc-400" />
+            <Search size={16} className="absolute left-3 top-3 text-[var(--secondary)]" />
             <input
               type="text"
-              placeholder="Search partner, business name..."
+              placeholder="Search partner..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none focus:border-brand-plum"
+              className="w-full pl-9 pr-4 py-2 bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs focus:outline-none focus:border-[var(--primary)]"
             />
           </div>
 
@@ -187,7 +204,7 @@ export default function AdminTaxDocumentsPage() {
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2.5 px-3 focus:outline-none focus:border-brand-plum font-semibold"
+              className="w-full bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs py-2 px-3 focus:outline-none focus:border-[var(--primary)] font-medium text-[var(--primary)]"
             >
               <option value="ALL">All Review Statuses</option>
               <option value="SUBMITTED">Submitted / Under Review</option>
@@ -202,7 +219,7 @@ export default function AdminTaxDocumentsPage() {
             <select
               value={docTypeFilter}
               onChange={e => setDocTypeFilter(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2.5 px-3 focus:outline-none focus:border-brand-plum font-semibold"
+              className="w-full bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs py-2 px-3 focus:outline-none focus:border-[var(--primary)] font-medium text-[var(--primary)]"
             >
               <option value="ALL">All Form Categories (W-9 / W-8)</option>
               <option value="W_9">W-9 Forms Only</option>
@@ -210,74 +227,74 @@ export default function AdminTaxDocumentsPage() {
             </select>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* CREATOR TAX TABLE */}
-      <Card className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-brand-bg border-b border-brand-blush/60 text-[10px] uppercase tracking-wider text-brand-wine font-extrabold">
-                <th className="py-3 px-4">Partner Creator</th>
-                <th className="py-3 px-4">Form Type / Subtype</th>
-                <th className="py-3 px-4">Submission Date</th>
-                <th className="py-3 px-4">Review Status</th>
-                <th className="py-3 px-4">Version</th>
-                <th className="py-3 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-blush/40 text-xs">
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-zinc-400 italic">Loading tax submissions...</td>
-                </tr>
-              ) : filteredList.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-zinc-400 italic">No creator tax records match the selected filters.</td>
-                </tr>
-              ) : (
-                filteredList.map(item => {
-                  const doc = item.taxDocument;
-                  const curVer = doc?.currentVersion;
-                  return (
-                    <tr key={item.partnerId} className="hover:bg-brand-bg/50 transition-colors">
-                      <td className="py-3.5 px-4 font-semibold text-brand-plum">
-                        <div>{item.businessName}</div>
-                        <div className="text-[10px] text-zinc-400 font-normal">{item.contactName} ({item.email})</div>
-                      </td>
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+        <Table className="hidden md:table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Partner</TableHead>
+              <TableHead>Form Type / Subtype</TableHead>
+              <TableHead>Submission Date</TableHead>
+              <TableHead>Readiness Status</TableHead>
+              <TableHead>Version</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-8 text-[var(--secondary)]">Loading tax submissions...</TableCell>
+              </TableRow>
+            ) : filteredList.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-8 text-[var(--secondary)]">No partner tax records match the selected filters.</TableCell>
+              </TableRow>
+            ) : (
+              filteredList.map(item => {
+                const doc = item.taxDocument;
+                const curVer = doc?.currentVersion;
+                return (
+                  <TableRow key={item.partnerId}>
+                    <TableCell>
+                      <div className="font-semibold text-[var(--primary)]">{item.businessName}</div>
+                      <div className="text-xs text-[var(--secondary)]">{item.contactName} ({item.email})</div>
+                    </TableCell>
 
-                      <td className="py-3.5 px-4 font-mono font-semibold">
-                        {curVer ? (
-                          <span>{curVer.documentType} {curVer.w8Subtype ? `(${curVer.w8Subtype})` : ""}</span>
-                        ) : (
-                          <span className="text-zinc-400 italic">N/A</span>
-                        )}
-                      </td>
+                    <TableCell className="font-mono font-medium">
+                      {curVer ? (
+                        <span>{curVer.documentType} {curVer.w8Subtype ? `(${curVer.w8Subtype})` : ""}</span>
+                      ) : (
+                        <span className="text-[var(--secondary)] italic">N/A</span>
+                      )}
+                    </TableCell>
 
-                      <td className="py-3.5 px-4 text-zinc-500">
-                        {curVer ? new Date(curVer.submissionDate).toLocaleDateString() : "—"}
-                      </td>
+                    <TableCell className="text-xs text-[var(--secondary)]">
+                      {curVer ? new Date(curVer.submissionDate).toLocaleDateString() : "—"}
+                    </TableCell>
 
-                      <td className="py-3.5 px-4">
-                        {getStatusBadge(doc.status)}
-                      </td>
+                    <TableCell>
+                      {getStatusBadge(doc.status)}
+                    </TableCell>
 
-                      <td className="py-3.5 px-4">
-                        {curVer ? (
-                          <span className="bg-brand-bg px-2 py-0.5 rounded border border-brand-blush text-[11px] font-mono">
-                            v{curVer.versionNumber} ({doc.totalVersions} total)
-                          </span>
-                        ) : "—"}
-                      </td>
+                    <TableCell className="font-mono text-xs">
+                      {curVer ? (
+                        <span className="px-2 py-0.5 rounded border border-[var(--border)] bg-[var(--canvas)]">
+                          v{curVer.versionNumber} ({doc.totalVersions} total)
+                        </span>
+                      ) : "—"}
+                    </TableCell>
 
-                      <td className="py-3.5 px-4 text-right space-x-2">
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1.5">
                         {doc.id && (
                           <>
                             <button
                               onClick={() => handleDownloadSignedUrl(doc.id, curVer?.id)}
                               disabled={signedUrlLoading}
-                              title="Download via 15-min Signed S3 URL"
-                              className="p-1.5 bg-brand-blush text-brand-plum rounded-lg hover:bg-brand-plum hover:text-brand-cream transition-all"
+                              title="Download via Short-Lived Signed URL"
+                              className="p-1.5 rounded-md border border-[var(--border)] hover:bg-[var(--canvas)] text-[var(--primary)]"
                             >
                               <Download size={14} />
                             </button>
@@ -285,7 +302,7 @@ export default function AdminTaxDocumentsPage() {
                             <button
                               onClick={() => handleOpenReviewModal(item)}
                               title="Review Status & Notes"
-                              className="p-1.5 bg-brand-plum text-brand-cream rounded-lg hover:bg-brand-wine transition-all"
+                              className="p-1.5 rounded-md bg-[var(--primary)] text-white hover:bg-[#333336]"
                             >
                               <Eye size={14} />
                             </button>
@@ -295,40 +312,63 @@ export default function AdminTaxDocumentsPage() {
                         <button
                           onClick={() => handleViewAuditHistory(item)}
                           title="View Audit History"
-                          className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-all"
+                          className="p-1.5 rounded-md border border-[var(--border)] text-[var(--secondary)] hover:bg-[var(--canvas)]"
                         >
                           <History size={14} />
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
 
-      {/* REVIEW MODAL */}
-      {selectedCreator && (
-        <Dialog
-          isOpen={true}
-          onClose={() => setSelectedCreator(null)}
-          title={`Review Tax Submission - ${selectedCreator.businessName}`}
-        >
+        <div className="md:hidden divide-y divide-[var(--border)]">
+          {filteredList.map(item => (
+            <TableMobileCard
+              key={item.partnerId}
+              title={item.businessName}
+              subtitle={`${item.contactName} (${item.email})`}
+              badge={getStatusBadge(item.taxDocument.status)}
+              details={[
+                { label: "Form Type", value: item.taxDocument?.currentVersion?.documentType || "N/A" },
+                { label: "Version", value: item.taxDocument?.currentVersion ? `v${item.taxDocument.currentVersion.versionNumber}` : "—" }
+              ]}
+              action={
+                <button
+                  onClick={() => handleOpenReviewModal(item)}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white"
+                >
+                  Review
+                </button>
+              }
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* REVIEW DIALOG */}
+      <Dialog
+        isOpen={!!selectedCreator}
+        onClose={() => setSelectedCreator(null)}
+        title={`Review Tax Submission — ${selectedCreator?.businessName || ""}`}
+      >
+        {selectedCreator && (
           <form onSubmit={handleReviewSubmit} className="space-y-4 font-sans text-xs">
-            <div className="bg-brand-bg p-3 rounded-lg border border-brand-blush space-y-1 text-zinc-600">
-              <p><strong className="text-brand-plum">Creator:</strong> {selectedCreator.contactName} ({selectedCreator.email})</p>
-              <p><strong className="text-brand-plum">Document Type:</strong> {selectedCreator.taxDocument.currentVersion?.documentType} {selectedCreator.taxDocument.currentVersion?.w8Subtype || ""}</p>
-              <p><strong className="text-brand-plum">Submitted File:</strong> {selectedCreator.taxDocument.currentVersion?.originalFilename}</p>
+            <div className="p-3 rounded-md bg-[var(--canvas)] border border-[var(--border)] space-y-1 text-[var(--secondary)]">
+              <div><strong className="text-[var(--primary)]">Partner:</strong> {selectedCreator.contactName} ({selectedCreator.email})</div>
+              <div><strong className="text-[var(--primary)]">Document Type:</strong> {selectedCreator.taxDocument.currentVersion?.documentType} {selectedCreator.taxDocument.currentVersion?.w8Subtype || ""}</div>
+              <div><strong className="text-[var(--primary)]">Submitted File:</strong> {selectedCreator.taxDocument.currentVersion?.originalFilename}</div>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Set Review Status</label>
+              <label className="block font-semibold text-[var(--primary)] mb-1">Set Review Status</label>
               <select
                 value={reviewStatus}
                 onChange={e => setReviewStatus(e.target.value)}
-                className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2.5 px-3 focus:outline-none"
+                className="w-full bg-[var(--surface)] border border-[var(--border)] rounded-md text-xs py-2 px-3 focus:outline-none"
               >
                 <option value="APPROVED">APPROVED (Valid & Signed)</option>
                 <option value="REJECTED">REJECTED (Invalid or Incomplete)</option>
@@ -338,81 +378,82 @@ export default function AdminTaxDocumentsPage() {
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Creator-Visible Review Note</label>
+              <label className="block font-semibold text-[var(--primary)] mb-1">Partner-Visible Review Note</label>
               <textarea
                 rows={3}
                 value={adminNote}
                 onChange={e => setAdminNote(e.target.value)}
-                placeholder="Explain approval status or reasons for rejection/replacement..."
-                className="w-full p-2.5 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none"
+                placeholder="Notes visible to partner regarding submission status..."
+                className="w-full p-2.5 bg-[var(--surface)] border border-[var(--border)] rounded-md text-xs focus:outline-none"
               />
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Internal Admin Note (Hidden from Creator)</label>
+              <label className="block font-semibold text-[var(--primary)] mb-1">Internal Admin Note (Hidden from Partner)</label>
               <input
                 type="text"
                 value={internalNote}
                 onChange={e => setInternalNote(e.target.value)}
                 placeholder="Internal verification notes, EIN match checks, etc."
-                className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none"
+                className="w-full px-3 py-2 bg-[var(--surface)] border border-[var(--border)] rounded-md text-xs focus:outline-none"
               />
             </div>
 
-            <div className="flex space-x-3 pt-2">
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setSelectedCreator(null)}
-                className="flex-1 bg-brand-blush text-brand-plum py-2.5 rounded-lg font-bold"
+                className="px-3 py-1.5 rounded-md border border-[var(--border)] text-xs font-semibold"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={submittingReview}
-                className="flex-1 bg-brand-plum text-brand-cream hover:bg-brand-wine py-2.5 rounded-lg font-bold shadow-md"
+                className="px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336]"
               >
                 {submittingReview ? "Saving..." : "Save Review Decision"}
               </button>
             </div>
           </form>
-        </Dialog>
-      )}
+        )}
+      </Dialog>
 
-      {/* AUDIT HISTORY MODAL */}
-      {selectedAuditCreator && (
-        <Dialog
-          isOpen={true}
-          onClose={() => setSelectedAuditCreator(null)}
-          title={`Audit Trail - ${selectedAuditCreator.businessName}`}
-        >
-          <div className="space-y-4 font-sans text-xs">
-            {auditLoading ? (
-              <p className="text-center py-4 text-zinc-400">Loading audit history...</p>
-            ) : auditLogs.length === 0 ? (
-              <p className="text-center py-4 text-zinc-400">No audit events recorded for this partner.</p>
-            ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {auditLogs.map((log: any) => (
-                  <div key={log.id} className="p-3 bg-brand-bg border border-brand-blush/60 rounded-lg space-y-1">
-                    <div className="flex justify-between items-center text-[10px] font-bold text-brand-wine">
-                      <span>{log.action} BY {log.performedByUserRole}</span>
-                      <span className="font-mono text-zinc-400">{new Date(log.timestamp).toLocaleString()}</span>
-                    </div>
-                    <p className="text-zinc-600 leading-snug">{log.details}</p>
+      {/* AUDIT HISTORY DIALOG */}
+      <Dialog
+        isOpen={!!selectedAuditCreator}
+        onClose={() => setSelectedAuditCreator(null)}
+        title={`Audit Trail — ${selectedAuditCreator?.businessName || ""}`}
+      >
+        <div className="space-y-4 font-sans text-xs">
+          {auditLoading ? (
+            <p className="text-center py-4 text-[var(--secondary)]">Loading audit history...</p>
+          ) : auditLogs.length === 0 ? (
+            <p className="text-center py-4 text-[var(--secondary)]">No audit events recorded for this partner.</p>
+          ) : (
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {auditLogs.map((log: any) => (
+                <div key={log.id} className="p-3 bg-[var(--canvas)] border border-[var(--border)] rounded-md space-y-1">
+                  <div className="flex justify-between items-center text-[10px] font-bold text-[var(--primary)]">
+                    <span>{log.action} BY {log.performedByUserRole}</span>
+                    <span className="font-mono text-[var(--secondary)]">{new Date(log.timestamp).toLocaleString()}</span>
                   </div>
-                ))}
-              </div>
-            )}
+                  <p className="text-[var(--secondary)] leading-snug">{log.details}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex justify-end pt-2">
             <button
               onClick={() => setSelectedAuditCreator(null)}
-              className="w-full bg-brand-plum text-brand-cream py-2 rounded-lg font-bold mt-2"
+              className="px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white"
             >
               Close History
             </button>
           </div>
-        </Dialog>
-      )}
+        </div>
+      </Dialog>
     </div>
   );
 }
+

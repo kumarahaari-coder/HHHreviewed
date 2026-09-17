@@ -12,11 +12,20 @@ import {
   Trash2,
   FileSpreadsheet,
   Settings,
-  AlertCircle
+  AlertCircle,
+  TrendingUp,
+  Clock,
+  CheckCircle2,
+  Lock,
+  Layers,
+  ShieldAlert
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { Reservation, Partner, Payout, PayoutBatch } from "@/lib/db/schema";
-import { Card, Badge, Tabs, Dialog } from "@/components/ui/custom";
+import { PageHeader } from "@/components/ui/page-header";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableMobileCard } from "@/components/ui/table";
+import { StatusBadge } from "@/components/ui/badge";
+import { Dialog } from "@/components/ui/dialog";
 import { runSystemPayoutRecalculation } from "@/lib/payouts";
 import confetti from "canvas-confetti";
 import { Phase6LedgerPanel } from "@/components/admin/Phase6LedgerPanel";
@@ -29,7 +38,7 @@ export default function PayoutProcessing() {
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
 
   // UI Control states
-  const [activeTab, setActiveTab] = useState("eligible");
+  const [activeTab, setActiveTab] = useState("phase6_ledger");
   const [selectedPayoutIds, setSelectedPayoutIds] = useState<string[]>([]);
   
   // Adjustment modal states
@@ -44,7 +53,6 @@ export default function PayoutProcessing() {
   const [txnRef, setTxnRef] = useState("");
 
   const refreshData = () => {
-    // Run recalculation first to ensure states align
     runSystemPayoutRecalculation();
     setReservations([...db.reservations]);
     setPartners(db.partners);
@@ -56,7 +64,6 @@ export default function PayoutProcessing() {
     refreshData();
   }, []);
 
-  // --- SELECTION HELPERS ---
   const handleSelectAll = (eligiblePayouts: Payout[]) => {
     if (selectedPayoutIds.length === eligiblePayouts.length) {
       setSelectedPayoutIds([]);
@@ -71,37 +78,28 @@ export default function PayoutProcessing() {
     );
   };
 
-  // --- ACTIONS ---
-
-  // Approve a single payout
   const handleApprove = (payoutId: string) => {
     db.updatePayout(payoutId, { status: "APPROVED", approvalDate: new Date().toISOString() });
-    
-    // Also update reservation payoutStatus
     const p = db.payouts.find(pay => pay.id === payoutId);
     if (p) {
       db.updateReservation(p.reservationId, { payoutStatus: "APPROVED" });
     }
-    
     setSelectedPayoutIds(prev => prev.filter(id => id !== payoutId));
     refreshData();
     db.addNotification("SUCCESS", `Payout ID ${payoutId} approved successfully.`);
   };
 
-  // Approve multiple selected payouts
   const handleBulkApprove = (eligiblePayouts: Payout[]) => {
     const targets = eligiblePayouts.filter(p => selectedPayoutIds.includes(p.id));
     targets.forEach(t => {
       db.updatePayout(t.id, { status: "APPROVED", approvalDate: new Date().toISOString() });
       db.updateReservation(t.reservationId, { payoutStatus: "APPROVED" });
     });
-    
     setSelectedPayoutIds([]);
     refreshData();
-    db.addNotification("SUCCESS", `Bulk Approved: ${targets.length} payouts approved and moved to the approved queue.`);
+    db.addNotification("SUCCESS", `Bulk Approved: ${targets.length} payouts approved.`);
   };
 
-  // Place payout on hold
   const handleHold = (payoutId: string) => {
     db.updatePayout(payoutId, { status: "ON_HOLD" });
     const p = db.payouts.find(pay => pay.id === payoutId);
@@ -109,10 +107,9 @@ export default function PayoutProcessing() {
       db.updateReservation(p.reservationId, { payoutStatus: "ON_HOLD" });
     }
     refreshData();
-    db.addNotification("WARNING", `Payout ID ${payoutId} placed on administrative hold.`);
+    db.addNotification("WARNING", `Payout ID ${payoutId} placed on hold.`);
   };
 
-  // Reject payout
   const handleReject = (payoutId: string) => {
     db.updatePayout(payoutId, { status: "REJECTED" });
     const p = db.payouts.find(pay => pay.id === payoutId);
@@ -123,7 +120,6 @@ export default function PayoutProcessing() {
     db.addNotification("danger" as any, `Payout ID ${payoutId} rejected.`);
   };
 
-  // Open adjustment dialog
   const handleOpenAdjust = (payout: Payout) => {
     setAdjustPayout(payout);
     setAdjustAmount(payout.adjustment.toString());
@@ -131,11 +127,9 @@ export default function PayoutProcessing() {
     setShowAdjustDialog(true);
   };
 
-  // Save adjustment
   const handleSaveAdjustment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!adjustPayout) return;
-
     const val = parseFloat(adjustAmount) || 0;
     const finalVal = Math.round((adjustPayout.calculatedPayout + val) * 100) / 100;
 
@@ -148,26 +142,23 @@ export default function PayoutProcessing() {
     refreshData();
     setShowAdjustDialog(false);
     setAdjustPayout(null);
-    db.addNotification("INFO", `Adjustment of $${val.toFixed(2)} applied to Payout ID ${adjustPayout.id}.`);
+    db.addNotification("INFO", `Adjustment of $${val.toFixed(2)} applied.`);
   };
 
-  // Create batch for a partner
   const handleCreateBatch = (partnerId: string, approvedPayoutsForPartner: Payout[]) => {
     const totalAmount = approvedPayoutsForPartner.reduce((acc, p) => acc + p.finalPayout, 0);
     const payoutIds = approvedPayoutsForPartner.map(p => p.id);
 
-    // Create batch in db
     const newBatch = db.addPayoutBatch({
       partnerId,
-      periodStart: new Date(new Date().setDate(1)).toISOString().split("T")[0], // start of month
-      periodEnd: new Date().toISOString().split("T")[0], // today
+      periodStart: new Date(new Date().setDate(1)).toISOString().split("T")[0],
+      periodEnd: new Date().toISOString().split("T")[0],
       bookingCount: approvedPayoutsForPartner.length,
       totalPayout: totalAmount,
       status: "PENDING",
       payoutIds
     });
 
-    // Update statuses of grouped payouts to PAID (associated with batch)
     payoutIds.forEach(pId => {
       db.updatePayout(pId, { status: "PAID", paymentDate: new Date().toISOString() });
       const p = db.payouts.find(pay => pay.id === pId);
@@ -177,10 +168,9 @@ export default function PayoutProcessing() {
     });
 
     refreshData();
-    db.addNotification("SUCCESS", `Payout Batch ${newBatch.id} created for partner. Total Amount: $${totalAmount.toFixed(2)}.`);
+    db.addNotification("SUCCESS", `Payout Batch ${newBatch.id} created.`);
   };
 
-  // Mark batch as paid (simulate banking export reference)
   const handleMarkBatchPaid = (e: React.FormEvent) => {
     e.preventDefault();
     if (!payingBatch) return;
@@ -192,32 +182,25 @@ export default function PayoutProcessing() {
       approvalDate: new Date().toISOString()
     });
 
-    // Update associated payouts transaction refs
     payingBatch.payoutIds.forEach(pId => {
       db.updatePayout(pId, { transactionReference: txnRef });
     });
 
-    // Confetti celebration!
     confetti({
       particleCount: 100,
       spread: 70,
-      origin: { y: 0.6 },
-      colors: ["#4F2352", "#FFF7F2", "#EFDFD2", "#98A496"]
+      origin: { y: 0.6 }
     });
 
     refreshData();
     setShowPayDialog(false);
     setPayingBatch(null);
     setTxnRef("");
-
-    db.addNotification("SUCCESS", `Batch ${payingBatch.id} marked as PAID. Reference: ${txnRef}.`);
+    db.addNotification("SUCCESS", `Batch ${payingBatch.id} marked as PAID.`);
   };
 
-  // Cancel pending batch
   const handleCancelBatch = (batch: PayoutBatch) => {
     db.updatePayoutBatch(batch.id, { status: "CANCELLED" });
-    
-    // Revert associated payouts back to APPROVED status
     batch.payoutIds.forEach(pId => {
       db.updatePayout(pId, { status: "APPROVED", paymentDate: undefined });
       const p = db.payouts.find(pay => pay.id === pId);
@@ -225,22 +208,14 @@ export default function PayoutProcessing() {
         db.updateReservation(p.reservationId, { payoutStatus: "APPROVED" });
       }
     });
-
     refreshData();
-    db.addNotification("WARNING", `Payout Batch ${batch.id} cancelled. Payouts returned to approved queue.`);
+    db.addNotification("WARNING", `Payout Batch ${batch.id} cancelled.`);
   };
 
-  // --- QUEUES FILTERING ---
-  
-  // 1. Eligible queue (calculated, checked-in, unpaid)
   const eligiblePayouts = payouts.filter(p => p.status === "ELIGIBLE");
-  
-  // 2. Holds queue
   const holdPayouts = payouts.filter(p => p.status === "ON_HOLD");
-
-  // 3. Approved payouts (grouped by partner)
   const approvedPayouts = payouts.filter(p => p.status === "APPROVED");
-  // Group by partnerId
+  
   const approvedGroupedByPartner: Record<string, Payout[]> = {};
   approvedPayouts.forEach(p => {
     if (!approvedGroupedByPartner[p.partnerId]) {
@@ -249,143 +224,192 @@ export default function PayoutProcessing() {
     approvedGroupedByPartner[p.partnerId].push(p);
   });
 
+  const tabList = [
+    { id: "phase6_ledger", label: "Ledger & Batches (Phase 6)" },
+    { id: "eligible", label: `Eligible Queue (${eligiblePayouts.length})` },
+    { id: "holds", label: `Admin Holds (${holdPayouts.length})` },
+    { id: "approved", label: `Approved Queue (${approvedPayouts.length})` },
+    { id: "batches", label: `Payment Batches (${batches.filter(b => b.status === "PENDING").length})` },
+    { id: "history", label: `Payout History` }
+  ];
+
   return (
     <div className="space-y-6">
-      {/* Title */}
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Payouts Processing</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Approve calculated partner payouts, apply adjustments, and bundle stays into batches for payment.
-        </p>
-      </div>
-
-      {/* Tabs Menu */}
-      <Tabs
-        tabs={[
-          { id: "phase6_ledger", label: "Ledger & Batches (Phase 6)" },
-          { id: "eligible", label: `Eligible Queue (${eligiblePayouts.length})` },
-          { id: "holds", label: `Admin Holds (${holdPayouts.length})` },
-          { id: "approved", label: `Approved Queue (${approvedPayouts.length})` },
-          { id: "batches", label: `Payment Batches (${batches.filter(b => b.status === "PENDING").length} pending)` },
-          { id: "history", label: `Payout History` }
-        ]}
-        activeTab={activeTab}
-        onChange={setActiveTab}
+      <PageHeader
+        title="Payout Operations"
+        description="Manage partner commission ledger, approve eligible balances, and review payout batch lifecycles under Phase 6 maker-checker rules."
       />
 
-      {/* TAB CONTENTS */}
+      {/* Operational Mode Alert */}
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-md bg-[var(--canvas)] text-[var(--primary)]">
+            <Lock size={18} />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-[var(--primary)]">Settlement Engine Controlled</div>
+            <div className="text-xs text-[var(--secondary)]">
+              Settlement switch: <code className="font-mono text-[var(--primary)]">PHASE6_SETTLEMENT_ENABLED=false</code> | External payouts: <code className="font-mono text-[var(--primary)]">PHASE6_EXTERNAL_PAYOUTS_ENABLED=false</code>
+            </div>
+          </div>
+        </div>
+        <StatusBadge variant="info">ReadOnly Settlement</StatusBadge>
+      </div>
 
-      {/* 0. PHASE 6 COMMISSION LEDGER & BATCHES */}
-      {activeTab === "phase6_ledger" && (
-        <Phase6LedgerPanel />
-      )}
+      {/* Tabs */}
+      <div className="border-b border-[var(--border)] flex gap-2 overflow-x-auto pb-px">
+        {tabList.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`px-4 py-2 text-xs font-semibold whitespace-nowrap transition-colors border-b-2 ${
+              activeTab === t.id
+                ? "border-[var(--primary)] text-[var(--primary)]"
+                : "border-transparent text-[var(--secondary)] hover:text-[var(--primary)]"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* TAB CONTENTS */}
+      {activeTab === "phase6_ledger" && <Phase6LedgerPanel />}
 
       {/* 1. ELIGIBLE QUEUE */}
       {activeTab === "eligible" && (
         <div className="space-y-4">
-          <div className="flex justify-between items-center bg-brand-blush/20 p-4 rounded-xl border border-brand-blush/40">
-            <span className="text-xs font-semibold text-brand-plum">
+          <div className="flex justify-between items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+            <span className="text-xs font-semibold text-[var(--primary)]">
               {selectedPayoutIds.length} payout(s) selected for bulk approval
             </span>
             <button
               onClick={() => handleBulkApprove(eligiblePayouts)}
               disabled={selectedPayoutIds.length === 0}
-              className="bg-brand-plum text-brand-cream hover:bg-brand-wine disabled:opacity-40 px-4 py-2 rounded-lg text-xs font-bold transition-all"
+              className="px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336] disabled:opacity-40 transition-colors"
             >
               Approve Selected
             </button>
           </div>
 
-          <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                    <th className="p-4 w-12 text-center">
-                      <button onClick={() => handleSelectAll(eligiblePayouts)} className="text-brand-plum">
-                        {selectedPayoutIds.length === eligiblePayouts.length && eligiblePayouts.length > 0 ? (
-                          <CheckSquare size={16} />
-                        ) : (
-                          <Square size={16} />
-                        )}
-                      </button>
-                    </th>
-                    <th className="p-4">Stay Code</th>
-                    <th className="p-4">Partner</th>
-                    <th className="p-4">Base Amount</th>
-                    <th className="p-4">Commission Rate</th>
-                    <th className="p-4">Calculated</th>
-                    <th className="p-4">Adjustment</th>
-                    <th className="p-4">Final Payout</th>
-                    <th className="p-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-blush/60 text-sm">
-                  {eligiblePayouts.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="p-8 text-center text-zinc-400 italic">
-                        No payout-eligible stays. Verify that reservation check-ins and payments are completed.
-                      </td>
-                    </tr>
-                  ) : (
-                    eligiblePayouts.map(p => {
-                      const res = reservations.find(r => r.id === p.reservationId);
-                      const partner = partners.find(part => part.id === p.partnerId);
-                      const isSelected = selectedPayoutIds.includes(p.id);
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+            <Table className="hidden md:table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12 text-center">
+                    <button onClick={() => handleSelectAll(eligiblePayouts)}>
+                      {selectedPayoutIds.length === eligiblePayouts.length && eligiblePayouts.length > 0 ? (
+                        <CheckSquare size={16} className="text-[var(--primary)]" />
+                      ) : (
+                        <Square size={16} className="text-[var(--secondary)]" />
+                      )}
+                    </button>
+                  </TableHead>
+                  <TableHead>Stay Code</TableHead>
+                  <TableHead>Partner</TableHead>
+                  <TableHead>Base Amount</TableHead>
+                  <TableHead>Rate</TableHead>
+                  <TableHead>Calculated</TableHead>
+                  <TableHead>Adjustment</TableHead>
+                  <TableHead>Final Payout</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {eligiblePayouts.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-[var(--secondary)]">
+                      No payout-eligible stays awaiting approval.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  eligiblePayouts.map(p => {
+                    const res = reservations.find(r => r.id === p.reservationId);
+                    const partner = partners.find(part => part.id === p.partnerId);
+                    const isSelected = selectedPayoutIds.includes(p.id);
 
-                      return (
-                        <tr key={p.id} className="hover:bg-brand-blush/10 transition-colors">
-                          <td className="p-4 text-center">
-                            <button onClick={() => handleToggleSelect(p.id)} className="text-zinc-400 hover:text-brand-plum">
-                              {isSelected ? <CheckSquare size={16} className="text-brand-plum" /> : <Square size={16} />}
-                            </button>
-                          </td>
-                          <td className="p-4 font-bold text-brand-plum">{res?.confirmationCode}</td>
-                          <td className="p-4">
-                            <div className="font-semibold text-zinc-700">{partner?.contactName}</div>
-                            <span className="text-[10px] text-zinc-400">{partner?.businessName}</span>
-                          </td>
-                          <td className="p-4">${p.payoutBaseAmount.toFixed(2)}</td>
-                          <td className="p-4">{p.commissionRate}%</td>
-                          <td className="p-4 font-semibold">${p.calculatedPayout.toFixed(2)}</td>
-                          <td className="p-4 text-brand-wine font-medium">
-                            {p.adjustment !== 0 ? `$${p.adjustment.toFixed(2)}` : "—"}
-                          </td>
-                          <td className="p-4 font-extrabold text-brand-plum">${p.finalPayout.toFixed(2)}</td>
-                          <td className="p-4 text-center flex items-center justify-center space-x-1.5">
+                    return (
+                      <TableRow key={p.id}>
+                        <TableCell className="text-center">
+                          <button onClick={() => handleToggleSelect(p.id)}>
+                            {isSelected ? <CheckSquare size={16} className="text-[var(--primary)]" /> : <Square size={16} className="text-[var(--secondary)]" />}
+                          </button>
+                        </TableCell>
+                        <TableCell className="font-mono font-medium text-[var(--primary)]">{res?.confirmationCode}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold text-[var(--primary)]">{partner?.contactName}</div>
+                          <div className="text-xs text-[var(--secondary)]">{partner?.businessName}</div>
+                        </TableCell>
+                        <TableCell className="tabular-nums font-mono">${p.payoutBaseAmount.toFixed(2)}</TableCell>
+                        <TableCell className="tabular-nums font-mono">{p.commissionRate}%</TableCell>
+                        <TableCell className="tabular-nums font-mono font-medium">${p.calculatedPayout.toFixed(2)}</TableCell>
+                        <TableCell className="tabular-nums font-mono text-[var(--secondary)]">
+                          {p.adjustment !== 0 ? `$${p.adjustment.toFixed(2)}` : "—"}
+                        </TableCell>
+                        <TableCell className="tabular-nums font-mono font-bold text-[var(--primary)]">${p.finalPayout.toFixed(2)}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => handleApprove(p.id)}
-                              className="bg-brand-plum text-brand-cream hover:bg-brand-wine px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all"
+                              className="px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336]"
                             >
                               Approve
                             </button>
                             <button
                               onClick={() => handleOpenAdjust(p)}
-                              className="text-xs text-brand-plum hover:bg-brand-blush/40 px-2 py-1.5 rounded-lg border border-brand-blush/60"
+                              className="px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] hover:bg-[var(--canvas)]"
                             >
                               Adjust
                             </button>
                             <button
                               onClick={() => handleHold(p.id)}
-                              className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg border border-transparent hover:border-amber-200"
-                              title="Place administrative hold"
+                              className="p-1 rounded-md text-amber-600 hover:bg-amber-50"
+                              title="Place Hold"
                             >
                               <AlertTriangle size={14} />
                             </button>
-                            <button
-                              onClick={() => handleReject(p.id)}
-                              className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-200"
-                              title="Reject payout"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+
+            <div className="md:hidden divide-y divide-[var(--border)]">
+              {eligiblePayouts.map(p => {
+                const res = reservations.find(r => r.id === p.reservationId);
+                const partner = partners.find(part => part.id === p.partnerId);
+                return (
+                  <TableMobileCard
+                    key={p.id}
+                    title={res?.confirmationCode || p.id}
+                    subtitle={partner?.businessName || partner?.contactName}
+                    badge={<StatusBadge variant="warning">ELIGIBLE</StatusBadge>}
+                    details={[
+                      { label: "Base Amount", value: `$${p.payoutBaseAmount.toFixed(2)}`, numeric: true },
+                      { label: "Final Payout", value: `$${p.finalPayout.toFixed(2)}`, numeric: true }
+                    ]}
+                    action={
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleApprove(p.id)}
+                          className="px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleOpenAdjust(p)}
+                          className="px-3 py-1.5 rounded-md text-xs font-semibold border border-[var(--border)]"
+                        >
+                          Adjust
+                        </button>
+                      </div>
+                    }
+                  />
+                );
+              })}
             </div>
           </div>
         </div>
@@ -393,302 +417,269 @@ export default function PayoutProcessing() {
 
       {/* 2. ADMIN HOLDS */}
       {activeTab === "holds" && (
-        <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                  <th className="p-4">Stay Code</th>
-                  <th className="p-4">Partner</th>
-                  <th className="p-4">Base Amount</th>
-                  <th className="p-4">Rate</th>
-                  <th className="p-4">Adjustment</th>
-                  <th className="p-4">Final Value</th>
-                  <th className="p-4">Locked reason / Notes</th>
-                  <th className="p-4 text-center">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand-blush/60 text-sm">
-                {holdPayouts.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="p-8 text-center text-zinc-400 italic">
-                      No payouts currently on administrative hold.
-                    </td>
-                  </tr>
-                ) : (
-                  holdPayouts.map(p => {
-                    const res = reservations.find(r => r.id === p.reservationId);
-                    const partner = partners.find(part => part.id === p.partnerId);
-
-                    return (
-                      <tr key={p.id} className="hover:bg-brand-blush/10 transition-colors">
-                        <td className="p-4 font-bold text-brand-plum">{res?.confirmationCode}</td>
-                        <td className="p-4">
-                          <div className="font-semibold">{partner?.contactName}</div>
-                          <span className="text-[10px] text-zinc-400">{partner?.businessName}</span>
-                        </td>
-                        <td className="p-4">${p.payoutBaseAmount.toFixed(2)}</td>
-                        <td className="p-4">{p.commissionRate}%</td>
-                        <td className="p-4">${p.adjustment.toFixed(2)}</td>
-                        <td className="p-4 font-bold">${p.finalPayout.toFixed(2)}</td>
-                        <td className="p-4 text-rose-700 font-medium">
-                          <span className="flex items-center gap-1">
-                            <AlertCircle size={14} />
-                            {res?.adminNotes || "Placed on hold by operations."}
-                          </span>
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => {
-                              db.updatePayout(p.id, { status: "ELIGIBLE" });
-                              db.updateReservation(p.reservationId, { payoutStatus: "ELIGIBLE" });
-                              refreshData();
-                            }}
-                            className="bg-brand-blush hover:bg-brand-blush/80 text-brand-plum border border-brand-blush/60 px-3 py-1.5 rounded-lg text-xs font-bold"
-                          >
-                            Release Hold
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <Table className="hidden md:table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Stay Code</TableHead>
+                <TableHead>Partner</TableHead>
+                <TableHead>Base Amount</TableHead>
+                <TableHead>Rate</TableHead>
+                <TableHead>Final Payout</TableHead>
+                <TableHead>Hold Reason</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {holdPayouts.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-[var(--secondary)]">
+                    No payouts currently on administrative hold.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                holdPayouts.map(p => {
+                  const res = reservations.find(r => r.id === p.reservationId);
+                  const partner = partners.find(part => part.id === p.partnerId);
+                  return (
+                    <TableRow key={p.id}>
+                      <TableCell className="font-mono font-medium text-[var(--primary)]">{res?.confirmationCode}</TableCell>
+                      <TableCell>
+                        <div className="font-semibold text-[var(--primary)]">{partner?.contactName}</div>
+                        <div className="text-xs text-[var(--secondary)]">{partner?.businessName}</div>
+                      </TableCell>
+                      <TableCell className="tabular-nums font-mono">${p.payoutBaseAmount.toFixed(2)}</TableCell>
+                      <TableCell className="tabular-nums font-mono">{p.commissionRate}%</TableCell>
+                      <TableCell className="tabular-nums font-mono font-bold text-[var(--primary)]">${p.finalPayout.toFixed(2)}</TableCell>
+                      <TableCell className="text-amber-700 text-xs font-medium">
+                        {res?.adminNotes || "Administrative hold applied."}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <button
+                          onClick={() => {
+                            db.updatePayout(p.id, { status: "ELIGIBLE" });
+                            db.updateReservation(p.reservationId, { payoutStatus: "ELIGIBLE" });
+                            refreshData();
+                          }}
+                          className="px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] hover:bg-[var(--canvas)]"
+                        >
+                          Release Hold
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
         </div>
       )}
 
       {/* 3. APPROVED QUEUE */}
       {activeTab === "approved" && (
-        <div className="space-y-6">
-          {approvedPayouts.length === 0 ? (
-            <Card className="py-12 text-center text-zinc-400 italic">
+        <div className="space-y-4">
+          {Object.keys(approvedGroupedByPartner).length === 0 ? (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-8 text-center text-[var(--secondary)] text-sm">
               No approved payouts awaiting batch creation.
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              {Object.entries(approvedGroupedByPartner).map(([pId, partnerPayouts]) => {
-                const partner = partners.find(p => p.id === pId);
-                const totalBatchAmount = partnerPayouts.reduce((acc, p) => acc + p.finalPayout, 0);
-
-                return (
-                  <Card key={pId} className="border border-brand-blush shadow-xs p-6 space-y-4">
-                    {/* Header */}
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-brand-blush/60 pb-3 gap-3">
-                      <div>
-                        <h3 className="font-extrabold text-brand-plum text-lg">{partner?.businessName}</h3>
-                        <p className="text-xs text-zinc-500">Contact: {partner?.contactName} · Payout Frequency: {partner?.payoutFrequency}</p>
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <div className="text-right">
-                          <span className="text-[10px] text-zinc-400 block uppercase font-bold tracking-wider">Group Total</span>
-                          <span className="text-lg font-extrabold text-brand-plum">${totalBatchAmount.toFixed(2)}</span>
-                        </div>
-                        <button
-                          onClick={() => handleCreateBatch(pId, partnerPayouts)}
-                          className="bg-brand-plum text-brand-cream hover:bg-brand-wine px-4 py-2.5 rounded-lg text-xs font-bold transition-all shadow-md"
-                        >
-                          Create Payout Batch ({partnerPayouts.length} stays)
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Table of items */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="text-brand-wine font-bold border-b border-brand-blush/60">
-                            <th className="pb-2">Stay Code</th>
-                            <th className="pb-2">Check In</th>
-                            <th className="pb-2">Base Value</th>
-                            <th className="pb-2">Rate</th>
-                            <th className="pb-2">Adjustment</th>
-                            <th className="pb-2">Payout Amount</th>
-                            <th className="pb-2">Approved Date</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-brand-blush/30">
-                          {partnerPayouts.map(p => {
-                            const res = reservations.find(r => r.id === p.reservationId);
-                            return (
-                              <tr key={p.id} className="text-zinc-600">
-                                <td className="py-2.5 font-bold text-brand-plum">{res?.confirmationCode}</td>
-                                <td className="py-2.5">{res?.checkInDate}</td>
-                                <td className="py-2.5">${p.payoutBaseAmount.toFixed(2)}</td>
-                                <td className="py-2.5">{p.commissionRate}%</td>
-                                <td className="py-2.5">${p.adjustment.toFixed(2)}</td>
-                                <td className="py-2.5 font-bold text-brand-plum">${p.finalPayout.toFixed(2)}</td>
-                                <td className="py-2.5 text-zinc-400">
-                                  {p.approvalDate ? new Date(p.approvalDate).toLocaleDateString() : "—"}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                );
-              })}
             </div>
+          ) : (
+            Object.entries(approvedGroupedByPartner).map(([pId, partnerPayouts]) => {
+              const partner = partners.find(p => p.id === pId);
+              const totalBatchAmount = partnerPayouts.reduce((acc, p) => acc + p.finalPayout, 0);
+
+              return (
+                <div key={pId} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-[var(--border)] pb-3 gap-3">
+                    <div>
+                      <h3 className="font-bold text-[var(--primary)] text-base">{partner?.businessName || partner?.contactName}</h3>
+                      <div className="text-xs text-[var(--secondary)]">Contact: {partner?.contactName} · Payout Frequency: {partner?.payoutFrequency || "Monthly"}</div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <div className="text-[10px] uppercase font-bold text-[var(--secondary)]">Batch Amount</div>
+                        <div className="text-lg font-bold tabular-nums font-mono text-[var(--primary)]">${totalBatchAmount.toFixed(2)}</div>
+                      </div>
+                      <button
+                        onClick={() => handleCreateBatch(pId, partnerPayouts)}
+                        className="px-4 py-2 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336]"
+                      >
+                        Create Payout Batch ({partnerPayouts.length} stays)
+                      </button>
+                    </div>
+                  </div>
+
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Stay Code</TableHead>
+                        <TableHead>Check In</TableHead>
+                        <TableHead>Base Value</TableHead>
+                        <TableHead>Rate</TableHead>
+                        <TableHead>Payout Amount</TableHead>
+                        <TableHead>Approved Date</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {partnerPayouts.map(p => {
+                        const res = reservations.find(r => r.id === p.reservationId);
+                        return (
+                          <TableRow key={p.id}>
+                            <TableCell className="font-mono font-medium text-[var(--primary)]">{res?.confirmationCode}</TableCell>
+                            <TableCell className="text-xs text-[var(--secondary)]">{res?.checkInDate}</TableCell>
+                            <TableCell className="tabular-nums font-mono">${p.payoutBaseAmount.toFixed(2)}</TableCell>
+                            <TableCell className="tabular-nums font-mono">{p.commissionRate}%</TableCell>
+                            <TableCell className="tabular-nums font-mono font-bold text-[var(--primary)]">${p.finalPayout.toFixed(2)}</TableCell>
+                            <TableCell className="text-xs text-[var(--secondary)]">
+                              {p.approvalDate ? new Date(p.approvalDate).toLocaleDateString() : "—"}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              );
+            })
           )}
         </div>
       )}
 
       {/* 4. PAYMENT BATCHES */}
       {activeTab === "batches" && (
-        <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                  <th className="p-4">Batch ID</th>
-                  <th className="p-4">Partner</th>
-                  <th className="p-4">Date Range</th>
-                  <th className="p-4">Stays Count</th>
-                  <th className="p-4">Total Amount</th>
-                  <th className="p-4">Method</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4 text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand-blush/60 text-sm">
-                {batches.filter(b => b.status === "PENDING").length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="p-8 text-center text-zinc-400 italic">
-                      No pending payment batches. Create a batch from the Approved queue first.
-                    </td>
-                  </tr>
-                ) : (
-                  batches
-                    .filter(b => b.status === "PENDING")
-                    .map(b => {
-                      const partner = partners.find(p => p.id === b.partnerId);
-
-                      return (
-                        <tr key={b.id} className="hover:bg-brand-blush/10 transition-colors">
-                          <td className="p-4 font-bold text-brand-plum">{b.id}</td>
-                          <td className="p-4">
-                            <div className="font-semibold">{partner?.businessName}</div>
-                            <span className="text-[10px] text-zinc-400">Contact: {partner?.contactName}</span>
-                          </td>
-                          <td className="p-4 text-xs">
-                            <div>{b.periodStart}</div>
-                            <span className="text-[10px] text-zinc-400">to {b.periodEnd}</span>
-                          </td>
-                          <td className="p-4 font-semibold">{b.bookingCount} stays</td>
-                          <td className="p-4 font-extrabold text-brand-plum">${b.totalPayout.toFixed(2)}</td>
-                          <td className="p-4 text-xs font-semibold text-brand-wine">{partner?.paymentMethod.replace("_", " ")}</td>
-                          <td className="p-4">
-                            <Badge type="warning">Pending Bank</Badge>
-                          </td>
-                          <td className="p-4 text-center flex items-center justify-center space-x-2">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <Table className="hidden md:table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Batch ID</TableHead>
+                <TableHead>Partner</TableHead>
+                <TableHead>Date Range</TableHead>
+                <TableHead>Stays Count</TableHead>
+                <TableHead>Total Amount</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {batches.filter(b => b.status === "PENDING").length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-[var(--secondary)]">
+                    No pending payment batches.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                batches
+                  .filter(b => b.status === "PENDING")
+                  .map(b => {
+                    const partner = partners.find(p => p.id === b.partnerId);
+                    return (
+                      <TableRow key={b.id}>
+                        <TableCell className="font-mono font-bold text-[var(--primary)]">{b.id}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold text-[var(--primary)]">{partner?.businessName}</div>
+                          <div className="text-xs text-[var(--secondary)]">{partner?.contactName}</div>
+                        </TableCell>
+                        <TableCell className="text-xs text-[var(--secondary)]">{b.periodStart} to {b.periodEnd}</TableCell>
+                        <TableCell className="tabular-nums font-mono">{b.bookingCount}</TableCell>
+                        <TableCell className="tabular-nums font-mono font-bold text-[var(--primary)]">${b.totalPayout.toFixed(2)}</TableCell>
+                        <TableCell><StatusBadge variant="warning">PENDING</StatusBadge></TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
                             <button
                               onClick={() => {
                                 setPayingBatch(b);
                                 setTxnRef("");
                                 setShowPayDialog(true);
                               }}
-                              className="flex items-center space-x-1 bg-brand-plum hover:bg-brand-wine text-brand-cream px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm"
+                              className="px-3 py-1 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336]"
                             >
-                              <CreditCard size={12} />
-                              <span>Record Payment</span>
+                              Record Payment
                             </button>
                             <button
                               onClick={() => handleCancelBatch(b)}
-                              className="text-xs text-rose-600 hover:bg-rose-50 border border-rose-100 hover:border-rose-200 px-3 py-1.5 rounded-lg font-bold"
+                              className="px-2.5 py-1 rounded-md text-xs font-semibold border border-[var(--border)] hover:bg-[var(--canvas)]"
                             >
-                              Cancel Batch
+                              Cancel
                             </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                )}
-              </tbody>
-            </table>
-          </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+              )}
+            </TableBody>
+          </Table>
         </div>
       )}
 
       {/* 5. PAYOUT HISTORY */}
       {activeTab === "history" && (
-        <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                  <th className="p-4">Payout ID</th>
-                  <th className="p-4">Stay Code</th>
-                  <th className="p-4">Partner</th>
-                  <th className="p-4">Base Payout</th>
-                  <th className="p-4">Adjustment</th>
-                  <th className="p-4">Final Paid</th>
-                  <th className="p-4">Paid Date</th>
-                  <th className="p-4">Bank Reference</th>
-                  <th className="p-4">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand-blush/60 text-sm">
-                {payouts.filter(p => p.status === "PAID").length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="p-8 text-center text-zinc-400 italic">
-                      No historical payout records. Record payment for a pending batch to seed history.
-                    </td>
-                  </tr>
-                ) : (
-                  payouts
-                    .filter(p => p.status === "PAID")
-                    .map(p => {
-                      const res = reservations.find(r => r.id === p.reservationId);
-                      const partner = partners.find(part => part.id === p.partnerId);
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <Table className="hidden md:table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Payout ID</TableHead>
+                <TableHead>Stay Code</TableHead>
+                <TableHead>Partner</TableHead>
+                <TableHead>Base Payout</TableHead>
+                <TableHead>Adjustment</TableHead>
+                <TableHead>Final Paid</TableHead>
+                <TableHead>Paid Date</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {payouts.filter(p => p.status === "PAID").length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-[var(--secondary)]">
+                    No historical settled payout records found.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                payouts
+                  .filter(p => p.status === "PAID")
+                  .map(p => {
+                    const res = reservations.find(r => r.id === p.reservationId);
+                    const partner = partners.find(part => part.id === p.partnerId);
 
-                      return (
-                        <tr key={p.id} className="hover:bg-brand-blush/10 transition-colors">
-                          <td className="p-4 font-mono text-xs text-zinc-500">{p.id}</td>
-                          <td className="p-4 font-bold text-brand-plum">{res?.confirmationCode}</td>
-                          <td className="p-4">
-                            <div className="font-semibold">{partner?.contactName}</div>
-                            <span className="text-[10px] text-zinc-400">{partner?.businessName}</span>
-                          </td>
-                          <td className="p-4">${p.payoutBaseAmount.toFixed(2)}</td>
-                          <td className="p-4">${p.adjustment.toFixed(2)}</td>
-                          <td className="p-4 font-extrabold text-brand-plum">${p.finalPayout.toFixed(2)}</td>
-                          <td className="p-4 text-xs text-zinc-500">
-                            {p.paymentDate ? new Date(p.paymentDate).toLocaleDateString() : "—"}
-                          </td>
-                          <td className="p-4 font-mono text-xs text-brand-wine font-bold">
-                            {p.transactionReference || "Direct ACH"}
-                          </td>
-                          <td className="p-4">
-                            <Badge type="success">Paid</Badge>
-                          </td>
-                        </tr>
-                      );
-                    })
-                )}
-              </tbody>
-            </table>
-          </div>
+                    return (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-mono text-xs text-[var(--secondary)]">{p.id}</TableCell>
+                        <TableCell className="font-mono font-medium text-[var(--primary)]">{res?.confirmationCode}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold text-[var(--primary)]">{partner?.contactName}</div>
+                          <div className="text-xs text-[var(--secondary)]">{partner?.businessName}</div>
+                        </TableCell>
+                        <TableCell className="tabular-nums font-mono">${p.payoutBaseAmount.toFixed(2)}</TableCell>
+                        <TableCell className="tabular-nums font-mono text-[var(--secondary)]">${p.adjustment.toFixed(2)}</TableCell>
+                        <TableCell className="tabular-nums font-mono font-bold text-[var(--primary)]">${p.finalPayout.toFixed(2)}</TableCell>
+                        <TableCell className="text-xs text-[var(--secondary)]">
+                          {p.paymentDate ? new Date(p.paymentDate).toLocaleDateString() : "—"}
+                        </TableCell>
+                        <TableCell><StatusBadge variant="success">PAID</StatusBadge></TableCell>
+                      </TableRow>
+                    );
+                  })
+              )}
+            </TableBody>
+          </Table>
         </div>
       )}
 
-      {/* DIALOG: APPLY ADJUSTMENTS */}
-      <Dialog isOpen={showAdjustDialog} onClose={() => setShowAdjustDialog(false)} title="Adjust Payout Value">
+      {/* DIALOG: APPLY ADJUSTMENT */}
+      <Dialog
+        isOpen={showAdjustDialog}
+        onClose={() => setShowAdjustDialog(false)}
+        title="Adjust Payout Value"
+      >
         {adjustPayout && (
-          <form onSubmit={handleSaveAdjustment} className="space-y-4">
-            <div className="p-3 bg-brand-blush/20 border border-brand-blush/40 rounded-xl space-y-1 text-xs">
-              <p className="font-semibold text-brand-plum">Payout Calculation Baseline:</p>
-              <p>Base amount: <span className="font-bold">${adjustPayout.payoutBaseAmount.toFixed(2)}</span></p>
-              <p>Calculated commission rate: <span className="font-bold">{adjustPayout.commissionRate}%</span></p>
-              <p>Baseline Payout: <span className="font-bold text-brand-wine">${adjustPayout.calculatedPayout.toFixed(2)}</span></p>
+          <form onSubmit={handleSaveAdjustment} className="space-y-4 font-sans text-xs">
+            <div className="p-3 bg-[var(--canvas)] border border-[var(--border)] rounded-md space-y-1">
+              <div className="text-[var(--secondary)]">Base Amount: <span className="font-mono font-semibold text-[var(--primary)]">${adjustPayout.payoutBaseAmount.toFixed(2)}</span></div>
+              <div className="text-[var(--secondary)]">Baseline Payout: <span className="font-mono font-semibold text-[var(--primary)]">${adjustPayout.calculatedPayout.toFixed(2)}</span></div>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">
-                Adjustment Value (USD)
-              </label>
+              <label className="block font-semibold text-[var(--primary)] mb-1">Adjustment Value (USD)</label>
               <input
                 type="number"
                 step="0.01"
@@ -696,72 +687,82 @@ export default function PayoutProcessing() {
                 value={adjustAmount}
                 onChange={e => setAdjustAmount(e.target.value)}
                 placeholder="e.g. 25.00 or -15.00"
-                className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-sm focus:outline-none"
+                className="w-full px-3 py-2 bg-[var(--surface)] border border-[var(--border)] rounded-md focus:outline-none focus:border-[var(--primary)] font-mono"
               />
-              <span className="text-[10px] text-zinc-400 block mt-1 italic">
-                (Use positive numbers for bonuses, negative numbers for manual deductions)
-              </span>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">
-                Adjustment Reason / Notes
-              </label>
+              <label className="block font-semibold text-[var(--primary)] mb-1">Adjustment Audit Reason</label>
               <textarea
                 required
                 rows={3}
                 value={adjustNotes}
                 onChange={e => setAdjustNotes(e.target.value)}
-                placeholder="Provide auditing context for this change..."
-                className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-sm focus:outline-none"
+                placeholder="Provide rationale for auditing log..."
+                className="w-full p-2.5 bg-[var(--surface)] border border-[var(--border)] rounded-md focus:outline-none focus:border-[var(--primary)]"
               />
             </div>
 
-            <button
-              type="submit"
-              className="w-full bg-brand-plum text-brand-cream hover:bg-brand-wine py-2.5 rounded-lg text-xs font-bold transition-all shadow-md mt-4"
-            >
-              Save Adjustment
-            </button>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAdjustDialog(false)}
+                className="px-3 py-1.5 rounded-md border border-[var(--border)] text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336]"
+              >
+                Save Adjustment
+              </button>
+            </div>
           </form>
         )}
       </Dialog>
 
-      {/* DIALOG: RECORD TRANSACTION REFERENCE */}
-      <Dialog isOpen={showPayDialog} onClose={() => setShowPayDialog(false)} title="Record Payment Transaction">
+      {/* DIALOG: RECORD PAYMENT TRANSACTION */}
+      <Dialog
+        isOpen={showPayDialog}
+        onClose={() => setShowPayDialog(false)}
+        title="Record Payment Transaction"
+      >
         {payingBatch && (
-          <form onSubmit={handleMarkBatchPaid} className="space-y-4">
-            <div className="p-3 bg-brand-blush/25 border border-brand-blush rounded-xl space-y-1 text-xs text-brand-wine">
-              <p className="font-bold">Batch Details:</p>
-              <p>Batch ID: <span className="font-mono">{payingBatch.id}</span></p>
-              <p>Recipient: <span className="font-semibold">{partners.find(p => p.id === payingBatch.partnerId)?.businessName}</span></p>
-              <p>Stays Count: <span className="font-bold">{payingBatch.bookingCount}</span></p>
-              <p>Total Payout: <span className="font-extrabold text-brand-plum text-sm">${payingBatch.totalPayout.toFixed(2)}</span></p>
+          <form onSubmit={handleMarkBatchPaid} className="space-y-4 font-sans text-xs">
+            <div className="p-3 bg-[var(--canvas)] border border-[var(--border)] rounded-md space-y-1">
+              <div>Batch ID: <span className="font-mono font-bold text-[var(--primary)]">{payingBatch.id}</span></div>
+              <div>Recipient: <span className="font-semibold text-[var(--primary)]">{partners.find(p => p.id === payingBatch.partnerId)?.businessName}</span></div>
+              <div>Total Payout: <span className="font-mono font-bold text-[var(--primary)]">${payingBatch.totalPayout.toFixed(2)}</span></div>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">
-                Transaction Reference / Confirmation Code
-              </label>
+              <label className="block font-semibold text-[var(--primary)] mb-1">Transaction Reference Code</label>
               <input
                 type="text"
                 required
                 value={txnRef}
                 onChange={e => setTxnRef(e.target.value)}
-                placeholder="e.g. TXN-9023485 or ACH-REF-100293"
-                className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-sm focus:outline-none"
+                placeholder="e.g. TXN-9023485"
+                className="w-full px-3 py-2 bg-[var(--surface)] border border-[var(--border)] rounded-md focus:outline-none focus:border-[var(--primary)] font-mono"
               />
-              <span className="text-[10px] text-zinc-400 block mt-1">
-                Record the bank wire or payment transaction code. This will be stored for audit logs.
-              </span>
             </div>
 
-            <button
-              type="submit"
-              className="w-full bg-brand-plum text-brand-cream hover:bg-brand-wine py-2.5 rounded-lg text-xs font-bold transition-all shadow-md"
-            >
-              Process Batch & Mark Paid
-            </button>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPayDialog(false)}
+                className="px-3 py-1.5 rounded-md border border-[var(--border)] text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336]"
+              >
+                Record Payment
+              </button>
+            </div>
           </form>
         )}
       </Dialog>

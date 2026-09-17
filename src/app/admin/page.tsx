@@ -522,7 +522,7 @@ export default function AdminOverview() {
               <p className="text-[11px] text-tertiary">Bookings</p>
             </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-divider-soft flex items-center justify-between text-xs text-accent font-medium">
+          <div className="mt-4 pt-3 border-t border-divider-soft flex items-center justify-between text-xs text-accent-hover font-medium">
             <span>Review unattributed stays in Bookings</span>
             <ArrowRight size={14} />
           </div>
@@ -549,7 +549,7 @@ export default function AdminOverview() {
               <p className="text-[11px] text-tertiary">Bookings</p>
             </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-divider-soft flex items-center justify-between text-xs text-accent font-medium">
+          <div className="mt-4 pt-3 border-t border-divider-soft flex items-center justify-between text-xs text-accent-hover font-medium">
             <span>Investigate holds in Bookings</span>
             <ArrowRight size={14} />
           </div>

@@ -3,8 +3,19 @@
 import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Reservation, Site } from "@/lib/db/schema";
-import { Card, Badge, SlideOver } from "@/components/ui/custom";
-import { CalendarDays, MapPin, Eye, Info, Loader2 } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/badge";
+import { SlideOver } from "@/components/ui/slide-over";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+  TableMobileCard,
+} from "@/components/ui/table";
+import { Eye, Loader2, Calendar, ShieldCheck } from "lucide-react";
 
 function PartnerBookingsContent() {
   const searchParams = useSearchParams();
@@ -52,110 +63,164 @@ function PartnerBookingsContent() {
   if (loading) {
     return (
       <div className="flex py-16 justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-plum" />
+        <Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" />
       </div>
     );
   }
 
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
+
+  const getStatusVariant = (status: string) => {
+    switch (status) {
+      case "CHECKED_OUT":
+      case "COMPLETED":
+        return "success";
+      case "CONFIRMED":
+      case "CHECKED_IN":
+        return "info";
+      default:
+        return "neutral";
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">My Referred Stays</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Review bookings generated from your websites. Guest identities are masked for data compliance.
-        </p>
-      </div>
+      <PageHeader
+        title="Referred Stays"
+        description="Review bookings generated from your websites. Guest identities are protected."
+      />
 
-      {/* BOOKINGS TABLE */}
-      <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-brand-cream border-b border-brand-blush text-[11px] font-bold uppercase tracking-wider text-brand-wine">
-                <th className="py-3 px-4">Booking ID</th>
-                <th className="py-3 px-4">Guest</th>
-                <th className="py-3 px-4">Dates</th>
-                <th className="py-3 px-4">Property</th>
-                <th className="py-3 px-4">Booking Value</th>
-                <th className="py-3 px-4">Estimated Payout</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Details</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-blush/40 text-xs">
+      <div className="bg-[#FFFFFF] border border-[#D2D2D7] rounded-xl overflow-hidden shadow-2xs">
+        {/* Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Booking Code</TableHead>
+                <TableHead>Guest</TableHead>
+                <TableHead>Stay Dates</TableHead>
+                <TableHead>Property</TableHead>
+                <TableHead className="text-right">Booking Value</TableHead>
+                <TableHead className="text-right">Estimated Commission</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {reservations.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-zinc-500 font-serif italic">
+                <TableRow>
+                  <TableCell colSpan={8} className="py-12 text-center text-[#6E6E73] text-sm">
                     No referred stays recorded yet.
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
-                reservations.map(res => {
-                  const site = sites.find(s => s.id === res.siteId);
-                  return (
-                    <tr key={res.id} className="hover:bg-brand-blush/10 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-brand-plum">{res.id}</td>
-                      <td className="py-3.5 px-4 font-bold text-zinc-800">{res.guestName || "Referral Guest"}</td>
-                      <td className="py-3.5 px-4 text-zinc-600">{res.checkInDate} to {res.checkOutDate}</td>
-                      <td className="py-3.5 px-4 text-zinc-600">{res.propertyId}</td>
-                      <td className="py-3.5 px-4 font-bold">${res.bookingAmount.toLocaleString()}</td>
-                      <td className="py-3.5 px-4 font-bold text-emerald-700">${(res.partnerPayoutAmount || 0).toLocaleString()}</td>
-                      <td className="py-3.5 px-4">
-                        <Badge type={res.reservationStatus === "CHECKED_OUT" || res.reservationStatus === "COMPLETED" ? "success" : "info"}>
-                          {res.reservationStatus}
-                        </Badge>
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => setSelectedRes(res)}
-                          className="p-1.5 rounded-lg text-brand-plum hover:bg-brand-blush/30 transition-colors"
-                          title="View Stay Details"
-                        >
-                          <Eye size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
+                reservations.map((res) => (
+                  <TableRow key={res.id}>
+                    <TableCell className="font-mono font-medium text-[#1D1D1F]">
+                      {res.confirmationCode || res.id}
+                    </TableCell>
+                    <TableCell className="font-medium text-[#1D1D1F]">
+                      {res.guestName || "Referral Guest"}
+                    </TableCell>
+                    <TableCell className="text-[#6E6E73] whitespace-nowrap">
+                      {res.checkInDate} to {res.checkOutDate}
+                    </TableCell>
+                    <TableCell className="text-[#6E6E73]">
+                      {res.propertyId}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-medium text-[#1D1D1F] tabular-nums">
+                      {formatCurrency(res.bookingAmount)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold text-[#1D1D1F] tabular-nums">
+                      {formatCurrency(res.partnerPayoutAmount || 0)}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge variant={getStatusVariant(res.reservationStatus)}>{res.reservationStatus}</StatusBadge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <button
+                        onClick={() => setSelectedRes(res)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E8E8ED] transition-colors"
+                        title="View Details"
+                      >
+                        <Eye size={14} />
+                        <span>Details</span>
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Mobile Operational Card List */}
+        <div className="md:hidden divide-y divide-[#E8E8ED]">
+          {reservations.length === 0 ? (
+            <div className="py-12 text-center text-[#6E6E73] text-sm">
+              No referred stays recorded yet.
+            </div>
+          ) : (
+            reservations.map((res) => (
+              <TableMobileCard
+                key={res.id}
+                title={res.confirmationCode || res.id}
+                subtitle={res.guestName || "Referral Guest"}
+                badge={<StatusBadge variant={getStatusVariant(res.reservationStatus)}>{res.reservationStatus}</StatusBadge>}
+                details={[
+                  { label: "Dates", value: `${res.checkInDate} – ${res.checkOutDate}` },
+                  { label: "Commission", value: formatCurrency(res.partnerPayoutAmount || 0), numeric: true }
+                ]}
+              />
+            ))
+          )}
         </div>
       </div>
 
-      {/* DETAIL SLIDEOVER */}
+      {/* READ-ONLY DETAIL SLIDEOVER */}
       <SlideOver
         isOpen={!!selectedRes}
         onClose={() => setSelectedRes(null)}
-        title={`Stay Details: ${selectedRes?.id}`}
+        title={`Stay Details — ${selectedRes?.confirmationCode || selectedRes?.id}`}
       >
         {selectedRes && (
-          <div className="space-y-6 text-xs font-sans">
-            <div className="p-4 bg-brand-bg/50 border border-brand-blush rounded-xl space-y-2">
+          <div className="space-y-6 text-sm text-[#1D1D1F]">
+            {/* Header summary */}
+            <div className="bg-[#F5F5F7] p-4 rounded-xl space-y-3">
               <div className="flex justify-between items-center">
-                <span className="font-bold text-brand-plum text-sm">{selectedRes.guestName || "Referral Guest"}</span>
-                <Badge type={selectedRes.reservationStatus === "CHECKED_OUT" ? "success" : "info"}>
-                  {selectedRes.reservationStatus}
-                </Badge>
+                <span className="font-medium text-[#1D1D1F]">Status</span>
+                <StatusBadge variant={getStatusVariant(selectedRes.reservationStatus)}>{selectedRes.reservationStatus}</StatusBadge>
               </div>
-              <div className="text-zinc-500 flex items-center space-x-1">
-                <CalendarDays size={12} />
-                <span>{selectedRes.checkInDate} — {selectedRes.checkOutDate}</span>
+              <div className="flex items-center gap-2 text-[#6E6E73] text-xs">
+                <Calendar size={14} className="shrink-0 text-[#6E6E73]" />
+                <span>{selectedRes.checkInDate} to {selectedRes.checkOutDate}</span>
               </div>
             </div>
 
+            {/* Financial Summary */}
             <div className="space-y-3">
-              <h4 className="font-bold text-brand-wine uppercase tracking-wider text-[11px]">Financial Breakdown</h4>
-              <div className="p-3 bg-brand-cream border border-brand-blush/80 rounded-xl space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Gross Booking Amount</span>
-                  <span className="font-bold text-zinc-800">${selectedRes.bookingAmount.toLocaleString()}</span>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-[#6E6E73]">Financial Overview</h4>
+              <div className="bg-[#FFFFFF] border border-[#D2D2D7] rounded-xl p-4 space-y-2 text-xs">
+                <div className="flex justify-between py-1">
+                  <span className="text-[#6E6E73]">Gross Booking Value</span>
+                  <span className="font-mono font-semibold text-[#1D1D1F] tabular-nums">
+                    {formatCurrency(selectedRes.bookingAmount)}
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Calculated Creator Commission</span>
-                  <span className="font-bold text-emerald-700">${(selectedRes.partnerPayoutAmount || 0).toLocaleString()}</span>
+                <div className="flex justify-between py-1 border-t border-[#E8E8ED]">
+                  <span className="text-[#6E6E73]">Calculated Commission</span>
+                  <span className="font-mono font-semibold text-[#1D1D1F] tabular-nums">
+                    {formatCurrency(selectedRes.partnerPayoutAmount || 0)}
+                  </span>
                 </div>
               </div>
+            </div>
+
+            {/* Privacy notice */}
+            <div className="bg-[#F5F5F7] p-3 rounded-lg border border-[#E8E8ED] flex items-center gap-2 text-xs text-[#6E6E73]">
+              <ShieldCheck size={16} className="shrink-0 text-[#6E6E73]" />
+              <span>Guest identities are masked for privacy & security compliance.</span>
             </div>
           </div>
         )}
@@ -166,8 +231,10 @@ function PartnerBookingsContent() {
 
 export default function PartnerBookings() {
   return (
-    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-brand-plum" /></div>}>
+    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" /></div>}>
       <PartnerBookingsContent />
     </Suspense>
   );
 }
+
+

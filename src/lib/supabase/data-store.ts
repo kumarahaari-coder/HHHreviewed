@@ -1252,7 +1252,7 @@ export async function getAdminReservations(): Promise<Reservation[]> {
     status: r.reservation_status === "CANCELLED" ? "CANCELLED" : "CONFIRMED",
     currency: r.currency || "USD",
     platform: (r.platform && r.platform !== "ownerrez") ? r.platform : (r.ownerrez_booking_id ? "direct" : (r.platform || undefined)),
-    sourceProvider: r.ownerrez_booking_id ? "ownerrez" : (r.payment_confirmation_source?.toLowerCase() === "ownerrez" ? "ownerrez" : "hospitable"),
+    sourceProvider: (r.payment_confirmation_source && r.payment_confirmation_source.trim() !== "") ? r.payment_confirmation_source.toLowerCase() : (r.ownerrez_booking_id ? "ownerrez" : "unknown"),
     paymentConfirmationSource: r.payment_confirmation_source || undefined,
     attributionStatus: r.attribution_status,
     financialDataAvailable: Boolean(r.financial_data_available),

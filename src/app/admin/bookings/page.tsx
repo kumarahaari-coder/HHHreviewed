@@ -1,112 +1,126 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   Search,
   Filter,
   FileSpreadsheet,
-  AlertCircle,
-  Link as LinkIcon,
+  RefreshCw,
   Eye,
-  PlusCircle,
-  CheckCircle,
+  X,
   AlertTriangle,
   Info,
-  RefreshCw
+  CheckCircle2,
+  HelpCircle,
+  Building2,
+  Calendar,
+  CreditCard,
+  DollarSign,
+  UserCheck,
+  Lock,
+  Unlock,
+  ArrowRight
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { Reservation, Partner, Site, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
-import { Card, Badge, SlideOver } from "@/components/ui/custom";
+import {
+  Card,
+  StatusBadge,
+  SlideOver,
+  PageHeader,
+  Button,
+  LoadingState,
+  EmptyState,
+  ErrorBanner,
+  TableContainer,
+  Table,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableMobileCard
+} from "@/components/ui";
+import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 import { runSystemPayoutRecalculation } from "@/lib/payouts";
 
-function BookingsListContent() {
+type ViewShortcut = "ALL" | "NEEDS_REVIEW" | "UNATTRIBUTED" | "AWAITING_PAYMENT" | "HOLDS";
+
+function BookingsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Seed db data states
-  const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [partners, setPartners] = useState<Partner[]>([]);
-  const [sites, setSites] = useState<Site[]>([]);
-  const [attributions, setAttributions] = useState<ReservationAttribution[]>([]);
+  // Data States
+  const [reservations, setReservations] = useState<Reservation[]>(db.reservations || []);
+  const [partners, setPartners] = useState<Partner[]>(db.partners || []);
+  const [sites, setSites] = useState<Site[]>(db.sites || []);
+  const [attributions, setAttributions] = useState<ReservationAttribution[]>(db.reservationAttributions || []);
   const [commissionPreviews, setCommissionPreviews] = useState<any[]>([]);
-  
-  // Search and Filter states
+  const [ledgerEvents, setLedgerEvents] = useState<any[]>([]);
+
+  // UI & Loading States
+  const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filter States
+  const [activeShortcut, setActiveShortcut] = useState<ViewShortcut>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedProvider, setSelectedProvider] = useState("ALL");
-  const [selectedChannel, setSelectedChannel] = useState("ALL");
-  const [selectedPartner, setSelectedPartner] = useState("ALL");
-  const [selectedSite, setSelectedSite] = useState("ALL");
   const [selectedProperty, setSelectedProperty] = useState("ALL");
   const [selectedStatus, setSelectedStatus] = useState("ALL");
+  const [selectedAttribution, setSelectedAttribution] = useState("ALL");
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState("ALL");
   const [selectedPayoutStatus, setSelectedPayoutStatus] = useState("ALL");
-  const [selectedAttribution, setSelectedAttribution] = useState("ALL");
+  const [selectedPartner, setSelectedPartner] = useState("ALL");
+  const [selectedSite, setSelectedSite] = useState("ALL");
+  const [selectedProvider, setSelectedProvider] = useState("ALL");
+  const [selectedChannel, setSelectedChannel] = useState("ALL");
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
-  // Selection/Detail drawer state
+  // Selection / Detail Drawer State
   const [selectedRes, setSelectedRes] = useState<Reservation | null>(null);
   const [adminNoteInput, setAdminNoteInput] = useState("");
-  const [isRefreshingOwnerRez, setIsRefreshingOwnerRez] = useState(false);
-  
-  // Reassignment state (manual reconciliation)
   const [showReassignPanel, setShowReassignPanel] = useState(false);
   const [reassignPartnerId, setReassignPartnerId] = useState("");
   const [reassignSiteId, setReassignSiteId] = useState("");
 
-  const handleRefreshOwnerRez = async () => {
-    setIsRefreshingOwnerRez(true);
+  // Load Real Data from API with Fallback
+  const refreshData = useCallback(async () => {
     try {
-      const res = await fetch("/api/ownerrez/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ all: true }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        db.addNotification(
-          "SUCCESS",
-          `OwnerRez sync complete: ${data.result?.bookingsProcessed ?? 0} bookings processed (${data.result?.inserted ?? 0} new, ${data.result?.updated ?? 0} updated, ${data.result?.unchanged ?? 0} unchanged).`
-        );
-      } else {
-        db.addNotification("ALERT", `OwnerRez refresh failed: ${data.error || "Unknown error"}`);
-      }
-      await refreshData();
-    } catch (err: any) {
-      db.addNotification("ALERT", `OwnerRez refresh failed: ${err?.message || "Network error"}`);
-      await refreshData();
-    } finally {
-      setIsRefreshingOwnerRez(false);
-    }
-  };
-
-  const refreshData = async () => {
-    try {
-      const [resRes, attrRes, sitesRes, partnersRes] = await Promise.all([
-        fetch("/api/admin/reservations"),
-        fetch("/api/admin/attributions"),
-        fetch("/api/admin/sites"),
-        fetch("/api/admin/partners"),
+      setError(null);
+      const [resRes, attrRes, sitesRes, partnersRes, commRes, ledgerRes] = await Promise.all([
+        fetch("/api/admin/reservations").catch(() => null),
+        fetch("/api/admin/attributions").catch(() => null),
+        fetch("/api/admin/sites").catch(() => null),
+        fetch("/api/admin/partners").catch(() => null),
+        fetch("/api/admin/commissions/preview").catch(() => null),
+        fetch("/api/admin/commissions/ledger").catch(() => null)
       ]);
 
-      if (resRes.ok) {
+      if (resRes && resRes.ok) {
         const rData = await resRes.json();
         if (rData.success && Array.isArray(rData.reservations)) {
           setReservations(rData.reservations);
         } else {
-          setReservations([...db.reservations]);
+          setReservations(db.reservations);
         }
       } else {
-        setReservations([...db.reservations]);
+        setReservations(db.reservations);
       }
 
-      if (attrRes.ok) {
+      if (attrRes && attrRes.ok) {
         const aData = await attrRes.json();
-        setAttributions(aData.attributions || []);
+        if (aData.success && Array.isArray(aData.attributions)) {
+          setAttributions(aData.attributions);
+        } else {
+          setAttributions(db.reservationAttributions);
+        }
       } else {
         setAttributions(db.reservationAttributions);
       }
 
-      if (sitesRes.ok) {
+      if (sitesRes && sitesRes.ok) {
         const sData = await sitesRes.json();
         if (sData.success && Array.isArray(sData.sites)) {
           setSites(sData.sites);
@@ -117,7 +131,7 @@ function BookingsListContent() {
         setSites(db.sites);
       }
 
-      if (partnersRes.ok) {
+      if (partnersRes && partnersRes.ok) {
         const pData = await partnersRes.json();
         if (pData.success && Array.isArray(pData.partners)) {
           setPartners(pData.partners);
@@ -128,82 +142,95 @@ function BookingsListContent() {
         setPartners(db.partners);
       }
 
-      try {
-        const commRes = await fetch("/api/admin/commissions/preview");
-        if (commRes.ok) {
-          const cData = await commRes.json();
-          if (cData.success && Array.isArray(cData.previews)) {
-            setCommissionPreviews(cData.previews);
-          }
+      if (commRes && commRes.ok) {
+        const cData = await commRes.json();
+        if (cData.success && Array.isArray(cData.previews)) {
+          setCommissionPreviews(cData.previews);
         }
-      } catch {
-        // Non-blocking preview fetch
       }
-    } catch {
-      setReservations([...db.reservations]);
+
+      if (ledgerRes && ledgerRes.ok) {
+        const lData = await ledgerRes.json();
+        if (lData.success && Array.isArray(lData.events)) {
+          setLedgerEvents(lData.events);
+        }
+      }
+    } catch (err: any) {
+      console.error("[Admin Bookings Data Load Error]:", err);
+      setReservations(db.reservations);
       setPartners(db.partners);
       setSites(db.sites);
       setAttributions(db.reservationAttributions);
+      setError("Unable to connect to live datastore. Showing local operational dataset.");
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const handleAttributionReview = async (attributionId: string, newStatus: ReconciliationStatus) => {
-    try {
-      const res = await fetch(`/api/admin/attributions/${attributionId}/review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus, reviewedBy: "Super Admin" })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        db.addNotification("SUCCESS", `Attribution status updated to ${newStatus}.`);
-        await refreshData();
-      }
-    } catch (err: any) {
-      console.error("Failed to review attribution:", err);
-    }
-  };
+  }, []);
 
   useEffect(() => {
     refreshData();
-    
-    // Check for query parameters from Overview cards
+
+    // Check query params from Overview navigation
     const attrFilter = searchParams.get("attribution");
     const reviewFilter = searchParams.get("review");
-    
+    const detailParam = searchParams.get("detail");
+    const filterParam = searchParams.get("filter");
+
     if (attrFilter) {
       setSelectedAttribution(attrFilter);
+      if (attrFilter === "UNATTRIBUTED") setActiveShortcut("UNATTRIBUTED");
     }
     if (reviewFilter === "true") {
       setSelectedPayoutStatus("ON_HOLD");
+      setActiveShortcut("HOLDS");
     }
-  }, [searchParams]);
+    if (detailParam === "open" && reservations.length > 0) {
+      setSelectedRes(reservations[0]);
+    }
+    if (filterParam === "open") {
+      setMobileFilterOpen(true);
+    }
+  }, [searchParams, refreshData, reservations]);
 
-  // Recalculate all payouts globally
-  const handleRecalculate = () => {
-    runSystemPayoutRecalculation();
-    refreshData();
-    if (selectedRes) {
-      const updated = db.reservations.find(r => r.id === selectedRes.id);
-      if (updated) setSelectedRes(updated);
+  // Handle Manual Sync Trigger
+  const handleManualSync = async () => {
+    setIsRefreshing(true);
+    try {
+      const res = await fetch("/api/ownerrez/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        db.addNotification(
+          "SUCCESS",
+          `OwnerRez sync complete: ${data.result?.bookingsProcessed ?? 0} bookings processed.`
+        );
+      } else {
+        db.addNotification("ALERT", `OwnerRez refresh failed: ${data.error || "Unknown error"}`);
+      }
+      await refreshData();
+    } catch (err: any) {
+      db.addNotification("ALERT", `OwnerRez refresh failed: ${err?.message || "Network error"}`);
+      await refreshData();
+    } finally {
+      setIsRefreshing(false);
     }
-    db.addNotification("SUCCESS", "System payout values and eligibility criteria successfully recalculated.");
   };
 
-  // Toggle payout hold
+  // Toggle Payout Hold State
   const handleToggleHold = (resId: string) => {
     const res = reservations.find(r => r.id === resId);
     if (!res) return;
     const newStatus = res.payoutStatus === "ON_HOLD" ? "ELIGIBLE" : "ON_HOLD";
     db.updateReservation(resId, { payoutStatus: newStatus });
     refreshData();
-    // Refresh active selected view
     const updated = db.reservations.find(r => r.id === resId);
     if (updated) setSelectedRes(updated);
   };
 
-  // Save admin note
+  // Save Internal Admin Note
   const handleSaveNote = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRes) return;
@@ -213,7 +240,7 @@ function BookingsListContent() {
     setAdminNoteInput("");
   };
 
-  // Process manual attribution reassignment
+  // Reassignment / Manual Attribution Submit
   const handleReassignSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedRes || !reassignPartnerId || !reassignSiteId) return;
@@ -225,231 +252,637 @@ function BookingsListContent() {
       attributionSource: "Manual Reconciliation"
     });
 
-    // Run calculation
     runSystemPayoutRecalculation();
-    
     refreshData();
-    
-    // Refresh selected panel
+
     const updated = db.reservations.find(r => r.id === selectedRes.id);
     if (updated) setSelectedRes(updated);
 
     setShowReassignPanel(false);
     setReassignPartnerId("");
     setReassignSiteId("");
-    db.addNotification("SUCCESS", `Booking ${selectedRes.confirmationCode} manually reconciled and attributed successfully.`);
+    db.addNotification("SUCCESS", `Booking ${selectedRes.confirmationCode} manually reconciled.`);
   };
 
-  // Filter logic
-  const filteredList = reservations.filter(res => {
-    // Search query
-    if (searchQuery && !res.confirmationCode.toLowerCase().includes(searchQuery.toLowerCase()) && !res.id.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false;
+  // Quick Filter Shortcut Trigger
+  const handleShortcutClick = (shortcut: ViewShortcut) => {
+    setActiveShortcut(shortcut);
+    switch (shortcut) {
+      case "NEEDS_REVIEW":
+        setSelectedAttribution("REVIEW_REQUIRED");
+        setSelectedPayoutStatus("ALL");
+        setSelectedPaymentStatus("ALL");
+        break;
+      case "UNATTRIBUTED":
+        setSelectedAttribution("UNATTRIBUTED");
+        setSelectedPayoutStatus("ALL");
+        setSelectedPaymentStatus("ALL");
+        break;
+      case "AWAITING_PAYMENT":
+        setSelectedPaymentStatus("UNPAID");
+        setSelectedAttribution("ALL");
+        setSelectedPayoutStatus("ALL");
+        break;
+      case "HOLDS":
+        setSelectedPayoutStatus("ON_HOLD");
+        setSelectedAttribution("ALL");
+        setSelectedPaymentStatus("ALL");
+        break;
+      case "ALL":
+      default:
+        resetFilters();
+        break;
     }
-    // Integration Provider filter
+  };
+
+  // Reset All Filters
+  const resetFilters = () => {
+    setSearchQuery("");
+    setSelectedProperty("ALL");
+    setSelectedStatus("ALL");
+    setSelectedAttribution("ALL");
+    setSelectedPaymentStatus("ALL");
+    setSelectedPayoutStatus("ALL");
+    setSelectedPartner("ALL");
+    setSelectedSite("ALL");
+    setSelectedProvider("ALL");
+    setSelectedChannel("ALL");
+    setActiveShortcut("ALL");
+  };
+
+  const isFilterActive =
+    searchQuery !== "" ||
+    selectedProperty !== "ALL" ||
+    selectedStatus !== "ALL" ||
+    selectedAttribution !== "ALL" ||
+    selectedPaymentStatus !== "ALL" ||
+    selectedPayoutStatus !== "ALL" ||
+    selectedPartner !== "ALL" ||
+    selectedSite !== "ALL" ||
+    selectedProvider !== "ALL" ||
+    selectedChannel !== "ALL";
+
+  // Active filter count for mobile trigger badge
+  const activeFilterCount = [
+    selectedProperty !== "ALL",
+    selectedStatus !== "ALL",
+    selectedAttribution !== "ALL",
+    selectedPaymentStatus !== "ALL",
+    selectedPayoutStatus !== "ALL",
+    selectedPartner !== "ALL",
+    selectedSite !== "ALL",
+    selectedProvider !== "ALL",
+    selectedChannel !== "ALL"
+  ].filter(Boolean).length;
+
+  // Property Resolver
+  const getPropertyName = (propertyId: string) => {
+    const map: Record<string, string> = {
+      "38d9159e-a35d-405e-826e-7381ad3c3197": "Uptown St. Augustine",
+      "f0fb867d-47cd-47d4-afa6-c4bf226c1768": "Downtown St. Augustine",
+      "51be6158-268d-4c96-8f0b-9968f544ddfa": "Ellsworth, Maine",
+      "55791a54-b1a3-459e-bbd5-9073a418b774": "Beech Mountain, NC",
+      "prop-001": "Uptown Retreat",
+      "prop-002": "Downtown Retreat",
+      "prop-003": "Ellsworth Retreat",
+      "prop-004": "Beech Mountain Retreat"
+    };
+    return map[propertyId] || propertyId || "Other Property";
+  };
+
+  // Filtering Logic
+  const filteredReservations = reservations.filter(res => {
+    // Search query matching confirmation code, booking ID, property, partner, site
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const codeMatch = res.confirmationCode?.toLowerCase().includes(q);
+      const idMatch = res.id?.toLowerCase().includes(q);
+      const ownerrezMatch = String(res.ownerrezBookingId || "").includes(q);
+      const propMatch = getPropertyName(res.propertyId).toLowerCase().includes(q);
+      const partnerObj = partners.find(p => p.id === res.partnerId);
+      const partnerMatch = partnerObj?.contactName?.toLowerCase().includes(q) || partnerObj?.businessName?.toLowerCase().includes(q);
+      const siteObj = sites.find(s => s.id === res.siteId);
+      const siteMatch = siteObj?.siteName?.toLowerCase().includes(q);
+
+      if (!codeMatch && !idMatch && !ownerrezMatch && !propMatch && !partnerMatch && !siteMatch) {
+        return false;
+      }
+    }
+
+    // Property Filter
+    if (selectedProperty !== "ALL" && res.propertyId !== selectedProperty) return false;
+
+    // Stay Status Filter
+    if (selectedStatus !== "ALL" && res.reservationStatus !== selectedStatus) return false;
+
+    // Attribution Status Filter
+    if (selectedAttribution !== "ALL") {
+      const attr = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
+      const currentAttr = attr?.status || res.attributionStatus || "UNATTRIBUTED";
+      if (currentAttr !== selectedAttribution) return false;
+    }
+
+    // Payment Status Filter
+    if (selectedPaymentStatus !== "ALL" && res.paymentStatus !== selectedPaymentStatus) return false;
+
+    // Payout Status Filter
+    if (selectedPayoutStatus !== "ALL" && res.payoutStatus !== selectedPayoutStatus) return false;
+
+    // Partner Filter
+    if (selectedPartner !== "ALL" && res.partnerId !== selectedPartner) return false;
+
+    // Site Filter
+    if (selectedSite !== "ALL" && res.siteId !== selectedSite) return false;
+
+    // Provider Filter (Technical ingestion source)
     if (selectedProvider !== "ALL") {
       const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
       if (selectedProvider === "OWNERREZ" && !isOwnerRez) return false;
       if (selectedProvider === "HOSPITABLE" && isOwnerRez) return false;
     }
-    // Booking Channel filter
+
+    // Channel Filter (Booking channel)
     if (selectedChannel !== "ALL") {
       const channel = (res.platform || "DIRECT").toUpperCase();
       if (channel !== selectedChannel) return false;
     }
-    // Filters
-    if (selectedPartner !== "ALL" && res.partnerId !== selectedPartner) return false;
-    if (selectedSite !== "ALL" && res.siteId !== selectedSite) return false;
-    if (selectedProperty !== "ALL" && res.propertyId !== selectedProperty) return false;
-    if (selectedStatus !== "ALL" && res.reservationStatus !== selectedStatus) return false;
-    if (selectedPaymentStatus !== "ALL" && res.paymentStatus !== selectedPaymentStatus) return false;
-    if (selectedPayoutStatus !== "ALL" && res.payoutStatus !== selectedPayoutStatus) return false;
-    if (selectedAttribution !== "ALL" && res.attributionStatus !== selectedAttribution) return false;
 
     return true;
   });
 
-  // Export report simulator
-  const handleExportReport = () => {
+  // Export CSV Handler
+  const exportCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Reservation ID,Confirmation,Provider,Channel,Source Site,Property,Check In,Checkout,Gross Amount,Payment Status,Payout Status\n";
-    filteredList.forEach(r => {
-      const site = sites.find(s => s.id === r.siteId)?.siteName || "Unattributed";
-      const provider = (r.ownerrezBookingId || r.paymentConfirmationSource === "OWNERREZ") ? "OwnerRez" : "Hospitable";
-      csvContent += `${r.id},${r.confirmationCode},${provider},${r.platform || "direct"},${site},${r.propertyId},${r.checkInDate},${r.checkOutDate},${r.bookingAmount},${r.paymentStatus},${r.payoutStatus}\n`;
+    csvContent += "Confirmation Code,OwnerRez ID,Property,Check In,Check Out,Gross Value,Amount Received,Payment Status,Attribution,Payout Status\n";
+    filteredReservations.forEach(r => {
+      csvContent += `${r.confirmationCode},${r.ownerrezBookingId || ""},"${getPropertyName(r.propertyId)}",${r.checkInDate || ""},${r.checkOutDate || ""},${r.grossAmount || r.bookingAmount || 0},${r.amountReceived || 0},${r.paymentStatus || "UNPAID"},${r.attributionStatus || "UNATTRIBUTED"},${r.payoutStatus || "ESTIMATED"}\n`;
     });
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `HHH_Bookings_Report_${Date.now()}.csv`);
+    link.setAttribute("download", `HHH_Bookings_Export_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Title & Top actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Booking Management</h1>
-          <p className="text-zinc-500 font-serif italic text-sm mt-1">
-            Track multi-provider reservations (OwnerRez & Hospitable), verify source attribution, and manage payout locks.
-          </p>
-        </div>
-        
-        <div className="flex flex-wrap gap-2 sm:gap-3 self-end sm:self-auto">
-          <button
-            onClick={handleRefreshOwnerRez}
-            disabled={isRefreshingOwnerRez}
-            className="flex items-center space-x-1.5 bg-brand-cream border border-brand-blush hover:border-brand-plum text-brand-plum px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-plum cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Sync all OwnerRez bookings and refresh local table"
-          >
-            <RefreshCw size={14} className={isRefreshingOwnerRez ? "animate-spin" : "animate-hover-spin"} />
-            <span>{isRefreshingOwnerRez ? "Refreshing OwnerRez..." : "Refresh OwnerRez"}</span>
-          </button>
+  if (loading) {
+    return <LoadingState message="Loading reservation operational registry..." />;
+  }
 
-          <button
-            onClick={handleRecalculate}
-            className="flex items-center space-x-1.5 bg-brand-cream border border-brand-blush hover:border-brand-plum text-brand-plum px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none focus:ring-2 focus:ring-brand-plum cursor-pointer"
-          >
-            <RefreshCw size={14} className="animate-hover-spin" />
-            <span>Recalculate Payouts</span>
-          </button>
-          
-          <button
-            onClick={handleExportReport}
-            className="flex items-center space-x-1.5 bg-brand-blush hover:bg-brand-blush/80 text-brand-plum border border-brand-blush/60 px-3 py-2 rounded-lg text-xs font-bold transition-all focus:outline-none cursor-pointer"
-          >
-            <FileSpreadsheet size={14} />
-            <span>Export Bookings</span>
-          </button>
-        </div>
+  return (
+    <div className="space-y-6 font-sans pb-8">
+      {/* 1. Page Header */}
+      <PageHeader
+        title="Bookings"
+        description="Reservations, referral attribution and commission status."
+        action={
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={RefreshCw}
+              onClick={handleManualSync}
+              className={isRefreshing ? "animate-spin" : ""}
+            >
+              {isRefreshing ? "Syncing..." : "Sync OwnerRez"}
+            </Button>
+            <Button
+              variant="tertiary"
+              size="sm"
+              icon={FileSpreadsheet}
+              onClick={exportCSV}
+            >
+              Export CSV
+            </Button>
+          </div>
+        }
+      />
+
+      {error && <ErrorBanner message={error} />}
+
+      {/* 2. Quick Filter Shortcuts Bar */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+        {[
+          { id: "ALL", label: "All Bookings", count: reservations.length },
+          {
+            id: "NEEDS_REVIEW",
+            label: "Needs Review",
+            count: reservations.filter(r => (r.attributionStatus as string) === "REVIEW_REQUIRED").length,
+            badge: "warning" as const
+          },
+          {
+            id: "UNATTRIBUTED",
+            label: "Unattributed",
+            count: reservations.filter(r => (r.attributionStatus as string) === "UNATTRIBUTED" && r.reservationStatus !== "CANCELLED").length
+          },
+          {
+            id: "AWAITING_PAYMENT",
+            label: "Awaiting Payment",
+            count: reservations.filter(r => r.paymentStatus === "UNPAID" || (r.paymentStatus as string) === "UNPAID_PENDING_PAYMENT").length
+          },
+          {
+            id: "HOLDS",
+            label: "Holds & Disputes",
+            count: reservations.filter(r => r.payoutStatus === "ON_HOLD" || r.paymentStatus === "DISPUTED").length,
+            badge: "danger" as const
+          }
+        ].map(sc => {
+          const isActive = activeShortcut === sc.id;
+          return (
+            <button
+              key={sc.id}
+              type="button"
+              onClick={() => handleShortcutClick(sc.id as ViewShortcut)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                isActive
+                  ? "bg-primary text-surface font-semibold shadow-xs"
+                  : "bg-surface border border-divider text-secondary hover:text-primary hover:bg-surface-subtle"
+              }`}
+            >
+              <span>{sc.label}</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums ${
+                  isActive
+                    ? "bg-surface/20 text-surface"
+                    : sc.badge === "warning"
+                    ? "bg-warning-surface text-warning border border-warning-border"
+                    : sc.badge === "danger"
+                    ? "bg-danger-surface text-danger border border-danger-border"
+                    : "bg-surface-muted text-secondary"
+                }`}
+              >
+                {sc.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* SEARCH & FILTERS BAR */}
-      <Card className="p-4 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center gap-4">
-          {/* Search bar */}
-          <div className="relative flex-1">
-            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-zinc-400">
+      {/* 3. Search & Filter Bar */}
+      <Card variant="default" className="p-3.5 sm:p-4 space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Search Input */}
+          <div className="relative flex-1 min-w-0">
+            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-secondary pointer-events-none">
               <Search size={16} />
             </span>
             <input
               type="text"
-              placeholder="Search confirmation code..."
+              placeholder="Search confirmation code, booking ID, property, partner, or site..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-brand-bg/50 border border-brand-blush rounded-lg text-sm text-brand-text placeholder-zinc-400 focus:outline-none focus:border-brand-plum"
+              className="w-full pl-9 pr-8 py-2 bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-secondary hover:text-primary cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
-          {/* Quick Filters Toggles */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Desktop Inline Selects */}
+          <div className="hidden lg:flex items-center gap-2 shrink-0">
+            <select
+              value={selectedProperty}
+              onChange={e => setSelectedProperty(e.target.value)}
+              className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="ALL">All Properties</option>
+              <option value="38d9159e-a35d-405e-826e-7381ad3c3197">Uptown St. Augustine</option>
+              <option value="f0fb867d-47cd-47d4-afa6-c4bf226c1768">Downtown St. Augustine</option>
+              <option value="51be6158-268d-4c96-8f0b-9968f544ddfa">Ellsworth, Maine</option>
+              <option value="55791a54-b1a3-459e-bbd5-9073a418b774">Beech Mountain, NC</option>
+            </select>
+
             <select
               value={selectedAttribution}
               onChange={e => setSelectedAttribution(e.target.value)}
-              className="bg-brand-bg border border-brand-blush rounded-lg text-xs font-bold text-zinc-600 py-2 px-3 focus:outline-none"
+              className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
             >
               <option value="ALL">All Attributions</option>
               <option value="ATTRIBUTED">Attributed</option>
               <option value="UNATTRIBUTED">Unattributed</option>
-              <option value="RECONCILED">Manually Reconciled</option>
+              <option value="REVIEW_REQUIRED">Needs Review</option>
+              <option value="RECONCILED">Reconciled</option>
             </select>
 
             <select
-              value={selectedPayoutStatus}
-              onChange={e => setSelectedPayoutStatus(e.target.value)}
-              className="bg-brand-bg border border-brand-blush rounded-lg text-xs font-bold text-zinc-600 py-2 px-3 focus:outline-none"
+              value={selectedPaymentStatus}
+              onChange={e => setSelectedPaymentStatus(e.target.value)}
+              className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option value="ALL">All Payout Statuses</option>
-              <option value="ESTIMATED">Estimated</option>
-              <option value="ELIGIBLE">Eligible</option>
-              <option value="APPROVED">Approved</option>
-              <option value="ON_HOLD">On Hold</option>
-              <option value="PAID">Paid</option>
+              <option value="ALL">All Payments</option>
+              <option value="PAID">Fully Paid</option>
+              <option value="UNPAID">Unpaid / Awaiting</option>
+              <option value="REFUNDED">Refunded</option>
+              <option value="DISPUTED">Disputed</option>
             </select>
-          </div>
-        </div>
 
-        {/* Collapsible/Extended Filters */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 pt-3 border-t border-brand-blush/60">
-          <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Provider</label>
-            <select
-              value={selectedProvider}
-              onChange={e => setSelectedProvider(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none font-bold text-brand-plum"
-            >
-              <option value="ALL">All Providers</option>
-              <option value="OWNERREZ">OwnerRez</option>
-              <option value="HOSPITABLE">Hospitable</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Channel</label>
-            <select
-              value={selectedChannel}
-              onChange={e => setSelectedChannel(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
-            >
-              <option value="ALL">All Channels</option>
-              <option value="DIRECT">Direct</option>
-              <option value="AIRBNB">Airbnb</option>
-              <option value="VRBO">Vrbo</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Partner</label>
-            <select
-              value={selectedPartner}
-              onChange={e => setSelectedPartner(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
-            >
-              <option value="ALL">All Partners</option>
-              {partners.map(p => (
-                <option key={p.id} value={p.id}>{p.contactName}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Referrer Site</label>
-            <select
-              value={selectedSite}
-              onChange={e => setSelectedSite(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
-            >
-              <option value="ALL">All Sites</option>
-              {sites.map(s => (
-                <option key={s.id} value={s.id}>{s.siteName}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">HHH Retreat</label>
-            <select
-              value={selectedProperty}
-              onChange={e => setSelectedProperty(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
-            >
-              <option value="ALL">All Properties</option>
-              <option value="55791a54-b1a3-459e-bbd5-9073a418b774">Beech Mountain</option>
-              <option value="38d9159e-a35d-405e-826e-7381ad3c3197">Uptown Retreat</option>
-              <option value="f0fb867d-47cd-47d4-afa6-c4bf226c1768">Downtown (Lincoln)</option>
-              <option value="51be6158-268d-4c96-8f0b-9968f544ddfa">Ellsworth Retreat</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Stay Status</label>
             <select
               value={selectedStatus}
               onChange={e => setSelectedStatus(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
+              className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="ALL">All Stay Statuses</option>
+              <option value="CONFIRMED">Confirmed</option>
+              <option value="CHECKED_IN">Checked In</option>
+              <option value="CHECKED_OUT">Checked Out</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+
+            {isFilterActive && (
+              <Button variant="tertiary" size="sm" onClick={resetFilters}>
+                Reset
+              </Button>
+            )}
+          </div>
+
+          {/* Mobile Filter Sheet Trigger Button */}
+          <div className="flex lg:hidden items-center gap-2 justify-between">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Filter}
+              onClick={() => setMobileFilterOpen(true)}
+            >
+              Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
+            </Button>
+            {isFilterActive && (
+              <Button variant="tertiary" size="sm" onClick={resetFilters}>
+                Reset
+              </Button>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      {/* 4. Desktop Operational Table (>=768px) */}
+      <div className="hidden md:block">
+        <TableContainer>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Booking</TableHead>
+                <TableHead>Property / Stay</TableHead>
+                <TableHead>Referral Source</TableHead>
+                <TableHead align="right">Payment</TableHead>
+                <TableHead align="right">Commission</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="center">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredReservations.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-12">
+                    <EmptyState
+                      title="No reservations found"
+                      description="No bookings match your selected operational filters or search query."
+                      action={isFilterActive ? <Button variant="secondary" size="sm" onClick={resetFilters}>Reset All Filters</Button> : undefined}
+                    />
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredReservations.map(res => {
+                  const site = sites.find(s => s.id === res.siteId);
+                  const partner = partners.find(p => p.id === res.partnerId);
+                  const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
+
+                  // Attribution State Resolver
+                  const attrObj = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
+                  const attrStatus = attrObj?.status || res.attributionStatus || "UNATTRIBUTED";
+
+                  // Commission Accrual Snapshot Resolver
+                  const accrualEvent = ledgerEvents.find(
+                    e => (e.reservation_id === res.id || e.provider_booking_id === String(res.ownerrezBookingId) || e.provider_booking_id === res.confirmationCode) &&
+                         e.event_type === "INITIAL_ACCRUAL"
+                  );
+                  const preview = commissionPreviews.find(cp => cp.reservationId === res.id || cp.ownerrezBookingId === res.ownerrezBookingId);
+                  const calculatedVal = accrualEvent
+                    ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
+                    : preview
+                    ? Number(preview.commissionCalculations?.calculatedCommission || 0)
+                    : (res.grossAmount || res.bookingAmount || 0) * 0.10;
+
+                  return (
+                    <TableRow
+                      key={res.id}
+                      onClick={() => {
+                        setSelectedRes(res);
+                        setAdminNoteInput(res.adminNotes || "");
+                      }}
+                    >
+                      {/* Column 1: Booking Reference & Provider */}
+                      <TableCell>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-primary flex items-center gap-1.5">
+                            <span>{res.confirmationCode}</span>
+                            {res.ownerrezBookingId && (
+                              <span className="text-[10px] text-tertiary font-mono">
+                                (OR #{res.ownerrezBookingId})
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-secondary flex items-center gap-1">
+                            <span className="uppercase font-medium">{res.platform || "Direct"}</span>
+                            <span>•</span>
+                            <span>{isOwnerRez ? "OwnerRez" : "Hospitable"}</span>
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      {/* Column 2: Property & Stay Dates */}
+                      <TableCell>
+                        <div className="space-y-0.5">
+                          <div className="font-medium text-primary">
+                            {getPropertyName(res.propertyId)}
+                          </div>
+                          <div className="text-[11px] text-secondary font-mono">
+                            {res.checkInDate ? res.checkInDate.slice(0, 10) : ""} → {res.checkOutDate ? res.checkOutDate.slice(0, 10) : ""}
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      {/* Column 3: Referral Source & Attribution */}
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div className="text-xs font-medium text-primary truncate max-w-[180px]">
+                            {site ? site.siteName : partner ? partner.contactName : <span className="text-tertiary italic">Unattributed</span>}
+                          </div>
+                          <StatusBadge variant={getStatusTypeForState(attrStatus)}>
+                            {formatStatusLabel(attrStatus)}
+                          </StatusBadge>
+                        </div>
+                      </TableCell>
+
+                      {/* Column 4: Payment State */}
+                      <TableCell align="right" numeric>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-primary">
+                            ${(res.amountReceived || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[11px] text-secondary">
+                            Gross: ${(res.grossAmount || res.bookingAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      {/* Column 5: Commission Snapshot & Lifecycle */}
+                      <TableCell align="right" numeric>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-primary">
+                            ${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[11px]">
+                            <StatusBadge variant={getStatusTypeForState(res.payoutStatus || "ESTIMATED")}>
+                              {formatStatusLabel(res.payoutStatus || "ESTIMATED")}
+                            </StatusBadge>
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      {/* Column 6: Stay / Operational Status */}
+                      <TableCell>
+                        <StatusBadge variant={getStatusTypeForState(res.reservationStatus)}>
+                          {formatStatusLabel(res.reservationStatus)}
+                        </StatusBadge>
+                      </TableCell>
+
+                      {/* Column 7: Action Trigger */}
+                      <TableCell align="center">
+                        <Button
+                          variant="tertiary"
+                          size="sm"
+                          icon={Eye}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedRes(res);
+                            setAdminNoteInput(res.adminNotes || "");
+                          }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </div>
+
+      {/* 5. Mobile Operational Card Stack (<768px) */}
+      <div className="block md:hidden space-y-3">
+        {filteredReservations.length === 0 ? (
+          <EmptyState
+            title="No reservations found"
+            description="No bookings match active search query or filters."
+            action={isFilterActive ? <Button variant="secondary" size="sm" onClick={resetFilters}>Reset Filters</Button> : undefined}
+          />
+        ) : (
+          filteredReservations.map(res => {
+            const site = sites.find(s => s.id === res.siteId);
+            const partner = partners.find(p => p.id === res.partnerId);
+            const attrObj = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
+            const attrStatus = attrObj?.status || res.attributionStatus || "UNATTRIBUTED";
+
+            return (
+              <TableMobileCard
+                key={res.id}
+                title={res.confirmationCode}
+                subtitle={`${getPropertyName(res.propertyId)} • ${res.checkInDate ? res.checkInDate.slice(0, 10) : ""}`}
+                badge={
+                  <StatusBadge variant={getStatusTypeForState(attrStatus)}>
+                    {formatStatusLabel(attrStatus)}
+                  </StatusBadge>
+                }
+                action={
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    icon={Eye}
+                    onClick={() => {
+                      setSelectedRes(res);
+                      setAdminNoteInput(res.adminNotes || "");
+                    }}
+                  />
+                }
+                details={[
+                  { label: "Referral Site", value: site ? site.siteName : partner ? partner.contactName : "Unattributed" },
+                  { label: "Received Amount", value: `$${(res.amountReceived || 0).toFixed(2)}`, numeric: true },
+                  { label: "Gross Value", value: `$${(res.grossAmount || res.bookingAmount || 0).toFixed(2)}`, numeric: true },
+                  { label: "Stay Status", value: formatStatusLabel(res.reservationStatus) }
+                ]}
+              />
+            );
+          })
+        )}
+      </div>
+
+      {/* 6. Secondary Mobile Filter SlideOver Sheet */}
+      <SlideOver
+        isOpen={mobileFilterOpen}
+        onClose={() => setMobileFilterOpen(false)}
+        title="Filter Bookings"
+        description="Refine operational reservation registry"
+      >
+        <div className="space-y-4 font-sans py-2">
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Property</label>
+            <select
+              value={selectedProperty}
+              onChange={e => setSelectedProperty(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            >
+              <option value="ALL">All Properties</option>
+              <option value="38d9159e-a35d-405e-826e-7381ad3c3197">Uptown St. Augustine</option>
+              <option value="f0fb867d-47cd-47d4-afa6-c4bf226c1768">Downtown St. Augustine</option>
+              <option value="51be6158-268d-4c96-8f0b-9968f544ddfa">Ellsworth, Maine</option>
+              <option value="55791a54-b1a3-459e-bbd5-9073a418b774">Beech Mountain, NC</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Attribution Status</label>
+            <select
+              value={selectedAttribution}
+              onChange={e => setSelectedAttribution(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            >
+              <option value="ALL">All Attributions</option>
+              <option value="ATTRIBUTED">Attributed</option>
+              <option value="UNATTRIBUTED">Unattributed</option>
+              <option value="REVIEW_REQUIRED">Needs Review</option>
+              <option value="RECONCILED">Reconciled</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Payment Status</label>
+            <select
+              value={selectedPaymentStatus}
+              onChange={e => setSelectedPaymentStatus(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            >
+              <option value="ALL">All Payments</option>
+              <option value="PAID">Fully Paid</option>
+              <option value="UNPAID">Unpaid / Awaiting</option>
+              <option value="REFUNDED">Refunded</option>
+              <option value="DISPUTED">Disputed</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Stay Status</label>
+            <select
+              value={selectedStatus}
+              onChange={e => setSelectedStatus(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
             >
               <option value="ALL">All Statuses</option>
               <option value="CONFIRMED">Confirmed</option>
@@ -461,696 +894,238 @@ function BookingsListContent() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Payment Status</label>
+            <label className="block text-xs font-medium text-secondary mb-1">Partner</label>
             <select
-              value={selectedPaymentStatus}
-              onChange={e => setSelectedPaymentStatus(e.target.value)}
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
+              value={selectedPartner}
+              onChange={e => setSelectedPartner(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
             >
-              <option value="ALL">All Payments</option>
-              <option value="PAID">Fully Paid</option>
-              <option value="UNPAID">Unpaid</option>
-              <option value="REFUNDED">Refunded</option>
-              <option value="DISPUTED">Disputed</option>
+              <option value="ALL">All Partners</option>
+              {partners.map(p => (
+                <option key={p.id} value={p.id}>{p.contactName}</option>
+              ))}
             </select>
           </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Referrer Site</label>
+            <select
+              value={selectedSite}
+              onChange={e => setSelectedSite(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            >
+              <option value="ALL">All Referrer Sites</option>
+              {sites.map(s => (
+                <option key={s.id} value={s.id}>{s.siteName}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="pt-4 border-t border-divider-soft flex gap-2">
+            <Button
+              variant="primary"
+              className="flex-1"
+              onClick={() => setMobileFilterOpen(false)}
+            >
+              Apply Filters
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                resetFilters();
+                setMobileFilterOpen(false);
+              }}
+            >
+              Reset
+            </Button>
+          </div>
         </div>
-      </Card>
+      </SlideOver>
 
-      {/* TABLE */}
-      <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum text-xs uppercase tracking-wider font-bold">
-                <th className="p-4">Confirmation / Provider</th>
-                <th className="p-4">Retreat</th>
-                <th className="p-4">Stay Dates</th>
-                <th className="p-4">Source Site</th>
-                <th className="p-4">Gross Value</th>
-                <th className="p-4">Attribution</th>
-                <th className="p-4">Payout status</th>
-                <th className="p-4 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-blush/60 text-sm">
-              {filteredList.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="p-8 text-center text-zinc-400 italic">
-                    No reservations found matching active filters.
-                  </td>
-                </tr>
-              ) : (
-                filteredList.map(res => {
-                  const site = sites.find(s => s.id === res.siteId);
-                  const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
-                  
-                  // Property Name Resolver (supports canonical UUIDs)
-                  let propName = "Unknown Property";
-                  if (res.propertyId === "55791a54-b1a3-459e-bbd5-9073a418b774" || res.propertyId === "prop-004") {
-                    propName = "Beech Mountain, NC";
-                  } else if (res.propertyId === "38d9159e-a35d-405e-826e-7381ad3c3197" || res.propertyId === "prop-001") {
-                    propName = "Uptown St. Augustine";
-                  } else if (res.propertyId === "f0fb867d-47cd-47d4-afa6-c4bf226c1768" || res.propertyId === "prop-002") {
-                    propName = "Downtown (Lincoln)";
-                  } else if (res.propertyId === "51be6158-268d-4c96-8f0b-9968f544ddfa" || res.propertyId === "prop-003") {
-                    propName = "Ellsworth, Maine";
-                  }
-
-                  // Check reconciliation attribution
-                  const attr = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
-                  
-                  let attrBadge = <Badge type="gray">Unattributed</Badge>;
-                  if (attr) {
-                    if (attr.status === "ATTRIBUTED") {
-                      attrBadge = (
-                        <div className="flex flex-col gap-0.5">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 w-fit">
-                            <CheckCircle className="w-3 h-3" />
-                            Attributed ({attr.confidenceScore}%)
-                          </span>
-                          <span className="text-[10px] font-medium text-emerald-700">
-                            {attr.attributionMethod === "OWNERREZ_LISTING_SITE" ? "Deterministic (OwnerRez)" : attr.attributionMethod}
-                          </span>
-                        </div>
-                      );
-                    } else if (attr.status === "REVIEW_REQUIRED") {
-                      attrBadge = (
-                        <div className="flex flex-col gap-0.5">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1 w-fit">
-                            <AlertTriangle className="w-3 h-3" />
-                            Review Required
-                          </span>
-                          <span className="text-[10px] text-amber-700">Unmapped Source</span>
-                        </div>
-                      );
-                    } else if (attr.status === "REJECTED") {
-                      attrBadge = (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
-                          Rejected
-                        </span>
-                      );
-                    }
-                  } else if ((res.attributionStatus as string) === "ATTRIBUTED" || (res.attributionStatus as string) === "automatic") {
-                    attrBadge = (
-                      <div className="flex flex-col gap-0.5">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 w-fit">
-                          <CheckCircle className="w-3 h-3" />
-                          Attributed (100%)
-                        </span>
-                        <span className="text-[10px] font-medium text-emerald-700">Deterministic</span>
-                      </div>
-                    );
-                  } else if (res.attributionStatus === "RECONCILED") {
-                    attrBadge = <Badge type="info">Reconciled</Badge>;
-                  }
-
-                  const ownerRezCommPreview = commissionPreviews.find(
-                    (cp) => cp.reservationId === res.id || cp.ownerrezBookingId === res.ownerrezBookingId
-                  );
-
-                  let payoutBadge = <Badge type="gray">Estimated</Badge>;
-                  if (isOwnerRez && ownerRezCommPreview) {
-                    payoutBadge = (
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-1">
-                          <span className="font-bold text-xs text-brand-plum">
-                            ${ownerRezCommPreview.commissionCalculations.calculatedCommission.toFixed(2)}
-                          </span>
-                          <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 text-amber-900 font-extrabold border border-amber-300">
-                            Preview
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-zinc-500 font-mono">
-                          {ownerRezCommPreview.lifecycle.status === "PENDING_PAYMENT"
-                            ? "Unpaid ($0 realized)"
-                            : ownerRezCommPreview.lifecycle.status}
-                        </span>
-                      </div>
-                    );
-                  } else if (res.payoutStatus === "ELIGIBLE") {
-                    payoutBadge = <Badge type="sage">Eligible</Badge>;
-                  } else if (res.payoutStatus === "APPROVED") {
-                    payoutBadge = <Badge type="plum">Approved</Badge>;
-                  } else if (res.payoutStatus === "ON_HOLD") {
-                    payoutBadge = <Badge type="warning">Hold</Badge>;
-                  } else if (res.payoutStatus === "PAID") {
-                    payoutBadge = <Badge type="success">Paid</Badge>;
-                  } else if (res.payoutStatus === "REJECTED") {
-                    payoutBadge = <Badge type="danger">Rejected</Badge>;
-                  }
-
-                  return (
-                    <tr key={res.id} className="hover:bg-brand-blush/10 transition-colors">
-                      <td className="p-4 font-bold text-brand-plum">
-                        <div className="flex items-center gap-1.5">
-                          <span>{res.confirmationCode}</span>
-                          {isOwnerRez ? (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-purple-100 text-purple-800 border border-purple-300 uppercase tracking-wider">
-                              OwnerRez
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-100 text-sky-800 border border-sky-300 uppercase tracking-wider">
-                              Hospitable
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-zinc-400 font-normal mt-0.5">
-                          Channel: <span className="uppercase font-semibold text-zinc-500">{res.platform || "direct"}</span>
-                          {res.ownerrezBookingId && <span className="ml-1 text-zinc-400">· OR #{res.ownerrezBookingId}</span>}
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <div className="font-semibold">{propName}</div>
-                        <span className="text-[10px] text-zinc-400">Nights: {res.nights} · Guests: {res.guests || 1}</span>
-                      </td>
-                      <td className="p-4">
-                        <div className="text-xs">{res.checkInDate ? res.checkInDate.slice(0, 10) : ""}</div>
-                        <span className="text-[10px] text-zinc-400">to {res.checkOutDate ? res.checkOutDate.slice(0, 10) : ""}</span>
-                      </td>
-                      <td className="p-4 text-xs font-medium">
-                        {site ? site.siteName : (attr?.siteId ? (sites.find(s => s.id === attr.siteId)?.siteName || "Candidate Site") : <span className="text-zinc-400 italic">Direct Booking</span>)}
-                      </td>
-                      <td className="p-4 font-bold text-brand-plum">${(res.bookingAmount || res.grossAmount || 0).toFixed(2)}</td>
-                      <td className="p-4">{attrBadge}</td>
-                      <td className="p-4">{payoutBadge}</td>
-                      <td className="p-4 text-center">
-                        <button
-                          onClick={() => {
-                            setSelectedRes(res);
-                            setAdminNoteInput(res.adminNotes || "");
-                          }}
-                          className="p-1.5 text-brand-plum hover:bg-brand-blush/40 rounded-lg transition-colors focus:outline-none"
-                          title="View stay details"
-                        >
-                          <Eye size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* DETAIL SIDE SLIDE-OVER */}
+      {/* 7. Comprehensive Booking Detail SlideOver Drawer */}
       <SlideOver
         isOpen={selectedRes !== null}
         onClose={() => {
           setSelectedRes(null);
           setShowReassignPanel(false);
         }}
-        title={`Booking Detail: ${selectedRes?.confirmationCode || ""}`}
+        size="lg"
+        title={selectedRes ? `Booking Detail: ${selectedRes.confirmationCode}` : "Booking Detail"}
+        description={selectedRes ? `${getPropertyName(selectedRes.propertyId)}` : undefined}
       >
-        {selectedRes && (
-          <div className="space-y-6 text-sm">
-            {/* Property details */}
-            <div className="flex items-center space-x-4 border-b border-brand-blush pb-4">
-              <div className="w-16 h-12 rounded bg-zinc-200 overflow-hidden relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={
-                    selectedRes.propertyId === "prop-001"
-                      ? "https://hiddenhoneyhomes.com/wp-content/uploads/2026/05/hhh-updown-img1-scaled.webp"
-                      : selectedRes.propertyId === "prop-002"
-                      ? "https://hiddenhoneyhomes.com/wp-content/uploads/2026/05/hhh-down-img1-scaled.webp"
-                      : selectedRes.propertyId === "prop-003"
-                      ? "https://hiddenhoneyhomes.com/wp-content/uploads/2026/03/image1.jpg"
-                      : "https://hiddenhoneyhomes.com/wp-content/uploads/2026/05/hhh-beeach-img1-scaled.webp"
-                  }
-                  alt="Property image"
-                  className="object-cover w-full h-full"
-                />
+        {selectedRes && (() => {
+          const site = sites.find(s => s.id === selectedRes.siteId);
+          const partner = partners.find(p => p.id === selectedRes.partnerId);
+          const isOwnerRez = Boolean(selectedRes.ownerrezBookingId || selectedRes.paymentConfirmationSource === "OWNERREZ");
+          const attrObj = attributions.find(a => a.reservationId === selectedRes.id || a.reservationId === selectedRes.hospitableReservationId);
+          const attrStatus = attrObj?.status || selectedRes.attributionStatus || "UNATTRIBUTED";
+
+          const accrualEvent = ledgerEvents.find(
+            e => (e.reservation_id === selectedRes.id || e.provider_booking_id === String(selectedRes.ownerrezBookingId) || e.provider_booking_id === selectedRes.confirmationCode) &&
+                 e.event_type === "INITIAL_ACCRUAL"
+          );
+          const preview = commissionPreviews.find(cp => cp.reservationId === selectedRes.id || cp.ownerrezBookingId === selectedRes.ownerrezBookingId);
+          const calculatedVal = accrualEvent
+            ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
+            : preview
+            ? Number(preview.commissionCalculations?.calculatedCommission || 0)
+            : (selectedRes.grossAmount || selectedRes.bookingAmount || 0) * 0.10;
+
+          return (
+            <div className="space-y-6 font-sans py-1">
+              {/* SECTION A: Booking Summary Header */}
+              <div className="bg-surface-subtle border border-divider-soft rounded-lg p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Confirmation Code:</span>
+                  <span className="text-xs font-semibold text-primary font-mono">{selectedRes.confirmationCode}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Property:</span>
+                  <span className="text-xs font-semibold text-primary">{getPropertyName(selectedRes.propertyId)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Booking Date:</span>
+                  <span className="text-xs font-medium text-primary font-mono">{selectedRes.bookingDate || selectedRes.checkInDate || "N/A"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Stay Dates:</span>
+                  <span className="text-xs font-medium text-primary font-mono">{selectedRes.checkInDate?.slice(0, 10)} → {selectedRes.checkOutDate?.slice(0, 10)}</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
+                  <span className="text-xs font-medium text-secondary">Stay Status:</span>
+                  <StatusBadge variant={getStatusTypeForState(selectedRes.reservationStatus)}>
+                    {formatStatusLabel(selectedRes.reservationStatus)}
+                  </StatusBadge>
+                </div>
               </div>
-              <div>
-                <h4 className="font-bold text-brand-plum">
-                  {selectedRes.propertyId === "prop-001"
-                    ? "Uptown Retreat"
-                    : selectedRes.propertyId === "prop-002"
-                    ? "Downtown Retreat"
-                    : selectedRes.propertyId === "prop-003"
-                    ? "Ellsworth Retreat"
-                    : "Beech Mountain Retreat"}
+
+              {/* SECTION B: Financial Summary */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Financial State
                 </h4>
-                <p className="text-xs text-zinc-500">Stay dates: {selectedRes.checkInDate ? selectedRes.checkInDate.slice(0, 10) : ""} to {selectedRes.checkOutDate ? selectedRes.checkOutDate.slice(0, 10) : ""}</p>
-              </div>
-            </div>
-
-            {/* Integration Provider & Booking Channel Breakdown */}
-            <div className="bg-brand-cream border border-brand-blush/60 rounded-xl p-3 text-xs space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-brand-plum">Integration Provider:</span>
-                {selectedRes.ownerrezBookingId || selectedRes.paymentConfirmationSource === "OWNERREZ" ? (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-300">
-                    OwnerRez API v2
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-300">
-                    Hospitable API v2
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-zinc-600">
-                <span>Booking Channel:</span>
-                <span className="font-semibold uppercase text-brand-wine">{selectedRes.platform || "direct"}</span>
-              </div>
-              {selectedRes.ownerrezBookingId && (
-                <div className="flex items-center justify-between text-zinc-600 font-mono text-[11px]">
-                  <span>OwnerRez Booking ID:</span>
-                  <span className="font-bold">#{selectedRes.ownerrezBookingId}</span>
-                </div>
-              )}
-              {selectedRes.quoteId && (
-                <div className="flex items-center justify-between text-zinc-600 font-mono text-[11px]">
-                  <span>OwnerRez Quote ID:</span>
-                  <span>#{selectedRes.quoteId}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Financials & Status Info */}
-            <div className="grid grid-cols-2 gap-4 bg-brand-blush/20 p-4 rounded-xl border border-brand-blush/40">
-              <div>
-                <span className="text-[10px] text-brand-wine block font-bold uppercase tracking-wider">Gross Booking Value</span>
-                <span className="text-base font-extrabold text-brand-plum">${(selectedRes.bookingAmount || selectedRes.grossAmount || 0).toFixed(2)}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-brand-wine block font-bold uppercase tracking-wider">Net HHH Received</span>
-                <span className="text-base font-extrabold text-brand-plum">${(selectedRes.amountReceived || 0).toFixed(2)}</span>
-              </div>
-              <div className="col-span-2 border-t border-brand-blush/40 pt-2">
-                <span className="text-[10px] text-brand-wine block font-bold uppercase tracking-wider mb-1">Status Variables</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge type={selectedRes.reservationStatus === "CANCELLED" ? "danger" : "plum"}>
-                    {selectedRes.reservationStatus}
-                  </Badge>
-                  <Badge type={selectedRes.paymentStatus === "PAID" ? "success" : selectedRes.paymentStatus === "DISPUTED" ? "danger" : "warning"}>
-                    Payment: {selectedRes.paymentStatus}
-                  </Badge>
-                  <Badge type={selectedRes.payoutStatus === "PAID" ? "success" : selectedRes.payoutStatus === "ON_HOLD" ? "warning" : "gray"}>
-                    Payout: {selectedRes.payoutStatus}
-                  </Badge>
+                <div className="grid grid-cols-2 gap-3 bg-surface border border-divider rounded-lg p-3.5">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] text-tertiary uppercase tracking-wider block">Gross Booking Value</span>
+                    <span className="text-base font-extrabold text-primary tabular-nums">
+                      ${(selectedRes.grossAmount || selectedRes.bookingAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] text-tertiary uppercase tracking-wider block">Net Received</span>
+                    <span className="text-base font-extrabold text-primary tabular-nums">
+                      ${(selectedRes.amountReceived || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="col-span-2 pt-2 border-t border-divider-soft flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Payment Status:</span>
+                    <StatusBadge variant={getStatusTypeForState(selectedRes.paymentStatus || "UNPAID")}>
+                      {formatStatusLabel(selectedRes.paymentStatus || "UNPAID")}
+                    </StatusBadge>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* OWNERREZ PHASE 5 COMMISSION READINESS & PREVIEW CARD */}
-            {(() => {
-              const preview = commissionPreviews.find(
-                (cp) => cp.reservationId === selectedRes.id || cp.ownerrezBookingId === selectedRes.ownerrezBookingId
-              );
-              if (!selectedRes.ownerrezBookingId && !preview) return null;
-
-              return (
-                <div className="space-y-3 border-t border-brand-blush pt-4">
+              {/* SECTION C: Referral Attribution */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Referral Attribution
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <h5 className="text-xs font-bold uppercase tracking-widest text-brand-plum flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-600" />
-                        Commission Readiness & Preview
-                      </h5>
-                      <span className="text-[9px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
-                        Phase 5 (Read-Only)
-                      </span>
-                    </div>
-                    {preview && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        preview.lifecycle.status === "ELIGIBLE_READY_FOR_PAYOUT" ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
-                        preview.lifecycle.status === "ELIGIBLE_PENDING_STAY" ? "bg-purple-100 text-purple-800 border-purple-300" :
-                        preview.lifecycle.status === "PENDING_PAYMENT" ? "bg-amber-100 text-amber-900 border-amber-300" :
-                        "bg-zinc-100 text-zinc-700 border-zinc-300"
-                      }`}>
-                        {preview.lifecycle.status}
-                      </span>
-                    )}
+                    <span className="text-xs font-medium text-secondary">Attribution Status:</span>
+                    <StatusBadge variant={getStatusTypeForState(attrStatus)}>
+                      {formatStatusLabel(attrStatus)}
+                    </StatusBadge>
                   </div>
-
-                  {preview ? (
-                    <div className="bg-white border-2 border-emerald-500/20 rounded-xl p-4 text-xs space-y-3 shadow-sm">
-                      {/* Active Rule Details */}
-                      <div className="bg-brand-bg/60 p-2.5 rounded-lg border border-brand-blush/60 space-y-1">
-                        <div className="flex justify-between items-center text-[11px]">
-                          <span className="font-semibold text-brand-wine">Authoritative Rule:</span>
-                          <span className="font-bold text-brand-plum">{preview.ruleResolution.ruleName || "None"}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-[10px] text-zinc-500">
-                          <span>Source / Scope:</span>
-                          <span className="font-mono text-emerald-700 font-semibold uppercase">{preview.ruleResolution.scope} (public.commission_rules)</span>
-                        </div>
-                        <div className="flex justify-between items-center text-[10px] text-zinc-500">
-                          <span>Rate & Base:</span>
-                          <span className="font-mono font-bold text-brand-plum">{preview.ruleResolution.percentage}% on Rent Only</span>
-                        </div>
-                      </div>
-
-                      {/* Itemized Charges & Commissionability */}
-                      <div className="space-y-1.5">
-                        <span className="text-[10px] font-bold text-brand-wine uppercase tracking-wider block">
-                          Itemized OwnerRez Charges (Positive Rent Identification):
-                        </span>
-                        <div className="border border-brand-blush/40 rounded-lg overflow-hidden divide-y divide-brand-blush/30">
-                          {preview.itemizedCharges.map((charge: any, idx: number) => (
-                            <div key={idx} className="p-2 flex items-center justify-between text-[11px]">
-                              <div className="space-y-0.5 max-w-[70%]">
-                                <div className="font-medium text-zinc-800 flex items-center gap-1.5">
-                                  <span className="font-mono uppercase text-[9px] text-zinc-500 bg-zinc-100 px-1 py-0.2 rounded">
-                                    {charge.type}
-                                  </span>
-                                  <span className="truncate">{charge.description}</span>
-                                </div>
-                                {charge.exclusionReason && (
-                                  <span className="text-[9px] text-zinc-400 block italic">{charge.exclusionReason}</span>
-                                )}
-                              </div>
-                              <div className="text-right">
-                                <span className="font-mono font-bold text-brand-plum">${charge.amount.toFixed(2)}</span>
-                                <span className={`text-[9px] font-extrabold block uppercase ${
-                                  charge.isCommissionable ? "text-emerald-700" : "text-zinc-400"
-                                }`}>
-                                  {charge.isCommissionable ? "Commissionable" : "Excluded"}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 4-Metric Calculation Grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-1">
-                        <div className="bg-zinc-50 p-2 rounded-lg border border-zinc-200">
-                          <span className="text-[9px] font-bold uppercase text-zinc-400 block">Rent Base</span>
-                          <span className="text-sm font-extrabold text-brand-plum font-mono">
-                            ${preview.commissionCalculations.contractedCommissionableBase.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="bg-purple-50/60 p-2 rounded-lg border border-purple-200">
-                          <span className="text-[9px] font-bold uppercase text-purple-700 block">Calculated</span>
-                          <span className="text-sm font-extrabold text-purple-900 font-mono">
-                            ${preview.commissionCalculations.calculatedCommission.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="bg-amber-50/60 p-2 rounded-lg border border-amber-200">
-                          <span className="text-[9px] font-bold uppercase text-amber-700 block">Realized</span>
-                          <span className="text-sm font-extrabold text-amber-900 font-mono">
-                            ${preview.commissionCalculations.realizedCommission.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-200">
-                          <span className="text-[9px] font-bold uppercase text-emerald-700 block">Payout Eligible</span>
-                          <span className="text-sm font-extrabold text-emerald-900 font-mono">
-                            ${preview.commissionCalculations.payoutEligibleCommission.toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Lifecycle Explanation Banner */}
-                      <div className="p-2.5 rounded-lg bg-brand-bg/50 border border-brand-blush/60 text-[11px] text-zinc-700 leading-relaxed">
-                        <span className="font-bold text-brand-plum">Phase 5 Status Note: </span>
-                        <span>{preview.lifecycle.reason}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs text-zinc-500 italic">
-                      Evaluating commission preview for this booking...
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* Reconciliation & Attribution Details */}
-            {(() => {
-              const resAttr = attributions.find(a => a.reservationId === selectedRes.id || a.reservationId === selectedRes.hospitableReservationId);
-              const candidatePartner = resAttr?.partnerId ? partners.find(p => p.id === resAttr.partnerId) : null;
-              const candidateSite = resAttr?.siteId ? sites.find(s => s.id === resAttr.siteId) : null;
-
-              return (
-                <div className="space-y-3 border-t border-brand-blush pt-4">
                   <div className="flex items-center justify-between">
-                    <h5 className="text-xs font-bold uppercase tracking-widest text-brand-wine">Reconciliation & Attribution</h5>
-                    {resAttr && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        resAttr.status === "ATTRIBUTED" ? "bg-emerald-100 text-emerald-800" :
-                        resAttr.status === "REVIEW_REQUIRED" ? "bg-amber-100 text-amber-800" :
-                        resAttr.status === "REJECTED" ? "bg-rose-100 text-rose-800" : "bg-zinc-100 text-zinc-600"
-                      }`}>
-                        {resAttr.status} ({resAttr.confidenceScore}%)
-                      </span>
-                    )}
+                    <span className="text-xs font-medium text-secondary">Referrer Site:</span>
+                    <span className="text-xs font-semibold text-primary">{site ? site.siteName : "Unattributed"}</span>
                   </div>
-
-                  {resAttr ? (
-                    <div className="space-y-3 bg-brand-cream border border-brand-blush rounded-xl p-4 text-xs">
-                      <div className="grid grid-cols-2 gap-2 text-zinc-600 border-b border-brand-blush/40 pb-3">
-                        <div>
-                          <span className="font-semibold text-brand-plum block">Method:</span>
-                          <span className="font-mono text-[11px]">{resAttr.attributionMethod}</span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-brand-plum block">Confidence:</span>
-                          <span className="font-bold text-brand-wine">{resAttr.confidenceScore}%</span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-brand-plum block">Candidate Partner:</span>
-                          <span>{candidatePartner?.businessName || candidatePartner?.contactName || "Unassigned"}</span>
-                        </div>
-                        <div>
-                          <span className="font-semibold text-brand-plum block">Candidate Site:</span>
-                          <span>{candidateSite?.siteName || "Unassigned"}</span>
-                        </div>
-                      </div>
-
-                      {/* Matched Signals */}
-                      <div>
-                        <span className="font-semibold text-brand-plum block text-[10px] uppercase mb-1">Matched Signals:</span>
-                        <div className="flex flex-wrap gap-1">
-                          {resAttr.matchedSignals.map((sig, idx) => (
-                            <span key={idx} className="bg-brand-blush/50 text-brand-plum text-[10px] font-mono px-1.5 py-0.5 rounded">
-                              {sig}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Competing Candidates (if any) */}
-                      {resAttr.competingCandidates && resAttr.competingCandidates.length > 1 && (
-                        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 space-y-1">
-                          <span className="font-bold text-[11px] block flex items-center gap-1">
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                            Multi-Partner Click Collision ({resAttr.competingCandidates.length} competing sources)
-                          </span>
-                          <div className="space-y-1 text-[10px]">
-                            {resAttr.competingCandidates.map((cc, i) => (
-                              <div key={i} className="flex justify-between font-mono">
-                                <span>{sites.find(s => s.id === cc.siteId)?.siteName || cc.siteId}</span>
-                                <span>{cc.elapsedHours}h before booking</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Review Actions */}
-                      {resAttr.status === "REVIEW_REQUIRED" && (
-                        <div className="pt-2 border-t border-brand-blush/40 flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleAttributionReview(resAttr.id, "REJECTED")}
-                            className="px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-50 rounded-lg border border-rose-200 transition-colors"
-                          >
-                            Reject Attribution
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAttributionReview(resAttr.id, "ATTRIBUTED")}
-                            className="px-3 py-1.5 text-xs font-bold bg-brand-plum text-brand-cream hover:bg-brand-wine rounded-lg shadow-sm transition-all"
-                          >
-                            Confirm & Approve Attribution
-                          </button>
-                        </div>
-                      )}
-
-                      {resAttr.status === "ATTRIBUTED" && (
-                        <div className="text-[11px] text-emerald-800 bg-emerald-50 p-2 rounded border border-emerald-200 flex items-center gap-1">
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          <span>Approved by {resAttr.reviewedBy || "Super Admin"}</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : selectedRes.attributionStatus === "UNATTRIBUTED" ? (
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 space-y-3">
-                      <p className="flex items-center gap-1.5">
-                        <AlertCircle size={14} />
-                        This direct booking has not been matched with any partner click in the last 72 hours.
-                      </p>
-                      <button
-                        onClick={() => {
-                          setReassignPartnerId(partners[0]?.id || "");
-                          const firstSite = sites.find(s => s.partnerId === partners[0]?.id);
-                          setReassignSiteId(firstSite?.id || "");
-                          setShowReassignPanel(true);
-                        }}
-                        className="flex items-center space-x-1 bg-brand-plum text-brand-cream px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-brand-wine transition-all"
-                      >
-                        <LinkIcon size={12} />
-                        <span>Manually Attribute Now</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5 text-xs text-zinc-600 bg-brand-cream border border-brand-blush rounded-lg p-3">
-                      <div>
-                        <span className="font-semibold text-brand-plum">Partner Owner:</span>{" "}
-                        {partners.find(p => p.id === selectedRes.partnerId)?.contactName || "Unknown"}
-                      </div>
-                      <div>
-                        <span className="font-semibold text-brand-plum">Source Website:</span>{" "}
-                        {sites.find(s => s.id === selectedRes.siteId)?.siteName || "Unknown"}
-                      </div>
-                      <div>
-                        <span className="font-semibold text-brand-plum">Attribution Match:</span>{" "}
-                        {selectedRes.attributionSource || "Unknown"}
-                      </div>
-                      <button
-                        onClick={() => {
-                          setReassignPartnerId(selectedRes.partnerId || partners[0]?.id || "");
-                          setReassignSiteId(selectedRes.siteId || "");
-                          setShowReassignPanel(true);
-                        }}
-                        className="text-brand-wine hover:underline font-semibold mt-2 block"
-                      >
-                        Reassign / Edit Attribution →
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* Manual Reconciliation Sub-panel */}
-            {showReassignPanel && (
-              <form onSubmit={handleReassignSubmit} className="p-4 bg-brand-blush/30 border border-brand-blush rounded-xl space-y-4 animate-scale-up">
-                <h6 className="font-bold text-brand-plum text-xs">Configure Referral Attribution</h6>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Select Partner</label>
-                    <select
-                      value={reassignPartnerId}
-                      onChange={e => {
-                        setReassignPartnerId(e.target.value);
-                        const firstSite = sites.find(s => s.partnerId === e.target.value);
-                        setReassignSiteId(firstSite?.id || "");
-                      }}
-                      className="w-full bg-brand-cream border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
-                    >
-                      {partners.map(p => (
-                        <option key={p.id} value={p.id}>{p.businessName} ({p.contactName})</option>
-                      ))}
-                    </select>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Partner Owner:</span>
+                    <span className="text-xs font-semibold text-primary">{partner ? partner.contactName : "Unassigned"}</span>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Select Referrer Site</label>
-                    <select
-                      value={reassignSiteId}
-                      onChange={e => setReassignSiteId(e.target.value)}
-                      className="w-full bg-brand-cream border border-brand-blush rounded-lg text-xs py-1.5 px-2 focus:outline-none"
-                    >
-                      {sites
-                        .filter(s => s.partnerId === reassignPartnerId)
-                        .map(s => (
-                          <option key={s.id} value={s.id}>{s.siteName}</option>
-                        ))}
-                    </select>
+                  <div className="flex items-center justify-between text-tertiary text-[11px] pt-1 border-t border-divider-soft">
+                    <span>Source Provider / Channel:</span>
+                    <span className="font-mono">{isOwnerRez ? "OwnerRez" : "Hospitable"} • {selectedRes.platform || "Direct"}</span>
                   </div>
                 </div>
-                <div className="flex space-x-2 justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowReassignPanel(false)}
-                    className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-brand-plum text-brand-cream px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-brand-wine transition-all"
-                  >
-                    Confirm Attribution
-                  </button>
-                </div>
-              </form>
-            )}
+              </div>
 
-            {/* Payout Hold toggling */}
-            {selectedRes.attributionStatus !== "UNATTRIBUTED" && (
-              <div className="border-t border-brand-blush pt-4 space-y-2">
-                <h5 className="text-xs font-bold uppercase tracking-widest text-brand-wine font-sans">Payout Security Lock</h5>
-                <div className="flex items-center justify-between p-3 bg-brand-cream border border-brand-blush rounded-lg">
-                  <div className="flex items-start space-x-2">
-                    <Info size={14} className="text-brand-plum mt-0.5" />
+              {/* SECTION D: Commission Lifecycle */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Commission Lifecycle
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Calculated Potential:</span>
+                    <span className="text-sm font-extrabold text-primary tabular-nums">
+                      ${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Realized Commission:</span>
+                    <span className="text-xs font-semibold text-primary tabular-nums">
+                      $0.00
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
+                    <span className="text-xs font-medium text-secondary">Payout Eligibility:</span>
+                    <StatusBadge variant={getStatusTypeForState(selectedRes.payoutStatus || "ESTIMATED")}>
+                      {formatStatusLabel(selectedRes.payoutStatus || "ESTIMATED")}
+                    </StatusBadge>
+                  </div>
+                  <p className="text-[11px] text-tertiary">
+                    Calculated commission derived from immutable accrual snapshot evidence.
+                  </p>
+                </div>
+              </div>
+
+              {/* SECTION E: Operational Review & Security Lock */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Operational Review & Security Lock
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-bold text-brand-plum">
-                        {selectedRes.payoutStatus === "ON_HOLD" ? "Payout Locked" : "Payout Active"}
-                      </p>
-                      <p className="text-[10px] text-zinc-400">
-                        {selectedRes.payoutStatus === "ON_HOLD" 
-                          ? "This payout is locked and won't enter the approval queue."
-                          : "This payout is active and will proceed to queue when check-in completes."}
+                      <p className="text-xs font-semibold text-primary">Payout Lock Status</p>
+                      <p className="text-[11px] text-secondary">
+                        {selectedRes.payoutStatus === "ON_HOLD" ? "Payout is locked from settlement queue." : "Payout is active for standard processing."}
                       </p>
                     </div>
+                    <StatusBadge variant={selectedRes.payoutStatus === "ON_HOLD" ? "warning" : "success"}>
+                      {selectedRes.payoutStatus === "ON_HOLD" ? "On Hold" : "Active"}
+                    </StatusBadge>
                   </div>
-                  <button
-                    onClick={() => handleToggleHold(selectedRes.id)}
-                    className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-colors focus:outline-none ${
-                      selectedRes.payoutStatus === "ON_HOLD"
-                        ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
-                        : "bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200"
-                    }`}
-                  >
-                    {selectedRes.payoutStatus === "ON_HOLD" ? "Release Hold" : "Place Hold"}
-                  </button>
+
+                  {/* Operational Notes */}
+                  <div className="pt-2 border-t border-divider-soft space-y-1">
+                    <span className="text-xs font-medium text-secondary block">Internal Operational Notes</span>
+                    {selectedRes.adminNotes ? (
+                      <p className="text-xs text-primary bg-surface-subtle border border-divider-soft p-2.5 rounded-md">
+                        {selectedRes.adminNotes}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-tertiary italic">No internal notes recorded for this reservation.</p>
+                    )}
+                  </div>
                 </div>
               </div>
-            )}
-
-            {/* Notes Section */}
-            <div className="border-t border-brand-blush pt-4 space-y-3">
-              <h5 className="text-xs font-bold uppercase tracking-widest text-brand-wine">Internal Admin Notes</h5>
-              {selectedRes.adminNotes ? (
-                <div className="p-3 bg-brand-blush/10 rounded-lg text-xs italic border border-brand-blush/30">
-                  "{selectedRes.adminNotes}"
-                </div>
-              ) : (
-                <p className="text-xs text-zinc-400 italic">No notes recorded.</p>
-              )}
-              <form onSubmit={handleSaveNote} className="flex space-x-2">
-                <input
-                  type="text"
-                  placeholder="Add a new internal note..."
-                  value={adminNoteInput}
-                  onChange={e => setAdminNoteInput(e.target.value)}
-                  className="flex-1 px-3 py-1.5 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="bg-brand-blush text-brand-plum hover:bg-brand-blush/80 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border border-brand-blush/60"
-                >
-                  Save Note
-                </button>
-              </form>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </SlideOver>
     </div>
   );
 }
 
-export default function BookingsList() {
+export default function AdminBookings() {
   return (
-    <Suspense fallback={<div className="text-center py-10 text-sm text-zinc-400">Loading bookings dashboard...</div>}>
-      <BookingsListContent />
+    <Suspense fallback={<LoadingState message="Loading Bookings console..." />}>
+      <BookingsContent />
     </Suspense>
   );
 }

@@ -1,106 +1,111 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Globe,
   Plus,
-  Play,
-  CheckCircle,
+  ExternalLink,
+  Search,
+  CheckCircle2,
   AlertCircle,
-  Building,
-  KeyRound,
-  MousePointerClick,
+  Eye,
+  X,
   Copy,
   Check,
-  TrendingUp,
-  ExternalLink
+  MousePointerClick
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
-import { Site, Partner, RedirectClick } from "@/lib/db/schema";
-import { Card, Badge, Dialog } from "@/components/ui/custom";
-import { validateFourPropertyWidgetMappings } from "@/lib/hospitable/widgets";
+import { Site, Partner } from "@/lib/db/schema";
+import {
+  Card,
+  StatusBadge,
+  SlideOver,
+  PageHeader,
+  Button,
+  LoadingState,
+  EmptyState,
+  ErrorBanner,
+  TableContainer,
+  Table,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TableMobileCard,
+  Dialog
+} from "@/components/ui";
+import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 
 const CORE_PROPERTIES = [
-  { id: "38d9159e-a35d-405e-826e-7381ad3c3197", name: "Uptown St. Augustine", location: "St. Augustine, FL" },
-  { id: "f0fb867d-47cd-47d4-afa6-c4bf226c1768", name: "Downtown St. Augustine (Lincoln)", location: "St. Augustine, FL" },
-  { id: "51be6158-268d-4c96-8f0b-9968f544ddfa", name: "Ellsworth, Maine", location: "Ellsworth, ME" },
-  { id: "55791a54-b1a3-459e-bbd5-9073a418b774", name: "Beech Mountain, NC", location: "Beech Mountain, NC" }
+  { id: "38d9159e-a35d-405e-826e-7381ad3c3197", name: "Uptown St. Augustine" },
+  { id: "f0fb867d-47cd-47d4-afa6-c4bf226c1768", name: "Downtown St. Augustine (Lincoln)" },
+  { id: "51be6158-268d-4c96-8f0b-9968f544ddfa", name: "Ellsworth, Maine" },
+  { id: "55791a54-b1a3-459e-bbd5-9073a418b774", name: "Beech Mountain, NC" }
 ];
 
 export default function WebsiteManagement() {
-  const [sites, setSites] = useState<Site[]>([]);
-  const [partners, setPartners] = useState<Partner[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [sites, setSites] = useState<Site[]>(db.sites || []);
+  const [partners, setPartners] = useState<Partner[]>(db.partners || []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filter & Search states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("ALL");
+  const [selectedSite, setSelectedSite] = useState<Site | null>(null);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
-  // Analytics states
-  const [clickStats, setClickStats] = useState<{
-    totalClicks: number;
-    clicksBySite: { siteId: string; siteName: string; count: number }[];
-    clicksByPartner: { partnerId: string; partnerName: string; count: number }[];
-    clicksByProperty: { propertyId: string; propertyName: string; count: number }[];
-    recentClicks: RedirectClick[];
-  } | null>(null);
-
-  // Form & Modal states
+  // Form & Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
-  // Form Fields
   const [siteName, setSiteName] = useState("");
   const [partnerId, setPartnerId] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [trackingCode, setTrackingCode] = useState("");
 
-  // 4 Widget IDs State
-  const [widgetIds, setWidgetIds] = useState<Record<string, string>>({
-    "38d9159e-a35d-405e-826e-7381ad3c3197": "", // Uptown
-    "f0fb867d-47cd-47d4-afa6-c4bf226c1768": "", // Downtown
-    "51be6158-268d-4c96-8f0b-9968f544ddfa": "", // Ellsworth
-    "55791a54-b1a3-459e-bbd5-9073a418b774": ""  // Beech
-  });
-
-  const refreshData = async () => {
-    setLoading(true);
+  const refreshData = useCallback(async () => {
     try {
+      setError(null);
       const [sitesRes, partnersRes] = await Promise.all([
-        fetch("/api/admin/sites"),
-        fetch("/api/admin/partners")
+        fetch("/api/admin/sites").catch(() => null),
+        fetch("/api/admin/partners").catch(() => null)
       ]);
 
-      const sitesData = await sitesRes.json();
-      const partnersData = await partnersRes.json();
-
-      const loadedSites = sitesData.success && Array.isArray(sitesData.sites) ? sitesData.sites : [];
-      const loadedPartners = partnersData.success && Array.isArray(partnersData.partners) ? partnersData.partners : [];
-
-      setSites(loadedSites);
-      setPartners(loadedPartners);
-      if (loadedPartners.length > 0 && !partnerId) {
-        setPartnerId(loadedPartners[0].id);
-      }
-
-      // Fetch click analytics summary
-      try {
-        const res = await fetch("/api/admin/analytics/clicks");
-        if (res.ok) {
-          const stats = await res.json();
-          setClickStats(stats);
+      if (sitesRes && sitesRes.ok) {
+        const sData = await sitesRes.json();
+        if (sData.success && Array.isArray(sData.sites)) {
+          setSites(sData.sites);
+        } else {
+          setSites(db.sites);
         }
-      } catch (analyticsErr) {
-        console.warn("Click analytics load skipped:", analyticsErr);
+      } else {
+        setSites(db.sites);
       }
-    } catch (err: any) {
-      console.error("Failed to load site management data:", err);
+
+      if (partnersRes && partnersRes.ok) {
+        const pData = await partnersRes.json();
+        if (pData.success && Array.isArray(pData.partners)) {
+          setPartners(pData.partners);
+        } else {
+          setPartners(db.partners);
+        }
+      } else {
+        setPartners(db.partners);
+      }
+    } catch {
+      setSites(db.sites);
+      setPartners(db.partners);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refreshData();
-  }, []);
+  }, [refreshData]);
 
   const handleCopy = (path: string) => {
     const fullUrl = typeof window !== "undefined" ? `${window.location.origin}${path}` : path;
@@ -109,30 +114,12 @@ export default function WebsiteManagement() {
     setTimeout(() => setCopiedLink(null), 2000);
   };
 
-  const handleWidgetChange = (propId: string, val: string) => {
-    setWidgetIds(prev => ({ ...prev, [propId]: val }));
-    setFormError("");
-  };
-
   const handleAddSite = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
     if (!partnerId) {
       setFormError("Please select a Partner Owner.");
-      return;
-    }
-
-    // Construct 4 property mappings array
-    const mappings = CORE_PROPERTIES.map(p => ({
-      propertyId: p.id,
-      hospitableWidgetId: widgetIds[p.id] || ""
-    }));
-
-    // Perform client-side validation
-    const validation = validateFourPropertyWidgetMappings(mappings);
-    if (!validation.valid) {
-      setFormError(validation.errors.join(". "));
       return;
     }
 
@@ -145,8 +132,7 @@ export default function WebsiteManagement() {
           partnerId,
           siteName: siteName.trim(),
           websiteUrl: websiteUrl.trim(),
-          trackingCode: trackingCode.trim(),
-          mappings
+          trackingCode: trackingCode.trim()
         })
       });
 
@@ -159,299 +145,394 @@ export default function WebsiteManagement() {
       setSiteName("");
       setWebsiteUrl("");
       setTrackingCode("");
-      setWidgetIds({
-        "38d9159e-a35d-405e-826e-7381ad3c3197": "",
-        "f0fb867d-47cd-47d4-afa6-c4bf226c1768": "",
-        "51be6158-268d-4c96-8f0b-9968f544ddfa": "",
-        "55791a54-b1a3-459e-bbd5-9073a418b774": ""
-      });
       await refreshData();
-      
-      db.addNotification("SUCCESS", `Referral website "${siteName}" and 4 property widget mappings registered.`);
     } catch (err: any) {
-      console.error("Site Registration Error:", err);
       setFormError(err.message || "Failed to register website.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-brand-blush pb-5">
-        <div>
-          <div className="flex items-center gap-2">
-            <Globe className="w-6 h-6 text-brand-wine" />
-            <h1 className="text-2xl font-serif font-bold text-brand-plum">Referral Websites & Tracking</h1>
-          </div>
-          <p className="text-xs text-zinc-500 mt-1">
-            Manage partner referral websites, deterministic tracking links, and click analytics.
-          </p>
-        </div>
+  // Filter Logic
+  const filteredSites = sites.filter(s => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchName = s.siteName?.toLowerCase().includes(q);
+      const matchUrl = s.websiteUrl?.toLowerCase().includes(q);
+      const matchCode = s.trackingCode?.toLowerCase().includes(q);
+      const partnerObj = partners.find(p => p.id === s.partnerId);
+      const matchPartner = partnerObj?.contactName?.toLowerCase().includes(q) || partnerObj?.businessName?.toLowerCase().includes(q);
+      if (!matchName && !matchUrl && !matchCode && !matchPartner) return false;
+    }
 
-        <button
-          onClick={() => setShowAddDialog(true)}
-          className="flex items-center gap-2 bg-brand-plum hover:bg-brand-wine text-brand-cream text-xs font-bold px-4 py-2.5 rounded-lg shadow-md transition-all self-start md:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          Register Referral Website
-        </button>
+    if (selectedStatus !== "ALL" && s.status !== selectedStatus) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (loading) {
+    return <LoadingState message="Loading Referral Websites registry..." />;
+  }
+
+  return (
+    <div className="space-y-6 font-sans pb-8">
+      {/* 1. Page Header */}
+      <PageHeader
+        title="Sites"
+        description="Referral websites, tracking links, and OwnerRez listing source mappings."
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Plus}
+            onClick={() => setShowAddDialog(true)}
+          >
+            Register Website
+          </Button>
+        }
+      />
+
+      {error && <ErrorBanner message={error} />}
+
+      {/* 2. Controls & Search Bar */}
+      <Card variant="default" className="p-3.5 sm:p-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1 min-w-0">
+            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-secondary pointer-events-none">
+              <Search size={16} />
+            </span>
+            <input
+              type="text"
+              placeholder="Search website name, domain, partner, or tracking code..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-secondary hover:text-primary cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={selectedStatus}
+              onChange={e => setSelectedStatus(e.target.value)}
+              className="bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg px-2.5 py-2 font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="ALL">All Mapping States</option>
+              <option value="ACTIVE">Mapped & Active</option>
+              <option value="UNMAPPED">Unmapped</option>
+              <option value="REVIEW_REQUIRED">Review Required</option>
+            </select>
+          </div>
+        </div>
+      </Card>
+
+      {/* 3. Desktop Operational Table (>=768px) */}
+      <div className="hidden md:block">
+        <TableContainer>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Website Name & Domain</TableHead>
+                <TableHead>Partner Owner</TableHead>
+                <TableHead>Tracking Code</TableHead>
+                <TableHead align="center">Source Mapping State</TableHead>
+                <TableHead align="center">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredSites.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-12">
+                    <EmptyState
+                      title="No referral sites found"
+                      description="No registered website records match your active search query."
+                      action={
+                        <Button variant="secondary" size="sm" onClick={() => { setSearchQuery(""); setSelectedStatus("ALL"); }}>
+                          Reset Search
+                        </Button>
+                      }
+                    />
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredSites.map(s => {
+                  const partner = partners.find(p => p.id === s.partnerId);
+                  const isMapped = Boolean(s.status === "ACTIVE" && s.partnerId);
+
+                  return (
+                    <TableRow
+                      key={s.id}
+                      onClick={() => setSelectedSite(s)}
+                    >
+                      {/* Column 1: Site Name & URL */}
+                      <TableCell>
+                        <div className="space-y-0.5">
+                          <div className="font-semibold text-primary">{s.siteName}</div>
+                          {s.websiteUrl && (
+                            <a
+                              href={s.websiteUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="text-[11px] text-secondary hover:text-accent-hover flex items-center gap-1 font-mono"
+                            >
+                              <span>{s.websiteUrl.replace(/^https?:\/\//, "")}</span>
+                              <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </div>
+                      </TableCell>
+
+                      {/* Column 2: Partner Owner */}
+                      <TableCell>
+                        <div className="space-y-0.5">
+                          <div className="font-medium text-primary">{partner?.contactName || "Unassigned"}</div>
+                          <div className="text-[11px] text-secondary">{partner?.businessName || "No business record"}</div>
+                        </div>
+                      </TableCell>
+
+                      {/* Column 3: Tracking Code */}
+                      <TableCell>
+                        <span className="font-mono text-xs font-semibold text-primary px-2 py-0.5 rounded bg-surface-subtle border border-divider-soft">
+                          {s.trackingCode}
+                        </span>
+                      </TableCell>
+
+                      {/* Column 4: Mapping State */}
+                      <TableCell align="center">
+                        <StatusBadge variant={isMapped ? "success" : "warning"}>
+                          {isMapped ? "Mapped" : "Unmapped"}
+                        </StatusBadge>
+                      </TableCell>
+
+                      {/* Column 5: Action */}
+                      <TableCell align="center">
+                        <Button
+                          variant="tertiary"
+                          size="sm"
+                          icon={Eye}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedSite(s);
+                          }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
       </div>
 
-      {/* Click Analytics KPI Summary */}
-      {clickStats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="p-4 border-l-4 border-l-brand-wine">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold">Total Redirect Clicks</span>
-              <MousePointerClick className="w-4 h-4 text-brand-wine" />
-            </div>
-            <div className="text-2xl font-bold font-serif text-brand-plum mt-1">{clickStats.totalClicks}</div>
-            <div className="text-[11px] text-zinc-400 mt-0.5">30-day active retention</div>
-          </Card>
-
-          <Card className="p-4 border-l-4 border-l-brand-gold">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold">Active Referral Sites</span>
-              <Globe className="w-4 h-4 text-brand-gold" />
-            </div>
-            <div className="text-2xl font-bold font-serif text-brand-plum mt-1">{sites.length}</div>
-            <div className="text-[11px] text-zinc-400 mt-0.5">Mapped to 4 core properties</div>
-          </Card>
-
-          <Card className="p-4 border-l-4 border-l-emerald-600">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold">Top Clicked Website</span>
-              <TrendingUp className="w-4 h-4 text-emerald-600" />
-            </div>
-            <div className="text-base font-bold text-brand-plum mt-1 truncate">
-              {clickStats.clicksBySite[0]?.siteName || "None yet"}
-            </div>
-            <div className="text-[11px] text-zinc-400 mt-0.5">
-              {clickStats.clicksBySite[0] ? `${clickStats.clicksBySite[0].count} clicks` : "Awaiting traffic"}
-            </div>
-          </Card>
-
-          <Card className="p-4 border-l-4 border-l-indigo-600">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold">Top Property</span>
-              <Building className="w-4 h-4 text-indigo-600" />
-            </div>
-            <div className="text-base font-bold text-brand-plum mt-1 truncate">
-              {clickStats.clicksByProperty[0]?.propertyName || "None yet"}
-            </div>
-            <div className="text-[11px] text-zinc-400 mt-0.5">
-              {clickStats.clicksByProperty[0] ? `${clickStats.clicksByProperty[0].count} clicks` : "Awaiting traffic"}
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Sites List */}
-      <div className="space-y-4">
-        {loading ? (
-          <div className="p-8 text-center text-xs text-zinc-400">Loading referral websites...</div>
-        ) : sites.length === 0 ? (
-          <Card className="p-8 text-center space-y-3">
-            <Building className="w-10 h-10 text-zinc-300 mx-auto" />
-            <h3 className="font-serif font-bold text-brand-plum text-base">No Referral Websites Registered</h3>
-            <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Register a partner referral website to map unique Hospitable widget IDs for all 4 Hidden Honey properties.
-            </p>
-          </Card>
+      {/* 4. Mobile Operational Card Stack (<768px) */}
+      <div className="block md:hidden space-y-3">
+        {filteredSites.length === 0 ? (
+          <EmptyState
+            title="No referral sites found"
+            description="No website records match active filters."
+          />
         ) : (
-          sites.map(site => {
-            const partner = partners.find(p => p.id === site.partnerId);
-
+          filteredSites.map(s => {
+            const partner = partners.find(p => p.id === s.partnerId);
             return (
-              <Card key={site.id} className="p-5 space-y-4 border border-brand-blush/80 hover:shadow-md transition-shadow">
-                {/* Site Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-brand-blush/40 pb-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-serif font-bold text-lg text-brand-plum">{site.siteName}</h3>
-                      <Badge type={site.status === "ACTIVE" ? "success" : "warning"}>
-                        {site.status}
-                      </Badge>
-                    </div>
-                    <a
-                      href={site.websiteUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-brand-wine hover:underline flex items-center gap-1 mt-0.5"
-                    >
-                      {site.websiteUrl}
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-
-                  <div className="text-right">
-                    <div className="text-xs font-semibold text-zinc-700">
-                      Partner: {partner?.contactName || "Unassigned"} ({partner?.businessName || "No Business"})
-                    </div>
-                    <div className="text-[11px] font-mono font-bold text-brand-wine mt-0.5">
-                      Tracking Code: {site.trackingCode}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 4 Mapped Properties Grid with Deterministic Tracking Links */}
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-brand-wine mb-2">
-                    Deterministic Tracking Links (4 Core Properties)
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {CORE_PROPERTIES.map(cp => {
-                      const propMapping = site.siteProperties?.find(sp => sp.propertyId === cp.id);
-                      const widgetIdVal = propMapping?.hospitableWidgetId || site.hospitableWidgetId || "Not Mapped";
-                      const trackingPath = `/r/${site.id}/${cp.id}`;
-                      const isCopied = copiedLink === trackingPath;
-
-                      return (
-                        <div key={cp.id} className="bg-brand-bg/60 p-3 rounded-lg border border-brand-blush/60 space-y-2">
-                          <div>
-                            <div className="text-xs font-bold text-brand-plum">{cp.name}</div>
-                            <div className="text-[10px] text-zinc-500">{cp.location}</div>
-                          </div>
-
-                          <div className="bg-white/80 p-1.5 rounded border border-brand-blush/40 flex items-center justify-between gap-1">
-                            <span className="text-[10px] font-mono text-zinc-600 truncate max-w-[120px]">
-                              {trackingPath}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(trackingPath)}
-                              className="p-1 hover:bg-brand-blush/30 rounded text-brand-wine transition-colors"
-                              title="Copy Tracking Link"
-                            >
-                              {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-1 border-t border-brand-blush/30 text-[10px]">
-                            <span className="text-zinc-400 font-mono truncate max-w-[100px]" title={widgetIdVal}>
-                              {widgetIdVal}
-                            </span>
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                              ACTIVE
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </Card>
+              <TableMobileCard
+                key={s.id}
+                title={s.siteName}
+                subtitle={s.websiteUrl ? s.websiteUrl.replace(/^https?:\/\//, "") : "No domain set"}
+                badge={
+                  <StatusBadge variant={s.status === "ACTIVE" ? "success" : "warning"}>
+                    {s.status === "ACTIVE" ? "Mapped" : "Unmapped"}
+                  </StatusBadge>
+                }
+                action={
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    icon={Eye}
+                    onClick={() => setSelectedSite(s)}
+                  />
+                }
+                details={[
+                  { label: "Partner Owner", value: partner?.contactName || "Unassigned" },
+                  { label: "Tracking Code", value: s.trackingCode }
+                ]}
+              />
             );
           })
         )}
       </div>
 
-      {/* DIALOG: REGISTER REFERRAL WEBSITE */}
-      <Dialog isOpen={showAddDialog} onClose={() => setShowAddDialog(false)} title="Register Referral Website (4 Properties Required)">
-        <form onSubmit={handleAddSite} className="space-y-4 max-h-[80vh] overflow-y-auto pr-1">
-          {formError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-medium flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-              <span>{formError}</span>
+      {/* 5. Site Detail SlideOver Drawer */}
+      <SlideOver
+        isOpen={selectedSite !== null}
+        onClose={() => setSelectedSite(null)}
+        size="lg"
+        title={selectedSite ? selectedSite.siteName : "Website Detail"}
+        description={selectedSite ? selectedSite.websiteUrl : undefined}
+      >
+        {selectedSite && (() => {
+          const partner = partners.find(p => p.id === selectedSite.partnerId);
+
+          return (
+            <div className="space-y-5 font-sans py-1">
+              {/* Site Details */}
+              <div className="bg-surface-subtle border border-divider-soft rounded-lg p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Site Title:</span>
+                  <span className="text-xs font-semibold text-primary">{selectedSite.siteName}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Website Domain:</span>
+                  <span className="text-xs font-mono text-primary">{selectedSite.websiteUrl || "N/A"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-secondary">Tracking Code:</span>
+                  <span className="text-xs font-mono font-semibold text-primary">{selectedSite.trackingCode}</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
+                  <span className="text-xs font-medium text-secondary">Mapping Status:</span>
+                  <StatusBadge variant={selectedSite.status === "ACTIVE" ? "success" : "warning"}>
+                    {selectedSite.status === "ACTIVE" ? "Mapped" : "Unmapped"}
+                  </StatusBadge>
+                </div>
+              </div>
+
+              {/* Partner Owner */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Partner Owner Context
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Partner Name:</span>
+                    <span className="text-xs font-semibold text-primary">{partner?.contactName || "Unassigned"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Business:</span>
+                    <span className="text-xs font-semibold text-primary">{partner?.businessName || "N/A"}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-secondary">Email:</span>
+                    <span className="text-xs font-mono text-primary">{partner?.email || "N/A"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Unique Redirect Links Grid */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-secondary">
+                  Property Referral Links
+                </h4>
+                <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-2">
+                  {CORE_PROPERTIES.map(prop => {
+                    const redirectPath = `/r/${selectedSite.id}/${prop.id}`;
+                    const isCopied = copiedLink === redirectPath;
+
+                    return (
+                      <div key={prop.id} className="p-2.5 bg-surface-subtle border border-divider-soft rounded-md space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-primary">{prop.name}</span>
+                          <Button
+                            variant="tertiary"
+                            size="sm"
+                            icon={isCopied ? Check : Copy}
+                            onClick={() => handleCopy(redirectPath)}
+                          >
+                            {isCopied ? "Copied" : "Copy Link"}
+                          </Button>
+                        </div>
+                        <div className="text-[11px] font-mono text-secondary truncate">
+                          {redirectPath}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-          )}
+          );
+        })()}
+      </SlideOver>
+
+      {/* 6. Add Site Dialog */}
+      <Dialog
+        isOpen={showAddDialog}
+        onClose={() => setShowAddDialog(false)}
+        title="Register Referral Website"
+      >
+        <form onSubmit={handleAddSite} className="space-y-4 font-sans text-xs">
+          {formError && <ErrorBanner message={formError} />}
 
           <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Website Name *</label>
+            <label className="block text-xs font-medium text-secondary mb-1">Select Partner Owner *</label>
+            <select
+              required
+              value={partnerId}
+              onChange={e => setPartnerId(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            >
+              <option value="">Select Partner...</option>
+              {partners.map(p => (
+                <option key={p.id} value={p.id}>{p.contactName} ({p.businessName || p.email})</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Website Name *</label>
             <input
               type="text"
               required
               value={siteName}
               onChange={e => setSiteName(e.target.value)}
-              placeholder="e.g. Megs Connection Retreats"
-              className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-sm focus:outline-none"
+              placeholder="e.g. Megs Brass Direct"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
             />
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Assign Partner Owner *</label>
-            <select
-              value={partnerId}
-              onChange={e => setPartnerId(e.target.value)}
+            <label className="block text-xs font-medium text-secondary mb-1">Website Domain / URL</label>
+            <input
+              type="text"
+              value={websiteUrl}
+              onChange={e => setWebsiteUrl(e.target.value)}
+              placeholder="https://megsbrass.com"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-secondary mb-1">Tracking Code *</label>
+            <input
+              type="text"
               required
-              className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2 px-2.5 focus:outline-none"
-            >
-              <option value="">-- Select Active Partner --</option>
-              {partners.map(p => (
-                <option key={p.id} value={p.id}>{p.businessName} ({p.contactName} - {p.email})</option>
-              ))}
-            </select>
+              value={trackingCode}
+              onChange={e => setTrackingCode(e.target.value)}
+              placeholder="e.g. MEG-BRASS-01"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 uppercase font-mono"
+            />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Website URL *</label>
-              <input
-                type="url"
-                required
-                value={websiteUrl}
-                onChange={e => setWebsiteUrl(e.target.value)}
-                placeholder="https://megsconnection.com"
-                className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-sm focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Custom Tracking Code *</label>
-              <input
-                type="text"
-                required
-                value={trackingCode}
-                onChange={e => setTrackingCode(e.target.value)}
-                placeholder="e.g. MEGS-STAYS-01"
-                className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-sm focus:outline-none"
-              />
-            </div>
+          <div className="pt-3 border-t border-divider-soft flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowAddDialog(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit" disabled={submitting}>
+              {submitting ? "Registering..." : "Register Site"}
+            </Button>
           </div>
-
-          {/* 4 Required Property Widget URL Inputs */}
-          <div className="border-t border-brand-blush pt-3 space-y-3">
-            <div className="text-xs font-bold text-brand-plum uppercase tracking-wider">
-              Four Required Hospitable Widget URLs *
-            </div>
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900 space-y-1">
-              <div className="font-bold">⚠️ Widget URL Format Notice:</div>
-              <p>
-                Enter the full canonical Hospitable widget URL for each property. Example:
-                <br />
-                <code className="bg-amber-100/80 px-1 py-0.5 rounded font-mono text-[10px]">https://booking.hospitable.com/widget/a24f47ee-9870-4876-9d7c-9708ed21b489/1087224</code>
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              {CORE_PROPERTIES.map(cp => (
-                <div key={cp.id} className="bg-brand-bg/50 p-2.5 rounded-lg border border-brand-blush/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="sm:w-2/5">
-                    <div className="text-xs font-bold text-brand-plum">{cp.name}</div>
-                    <div className="text-[10px] text-zinc-400">{cp.location}</div>
-                  </div>
-                  <input
-                    type="url"
-                    required
-                    value={widgetIds[cp.id] || ""}
-                    onChange={e => handleWidgetChange(cp.id, e.target.value)}
-                    placeholder="https://booking.hospitable.com/widget/{widget_uuid}/{listing_id}"
-                    className="sm:w-3/5 px-2.5 py-1.5 bg-white border border-brand-blush rounded text-xs font-mono focus:outline-none placeholder:text-zinc-400"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full bg-brand-plum text-brand-cream hover:bg-brand-wine disabled:opacity-50 py-2.5 rounded-lg text-xs font-bold transition-all shadow-md mt-4"
-          >
-            {submitting ? "Validating & Registering..." : "Register Website & 4 Mappings"}
-          </button>
         </form>
       </Dialog>
     </div>

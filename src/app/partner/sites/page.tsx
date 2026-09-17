@@ -3,8 +3,10 @@
 import React, { useEffect, useState } from "react";
 import { db } from "@/lib/db/mockDb";
 import { Site, Partner } from "@/lib/db/schema";
-import { Card, Badge } from "@/components/ui/custom";
-import { Globe, Clipboard, Copy, Info, Check, Building } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Globe, Copy, Check, Building, ExternalLink, Loader2 } from "lucide-react";
 import { getAllSites, getAllPartners } from "@/lib/supabase/data-store";
 
 const CORE_PROPERTIES = [
@@ -52,50 +54,59 @@ export default function PartnerSites() {
   };
 
   return (
-    <div className="space-y-6 font-sans">
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">My Referral Websites & Mappings</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Review your registered websites, tracking codes, and 4-property Hospitable widget status.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Websites"
+        description="Review your registered referral websites, tracking credentials, and property mappings."
+      />
 
       {loading ? (
-        <div className="p-8 text-center text-xs text-zinc-400">Loading your referral websites...</div>
+        <div className="flex py-16 justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" />
+        </div>
       ) : sites.length === 0 ? (
         <Card className="p-8 text-center space-y-3">
-          <Building className="w-10 h-10 text-zinc-300 mx-auto" />
-          <h3 className="font-serif font-bold text-brand-plum text-base">No Websites Registered Yet</h3>
-          <p className="text-xs text-zinc-500 max-w-md mx-auto">
-            Contact Hidden Honey Homes Admin to register your referral website with 4-property Hospitable widget mappings.
+          <Building className="w-10 h-10 text-[#6E6E73] mx-auto" />
+          <h3 className="font-semibold text-[#1D1D1F] text-base">No Websites Registered Yet</h3>
+          <p className="text-xs text-[#6E6E73] max-w-md mx-auto">
+            Contact Hidden Honey Homes Admin to register your referral website and link your properties.
           </p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-6">
           {sites.map(site => (
-            <Card key={site.id} className="space-y-6 p-6 border border-brand-blush">
+            <Card key={site.id} className="space-y-6 p-6">
               {/* Header info */}
-              <div className="flex justify-between items-start border-b border-brand-blush/60 pb-4">
+              <div className="flex justify-between items-start border-b border-[#E8E8ED] pb-4">
                 <div>
-                  <h3 className="text-lg font-bold text-brand-plum">{site.siteName}</h3>
-                  <a href={site.websiteUrl} target="_blank" rel="noreferrer" className="text-xs text-brand-wine hover:underline">
-                    {site.websiteUrl}
+                  <h3 className="text-lg font-bold text-[#1D1D1F] flex items-center gap-2">
+                    <Globe size={18} className="text-[#6E6E73]" />
+                    {site.siteName}
+                  </h3>
+                  <a
+                    href={site.websiteUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-[#6E6E73] hover:text-[#1D1D1F] flex items-center gap-1 mt-1 underline"
+                  >
+                    <span>{site.websiteUrl}</span>
+                    <ExternalLink size={12} />
                   </a>
                 </div>
-                <Badge type={site.status === "ACTIVE" ? "success" : "warning"}>{site.status}</Badge>
+                <StatusBadge variant={site.status === "ACTIVE" ? "success" : "warning"}>{site.status}</StatusBadge>
               </div>
 
               {/* Unique Credentials */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-brand-bg/50 p-4 rounded-lg border border-brand-blush/40">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[#F5F5F7] p-4 rounded-xl border border-[#E8E8ED]">
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 block mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6E6E73] block mb-1">
                     Tracking Code
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-sm text-brand-wine">{site.trackingCode}</span>
+                    <span className="font-mono font-semibold text-sm text-[#1D1D1F]">{site.trackingCode}</span>
                     <button
                       onClick={() => handleCopy(site.trackingCode, `tc-${site.id}`)}
-                      className="p-1 text-zinc-400 hover:text-brand-wine rounded transition-colors"
+                      className="p-1 text-[#6E6E73] hover:text-[#1D1D1F] rounded transition-colors"
                       title="Copy Tracking Code"
                     >
                       {copiedId === `tc-${site.id}` ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
@@ -104,35 +115,30 @@ export default function PartnerSites() {
                 </div>
 
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 block mb-1">
-                    Website URL
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6E6E73] block mb-1">
+                    Registered Domain
                   </span>
-                  <div className="text-xs text-zinc-700 font-medium truncate">{site.websiteUrl}</div>
+                  <div className="text-xs font-medium text-[#1D1D1F] truncate">{site.websiteUrl}</div>
                 </div>
               </div>
 
               {/* 4 Mapped Properties */}
               <div className="space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-widest text-brand-wine">
-                  Mapped Hidden Honey Property Widgets (4 Core Properties)
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-[#6E6E73]">
+                  Mapped Properties (4 Core Properties)
                 </h4>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {CORE_PROPERTIES.map(cp => {
-                    const propMapping = site.siteProperties?.find(sp => sp.propertyId === cp.id);
-                    const widgetVal = propMapping?.hospitableWidgetId || site.hospitableWidgetId || "Mapped";
-
                     return (
-                      <div key={cp.id} className="bg-white p-3 rounded-lg border border-brand-blush/60 space-y-1 shadow-sm">
-                        <div className="text-xs font-bold text-brand-plum">{cp.name}</div>
-                        <div className="text-[10px] text-zinc-500">{cp.location}</div>
-                        <div className="flex items-center justify-between pt-1 border-t border-brand-blush/30 mt-1">
-                          <span className="text-[10px] text-zinc-400 font-mono truncate max-w-[110px]">
-                            {widgetVal}
+                      <div key={cp.id} className="bg-[#FFFFFF] p-3 rounded-lg border border-[#D2D2D7] space-y-1 shadow-2xs">
+                        <div className="text-xs font-semibold text-[#1D1D1F]">{cp.name}</div>
+                        <div className="text-[10px] text-[#6E6E73]">{cp.location}</div>
+                        <div className="flex items-center justify-between pt-2 border-t border-[#E8E8ED] mt-1">
+                          <span className="text-[10px] text-[#6E6E73] font-mono truncate max-w-[110px]">
+                            Synced
                           </span>
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                            ACTIVE
-                          </span>
+                          <StatusBadge variant="success">ACTIVE</StatusBadge>
                         </div>
                       </div>
                     );
@@ -146,3 +152,5 @@ export default function PartnerSites() {
     </div>
   );
 }
+
+

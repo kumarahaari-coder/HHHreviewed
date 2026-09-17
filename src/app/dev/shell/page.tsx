@@ -4,6 +4,7 @@ import React, { useState, useEffect, Suspense } from "react";
 import { notFound, useSearchParams } from "next/navigation";
 import { AppShell, NavItem } from "@/components/shell";
 import AdminOverview from "@/app/admin/page";
+import AdminBookings from "@/app/admin/bookings/page";
 import {
   Button,
   Card,
@@ -47,19 +48,14 @@ function ShellPreviewContent() {
   const initialDrawerOpen = searchParams.get("drawer") === "open";
 
   // Preview controls state
-  const [portalMode, setPortalMode] = useState<"admin" | "partner" | "admin_preview">(initialPortal);
-  const [wordmarkVariant, setWordmarkVariant] = useState<"clean" | "monogram">(initialWordmark);
+  const [portalMode, setPortalMode] = useState<"admin" | "partner" | "admin_preview">(() => {
+    return (searchParams.get("portal") as any) || initialPortal;
+  });
+  const [wordmarkVariant, setWordmarkVariant] = useState<"clean" | "monogram">(() => {
+    return (searchParams.get("wordmark") as any) || initialWordmark;
+  });
   const [activeNavId, setActiveNavId] = useState("bookings");
   const [searchValue, setSearchValue] = useState("");
-
-  useEffect(() => {
-    if (searchParams.get("portal")) {
-      setPortalMode(searchParams.get("portal") as any);
-    }
-    if (searchParams.get("wordmark")) {
-      setWordmarkVariant(searchParams.get("wordmark") as any);
-    }
-  }, [searchParams]);
 
   // Admin Navigation Architecture
   const adminPrimaryNav: NavItem[] = [
@@ -151,7 +147,9 @@ function ShellPreviewContent() {
       onSignOut={() => alert("Signed out successfully")}
       initialMobileNavOpen={initialDrawerOpen}
     >
-      {portalMode === "admin" ? (
+      {(portalMode as string) === "admin_bookings" ? (
+        <AdminBookings />
+      ) : portalMode === "admin" ? (
         <AdminOverview />
       ) : (
         <div className="space-y-8 font-sans">

@@ -112,18 +112,20 @@ export function TableCell({
   children,
   align = "left",
   numeric = false,
+  colSpan,
   className = ""
 }: {
   children: React.ReactNode;
   align?: "left" | "center" | "right";
   numeric?: boolean;
+  colSpan?: number;
   className?: string;
 }) {
   const alignClass = align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left";
   const numericClass = numeric ? "tabular-nums" : "";
 
   return (
-    <td className={`py-3.5 px-4 text-xs ${alignClass} ${numericClass} ${className}`}>
+    <td colSpan={colSpan} className={`py-3.5 px-4 text-xs ${alignClass} ${numericClass} ${className}`}>
       {children}
     </td>
   );

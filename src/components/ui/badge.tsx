@@ -29,11 +29,11 @@ export function StatusBadge({
     warning: "bg-warning-surface text-warning border-warning-border",
     danger: "bg-danger-surface text-danger border-danger-border",
     info: "bg-info-surface text-info border-info-border",
-    accent: "bg-accent-subtle text-accent border-accent/20",
+    accent: "bg-accent-subtle text-accent-hover border-accent/20",
     // Backward compatibility mappings for legacy un-migrated pages
     plum: "bg-primary/10 text-primary border-primary/20",
     wine: "bg-secondary/10 text-secondary border-secondary/20",
-    sage: "bg-accent-subtle text-accent border-accent/20",
+    sage: "bg-accent-subtle text-accent-hover border-accent/20",
     gray: "bg-surface-muted text-secondary border-divider-soft"
   };
 

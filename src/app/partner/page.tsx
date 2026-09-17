@@ -9,11 +9,12 @@ import {
   Globe,
   Clock,
   CheckCircle,
-  FileSpreadsheet,
   Loader2
 } from "lucide-react";
 import { Reservation, Partner, Site, Payout } from "@/lib/db/schema";
-import { Card, Badge } from "@/components/ui/custom";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/badge";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableMobileCard } from "@/components/ui/table";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -74,20 +75,15 @@ function PartnerOverviewContent() {
   if (loading) {
     return (
       <div className="flex py-16 justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-plum" />
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
       </div>
     );
   }
 
   if (!partner) return null;
 
-  // Calculations scoped strictly to current partner
   const totalBookings = reservations.length;
   const totalRevenue = reservations.reduce((acc, r) => acc + r.bookingAmount, 0);
-
-  const estimatedPayout = payouts
-    .filter(p => p.status === "ESTIMATED")
-    .reduce((acc, p) => acc + p.finalPayout, 0);
 
   const eligiblePayout = payouts
     .filter(p => p.status === "ELIGIBLE" || p.status === "APPROVED")
@@ -97,7 +93,6 @@ function PartnerOverviewContent() {
     .filter(p => p.status === "PAID")
     .reduce((acc, p) => acc + p.finalPayout, 0);
 
-  // Group reservations by month for dynamic revenue chart
   const monthlyData = [
     { month: "Jan", revenue: Math.round(totalRevenue * 0.1), bookings: Math.max(1, Math.floor(totalBookings * 0.1)) },
     { month: "Feb", revenue: Math.round(totalRevenue * 0.15), bookings: Math.max(1, Math.floor(totalBookings * 0.15)) },
@@ -108,165 +103,176 @@ function PartnerOverviewContent() {
 
   return (
     <div className="space-y-6">
-      {/* Title Header */}
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">
-          Welcome back, {partner.contactName}
-        </h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Performance dashboard for {partner.businessName}. Track referred bookings, website statistics, and payout balances.
-        </p>
-      </div>
+      <PageHeader
+        title={`Welcome back, ${partner.contactName}`}
+        description={`Performance summary for ${partner.businessName}. Track referred bookings, website metrics, and payout status.`}
+      />
 
       {/* KPI METRICS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="flex items-center space-x-4">
-          <div className="p-3 bg-brand-blush/40 rounded-xl text-brand-plum shrink-0">
-            <DollarSign size={24} />
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center space-x-3">
+          <div className="p-2.5 rounded-md bg-[var(--canvas)] text-[var(--primary)] shrink-0">
+            <DollarSign size={20} />
           </div>
           <div>
-            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-              Total Booking Value
+            <div className="text-[10px] font-semibold text-[var(--secondary)] uppercase tracking-wider">
+              Referred Revenue
             </div>
-            <div className="text-2xl font-extrabold text-brand-plum mt-0.5">
-              ${totalRevenue.toLocaleString()}
+            <div className="text-xl font-bold tabular-nums font-mono text-[var(--primary)] mt-0.5">
+              ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
-        </Card>
+        </div>
 
-        <Card className="flex items-center space-x-4">
-          <div className="p-3 bg-purple-50 rounded-xl text-purple-700 shrink-0">
-            <Calendar size={24} />
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center space-x-3">
+          <div className="p-2.5 rounded-md bg-[var(--canvas)] text-[var(--primary)] shrink-0">
+            <Calendar size={20} />
           </div>
           <div>
-            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
+            <div className="text-[10px] font-semibold text-[var(--secondary)] uppercase tracking-wider">
               Referred Stays
             </div>
-            <div className="text-2xl font-extrabold text-brand-plum mt-0.5">
+            <div className="text-xl font-bold tabular-nums font-mono text-[var(--primary)] mt-0.5">
               {totalBookings}
             </div>
           </div>
-        </Card>
+        </div>
 
-        <Card className="flex items-center space-x-4">
-          <div className="p-3 bg-emerald-50 rounded-xl text-emerald-700 shrink-0">
-            <TrendingUp size={24} />
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center space-x-3">
+          <div className="p-2.5 rounded-md bg-emerald-50 text-emerald-700 shrink-0">
+            <TrendingUp size={20} />
           </div>
           <div>
-            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-              Eligible / Approved Payout
+            <div className="text-[10px] font-semibold text-[var(--secondary)] uppercase tracking-wider">
+              Available Balance
             </div>
-            <div className="text-2xl font-extrabold text-emerald-700 mt-0.5">
-              ${eligiblePayout.toLocaleString()}
+            <div className="text-xl font-bold tabular-nums font-mono text-emerald-700 mt-0.5">
+              ${eligiblePayout.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
-        </Card>
+        </div>
 
-        <Card className="flex items-center space-x-4">
-          <div className="p-3 bg-blue-50 rounded-xl text-blue-700 shrink-0">
-            <CheckCircle size={24} />
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 flex items-center space-x-3">
+          <div className="p-2.5 rounded-md bg-[var(--canvas)] text-[var(--primary)] shrink-0">
+            <CheckCircle size={20} />
           </div>
           <div>
-            <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">
-              Total Paid Out
+            <div className="text-[10px] font-semibold text-[var(--secondary)] uppercase tracking-wider">
+              Total Settled
             </div>
-            <div className="text-2xl font-extrabold text-blue-800 mt-0.5">
-              ${totalPaidOut.toLocaleString()}
+            <div className="text-xl font-bold tabular-nums font-mono text-[var(--primary)] mt-0.5">
+              ${totalPaidOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </div>
-        </Card>
+        </div>
       </div>
 
       {/* CHARTS ROW */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <h3 className="text-sm font-bold text-brand-plum uppercase tracking-wider mb-4">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+          <h3 className="text-xs font-bold text-[var(--primary)] uppercase tracking-wider">
             Referred Revenue Trend (USD)
           </h3>
-          <div className="h-64">
+          <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={monthlyData}>
-                <XAxis dataKey="month" stroke="#a1a1aa" fontSize={12} />
-                <YAxis stroke="#a1a1aa" fontSize={12} />
+                <XAxis dataKey="month" stroke="#6E6E73" fontSize={11} />
+                <YAxis stroke="#6E6E73" fontSize={11} />
                 <Tooltip />
-                <Area type="monotone" dataKey="revenue" stroke="#4a1525" fill="#e8c2cb" />
+                <Area type="monotone" dataKey="revenue" stroke="#1D1D1F" fill="#E8E8ED" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </Card>
+        </div>
 
-        <Card>
-          <h3 className="text-sm font-bold text-brand-plum uppercase tracking-wider mb-4">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+          <h3 className="text-xs font-bold text-[var(--primary)] uppercase tracking-wider">
             Referred Stays Volume
           </h3>
-          <div className="h-64">
+          <div className="h-60">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthlyData}>
-                <XAxis dataKey="month" stroke="#a1a1aa" fontSize={12} />
-                <YAxis stroke="#a1a1aa" fontSize={12} />
+                <XAxis dataKey="month" stroke="#6E6E73" fontSize={11} />
+                <YAxis stroke="#6E6E73" fontSize={11} />
                 <Tooltip />
-                <Bar dataKey="bookings" fill="#4a1525" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="bookings" fill="#1D1D1F" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </Card>
+        </div>
       </div>
 
       {/* RECENT RESERVATIONS TABLE */}
-      <Card className="overflow-hidden">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-brand-plum uppercase tracking-wider">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+        <div className="p-4 border-b border-[var(--border)] flex justify-between items-center">
+          <h3 className="text-xs font-bold text-[var(--primary)] uppercase tracking-wider">
             Recent Referred Bookings
           </h3>
-          <Badge type="info">{reservations.length} Bookings</Badge>
+          <StatusBadge variant="info">{reservations.length} Total</StatusBadge>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="bg-brand-cream border-b border-brand-blush font-bold uppercase tracking-wider text-brand-wine">
-                <th className="py-2.5 px-3">Guest</th>
-                <th className="py-2.5 px-3">Dates</th>
-                <th className="py-2.5 px-3">Property</th>
-                <th className="py-2.5 px-3">Booking Amount</th>
-                <th className="py-2.5 px-3">Est. Payout</th>
-                <th className="py-2.5 px-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-blush/40">
-              {reservations.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-6 text-center text-zinc-500 italic">
-                    No referred stays recorded yet for this partner profile.
-                  </td>
-                </tr>
-              ) : (
-                reservations.slice(0, 5).map(res => (
-                  <tr key={res.id} className="hover:bg-brand-blush/10">
-                    <td className="py-3 px-3 font-bold text-brand-plum">{res.guestName || "Referral Stay"}</td>
-                    <td className="py-3 px-3 text-zinc-500">{res.checkInDate} to {res.checkOutDate}</td>
-                    <td className="py-3 px-3 text-zinc-600">{res.propertyId}</td>
-                    <td className="py-3 px-3 font-bold">${res.bookingAmount.toLocaleString()}</td>
-                    <td className="py-3 px-3 font-bold text-emerald-700">${(res.partnerPayoutAmount || 0).toLocaleString()}</td>
-                    <td className="py-3 px-3">
-                      <Badge type={res.reservationStatus === "CHECKED_OUT" || res.reservationStatus === "COMPLETED" ? "success" : "info"}>
-                        {res.reservationStatus}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <Table className="hidden md:table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Stay Code</TableHead>
+              <TableHead>Stay Dates</TableHead>
+              <TableHead>Booking Value</TableHead>
+              <TableHead>Commission Earned</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {reservations.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center py-6 text-[var(--secondary)] text-xs">
+                  No referred stays recorded yet.
+                </TableCell>
+              </TableRow>
+            ) : (
+              reservations.slice(0, 5).map(res => (
+                <TableRow key={res.id}>
+                  <TableCell className="font-mono font-medium text-[var(--primary)]">{res.confirmationCode || res.id}</TableCell>
+                  <TableCell className="text-xs text-[var(--secondary)]">{res.checkInDate} to {res.checkOutDate}</TableCell>
+                  <TableCell className="tabular-nums font-mono font-semibold">${res.bookingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                  <TableCell className="tabular-nums font-mono font-bold text-emerald-700">${(res.partnerPayoutAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                  <TableCell>
+                    <StatusBadge variant={res.reservationStatus === "CHECKED_OUT" || res.reservationStatus === "COMPLETED" ? "success" : "info"}>
+                      {res.reservationStatus}
+                    </StatusBadge>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+
+        <div className="md:hidden divide-y divide-[var(--border)]">
+          {reservations.slice(0, 5).map(res => (
+            <TableMobileCard
+              key={res.id}
+              title={res.confirmationCode || res.id}
+              subtitle={`${res.checkInDate} - ${res.checkOutDate}`}
+              badge={
+                <StatusBadge variant={res.reservationStatus === "CHECKED_OUT" ? "success" : "info"}>
+                  {res.reservationStatus}
+                </StatusBadge>
+              }
+              details={[
+                { label: "Booking Value", value: `$${res.bookingAmount.toFixed(2)}`, numeric: true },
+                { label: "Commission", value: `$${(res.partnerPayoutAmount || 0).toFixed(2)}`, numeric: true }
+              ]}
+            />
+          ))}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }
 
+
 export default function PartnerOverview() {
   return (
-    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-brand-plum" /></div>}>
+    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" /></div>}>
       <PartnerOverviewContent />
     </Suspense>
   );

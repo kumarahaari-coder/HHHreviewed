@@ -109,7 +109,7 @@ export function UserMenu({
                 setIsOpen(false);
                 if (onReturnFromPreview) onReturnFromPreview();
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-accent hover:bg-accent-subtle/50 rounded-md font-medium transition-colors cursor-pointer text-left mt-1"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-accent-hover hover:bg-accent-subtle/50 rounded-md font-medium transition-colors cursor-pointer text-left mt-1"
             >
               <ShieldAlert size={14} className="shrink-0" />
               <span>Return from {previewPartnerName || "Partner"} Preview</span>

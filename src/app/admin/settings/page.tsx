@@ -5,15 +5,15 @@ import {
   Settings,
   ClipboardList,
   ShieldCheck,
-  RotateCcw,
   User,
   Info,
   Calendar,
-  AlertTriangle
+  Lock
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { AuditLog } from "@/lib/db/schema";
-import { Card, Badge } from "@/components/ui/custom";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/badge";
 
 export default function SettingsAndAudits() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -23,84 +23,61 @@ export default function SettingsAndAudits() {
     setLogs(db.auditLogs);
   }, []);
 
-  const handleReset = () => {
-    if (confirm("Are you sure you want to reset all simulation data to its default seed state? This will clear all added bookings, sites, partners, and payouts.")) {
-      db.reset();
-    }
-  };
-
   const filteredLogs = logs.filter(log => {
     if (logFilter === "ALL") return true;
     return log.recordType === logFilter;
   });
 
   return (
-    <div className="space-y-8 font-sans">
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Settings & Audits</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          System configurations, developer options, and transaction audit trails.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Settings & Operational Controls"
+        description="System configurations, security policy enforcement, and audit logs."
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* SIMULATION CONTROLS */}
-        <div className="lg:col-span-1 space-y-6">
-          {process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_AUTH_MODE === "mock_dev_only" && (
-            <Card className="space-y-4 border-rose-200 bg-rose-50/10">
-              <h3 className="text-sm font-bold uppercase tracking-widest text-rose-800 flex items-center gap-2">
-                <RotateCcw size={16} />
-                Reset Demonstration
-              </h3>
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                Resets the browser's `localStorage` state, restoring the database to its pristine mock state containing 4 retreats, 3 partners, 5 websites, and 10 bookings.
-              </p>
-              <button
-                onClick={handleReset}
-                className="w-full bg-rose-500 hover:bg-rose-600 text-white py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95 flex items-center justify-center space-x-2"
-              >
-                <RotateCcw size={14} />
-                <span>Reset Database Simulation</span>
-              </button>
-            </Card>
-          )}
-
-          <Card className="space-y-4">
-            <h3 className="text-sm font-bold uppercase tracking-widest text-brand-wine flex items-center gap-2">
-              <ShieldCheck size={16} />
-              Security Settings
-            </h3>
-            <div className="space-y-3 text-xs text-zinc-600">
-              <p className="flex items-start gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-brand-sage mt-1.5 shrink-0" />
-                <span>Session auto-expiration mock configured (20 min).</span>
-              </p>
-              <p className="flex items-start gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-brand-sage mt-1.5 shrink-0" />
-                <span>Row Level Security (RLS) policies simulated for partner scopes.</span>
-              </p>
-              <p className="flex items-start gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-brand-sage mt-1.5 shrink-0" />
-                <span>Payment and guest credentials masked for partners.</span>
-              </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* SECURITY & GOVERNANCE GROUP */}
+        <div className="lg:col-span-1 space-y-4">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3">
+              <ShieldCheck size={16} className="text-[var(--primary)]" />
+              <h3 className="text-sm font-bold text-[var(--primary)]">Security & Governance</h3>
             </div>
-          </Card>
+            
+            <div className="space-y-3 text-xs text-[var(--secondary)]">
+              <div className="flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+                <span>Clerk Session Authentication & Role Boundaries Enforced</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+                <span>Supabase Row Level Security (RLS) Tenant Isolation Active</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+                <span>Short-Lived Signed S3 Presigned URLs for Tax Documents</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+                <span>Sensitive PII, Tax IDs & Bank Account Masking Active</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* AUDIT LOG TRAIL */}
-        <div className="lg:col-span-2 space-y-4">
-          <Card className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-brand-blush/60 pb-3 gap-3">
-              <h3 className="text-sm font-bold uppercase tracking-widest text-brand-wine flex items-center gap-2">
-                <ClipboardList size={16} />
-                Financial Audit History
-              </h3>
+        <div className="lg:col-span-2">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-[var(--border)] pb-3 gap-3">
+              <div className="flex items-center gap-2">
+                <ClipboardList size={16} className="text-[var(--primary)]" />
+                <h3 className="text-sm font-bold text-[var(--primary)]">Financial Audit Trail</h3>
+              </div>
               
-              {/* Filter */}
               <select
                 value={logFilter}
                 onChange={e => setLogFilter(e.target.value)}
-                className="bg-brand-bg border border-brand-blush rounded-lg text-xs font-bold text-zinc-600 py-1.5 px-3 focus:outline-none"
+                className="bg-[var(--canvas)] border border-[var(--border)] rounded-md text-xs font-medium text-[var(--primary)] py-1.5 px-3 focus:outline-none"
               >
                 <option value="ALL">All Audit Trail Types</option>
                 <option value="PARTNER">Partner Profiling</option>
@@ -112,39 +89,37 @@ export default function SettingsAndAudits() {
             </div>
 
             {/* Audit Logs list */}
-            <div className="space-y-3 max-h-96 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-200">
+            <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
               {filteredLogs.length === 0 ? (
-                <p className="text-center py-8 text-xs text-zinc-400 italic">No audit trail records found.</p>
+                <p className="text-center py-8 text-xs text-[var(--secondary)] italic">No audit trail records found.</p>
               ) : (
                 filteredLogs.map(log => (
-                  <div key={log.id} className="border border-brand-blush/60 bg-brand-bg/25 rounded-lg p-3 space-y-2 text-xs">
+                  <div key={log.id} className="border border-[var(--border)] bg-[var(--canvas)] rounded-md p-3 space-y-2 text-xs">
                     <div className="flex justify-between items-center">
-                      <div className="flex items-center space-x-1.5">
-                        <User size={12} className="text-zinc-400" />
-                        <span className="font-bold text-zinc-700">{log.userName}</span>
-                        <span className="text-[10px] text-zinc-400 bg-brand-blush/30 border border-brand-blush/50 px-2 py-0.5 rounded uppercase font-bold tracking-wide">
-                          {log.action}
-                        </span>
+                      <div className="flex items-center space-x-2">
+                        <User size={12} className="text-[var(--secondary)]" />
+                        <span className="font-semibold text-[var(--primary)]">{log.userName}</span>
+                        <StatusBadge variant="info">{log.action}</StatusBadge>
                       </div>
-                      <span className="text-[10px] text-zinc-400">
+                      <span className="text-[10px] text-[var(--secondary)] font-mono">
                         {new Date(log.createdAt).toLocaleString()}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 text-[10px] bg-brand-cream border border-brand-blush/40 p-2 rounded">
+                    <div className="grid grid-cols-3 gap-2 text-[11px] bg-[var(--surface)] border border-[var(--border)] p-2 rounded-md">
                       <div>
-                        <span className="font-bold block text-brand-wine">Scope Target</span>
-                        <span className="font-semibold text-zinc-600 uppercase">{log.recordType}: {log.recordId}</span>
+                        <span className="font-semibold block text-[var(--secondary)]">Target</span>
+                        <span className="font-mono text-[var(--primary)]">{log.recordType}: {log.recordId}</span>
                       </div>
                       <div className="col-span-2">
-                        <span className="font-bold block text-brand-wine">Audit State Change</span>
+                        <span className="font-semibold block text-[var(--secondary)]">State Update</span>
                         {log.previousValue ? (
-                          <div className="space-y-0.5">
-                            <span className="text-zinc-400 block line-through">PREV: {log.previousValue}</span>
-                            <span className="text-brand-plum block font-semibold">UPD: {log.updatedValue}</span>
+                          <div className="space-y-0.5 font-mono">
+                            <span className="text-[var(--secondary)] block line-through">PREV: {log.previousValue}</span>
+                            <span className="text-[var(--primary)] block font-semibold">UPD: {log.updatedValue}</span>
                           </div>
                         ) : (
-                          <span className="text-brand-plum block font-semibold truncate">{log.updatedValue}</span>
+                          <span className="text-[var(--primary)] font-mono block font-semibold truncate">{log.updatedValue}</span>
                         )}
                       </div>
                     </div>
@@ -152,7 +127,7 @@ export default function SettingsAndAudits() {
                 ))
               )}
             </div>
-          </Card>
+          </div>
         </div>
       </div>
     </div>

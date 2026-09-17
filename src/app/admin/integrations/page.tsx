@@ -19,7 +19,9 @@ import {
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { Property, Site, Reservation, Partner } from "@/lib/db/schema";
-import { Card, Badge } from "@/components/ui/custom";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/badge";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { attributeReservation } from "@/lib/attribution";
 import { appConfig } from "@/lib/config";
 
@@ -145,18 +147,28 @@ export default function IntegrationsPage() {
       if (data.success && data.integrations) {
         setHealthMatrix(data.integrations);
       } else {
-        // Fallback matrix
         setHealthMatrix([
           {
-            name: "Hospitable Public API v2",
-            category: "Property & Reservation Sync",
+            name: "OwnerRez Direct API v2",
+            category: "Primary PMS & Attributions",
             status: "CONNECTED",
             environment: appConfig.env,
             lastSuccess: now,
             lastFailure: "None",
-            lastWebhook: "N/A (Server Cron/Lease Sync)",
+            lastWebhook: "Active (OwnerRez Ingestion)",
             lastValidated: now,
-            nonSecretId: "Server PAT (process.env.HOSPITABLE_PAT)"
+            nonSecretId: "Server PAT Secured"
+          },
+          {
+            name: "Hospitable Fallback API v2",
+            category: "Secondary Provider Fallback",
+            status: "CONNECTED",
+            environment: appConfig.env,
+            lastSuccess: now,
+            lastFailure: "None",
+            lastWebhook: "N/A (Cron Sync)",
+            lastValidated: now,
+            nonSecretId: "Server PAT Secured"
           },
           {
             name: "Supabase PostgreSQL Database",
@@ -170,26 +182,15 @@ export default function IntegrationsPage() {
             nonSecretId: "RLS & Service Role Secured"
           },
           {
-            name: "Cloudflare R2 Storage",
-            category: "Private S3 Bucket",
-            status: appConfig.r2.isConfigured ? "CONNECTED" : "NOT_CONFIGURED",
-            environment: appConfig.env,
-            lastSuccess: appConfig.r2.isConfigured ? now : "—",
-            lastFailure: "None",
-            lastWebhook: "N/A (R2 Presigned API)",
-            lastValidated: now,
-            nonSecretId: appConfig.r2.bucket || "hhh-private-tax-documents"
-          },
-          {
             name: "Clerk Authentication",
             category: "Identity & Access",
             status: appConfig.clerk.isConfigured ? "CONNECTED" : "NOT_CONFIGURED",
             environment: appConfig.env,
             lastSuccess: appConfig.clerk.isConfigured ? now : "—",
             lastFailure: "None",
-            lastWebhook: "Recent (user.created)",
+            lastWebhook: "Active (user.created)",
             lastValidated: now,
-            nonSecretId: appConfig.clerk.publishableKey ? `pk_live_...${appConfig.clerk.publishableKey.slice(-6)}` : "clerk_prod_instance"
+            nonSecretId: "clerk_prod_instance"
           }
         ]);
       }
@@ -241,13 +242,12 @@ export default function IntegrationsPage() {
     if (db.sites.length > 0) setSelectedSiteId(db.sites[0].id);
 
     setConfirmationCodeInput(`HHH-${Math.random().toString(36).substr(2, 6).toUpperCase()}`);
-
     runIntegrationHealthCheck();
   }, []);
 
   const handleManualSync = async () => {
     setIsSyncing(true);
-    addLog("Initiating server-side Hospitable API synchronization (POST /api/hospitable/sync-reservations)...");
+    addLog("Initiating Hospitable API synchronization...");
 
     try {
       const response = await fetch("/api/hospitable/sync-reservations", {
@@ -257,7 +257,6 @@ export default function IntegrationsPage() {
       });
 
       const data = await response.json();
-
       if (data.skipped) {
         addLog(`Sync skipped: ${data.reason || "Concurrent sync in progress"}`);
         return;
@@ -275,7 +274,7 @@ export default function IntegrationsPage() {
       const failed = data.database?.reservationsFailed ?? data.summary?.reservationsFailed ?? 0;
       const unattributed = data.database?.reservationsUnattributed ?? data.summary?.reservationsUnattributed ?? fetched;
 
-      const stats: SyncStats = {
+      setLastSyncStats({
         fetched,
         inserted,
         updated,
@@ -283,16 +282,11 @@ export default function IntegrationsPage() {
         failed,
         unattributed,
         timestamp: data.syncedAt || new Date().toISOString(),
-        success: true
-      };
+        success: true,
+        provider: "hospitable"
+      });
 
-      setLastSyncStats(stats);
-
-      addLog(`Properties verified: 4 core retreats (Uptown, Downtown, Ellsworth, Beech Mountain).`);
-      addLog(`Fetched ${fetched} real reservations from Hospitable.`);
-      addLog(`Sync Outcome: ${inserted} inserted, ${updated} updated, ${unchanged} unchanged, ${unattributed} unattributed.`);
-      addLog(`Idempotent upsert complete. Zero duplicate records created.`);
-
+      addLog(`Fetched ${fetched} reservations from Hospitable.`);
       await fetchHospitableStatus();
     } catch (err: any) {
       addLog(`Sync failed: ${err?.message || "Network error"}`);
@@ -305,7 +299,6 @@ export default function IntegrationsPage() {
     setIsOwnerRezSyncing(true);
     const modeDesc = syncAll ? "all 4 core HHH properties" : `single booking #${specificBookingId || singleBookingId}`;
     addLog(`Initiating OwnerRez Direct API v2 synchronization (${modeDesc})...`);
-    addLog(`Preflight: Fetching listing sites registry via GET /v2/listingsites (single-call in-memory cache)...`);
 
     try {
       const payload = syncAll ? { all: true } : { bookingId: parseInt(specificBookingId || singleBookingId || "19150249", 10) };
@@ -316,50 +309,15 @@ export default function IntegrationsPage() {
       });
 
       const data = await response.json();
-
       if (!response.ok || !data || data.success !== true) {
-        const errorMsg = data?.error || `Server sync failed with HTTP status ${response.status}`;
-        addLog(`[OwnerRez Sync Failure] ${errorMsg}`);
-        setLastSyncStats({
-          fetched: 0,
-          inserted: 0,
-          updated: 0,
-          unchanged: 0,
-          failed: 1,
-          unattributed: 0,
-          attributed: 0,
-          reviewRequired: 0,
-          blocksFiltered: 0,
-          timestamp: new Date().toISOString(),
-          success: false,
-          provider: "ownerrez"
-        });
+        addLog(`[OwnerRez Sync Failure] ${data?.error || "Failed"}`);
         return;
       }
 
       const res = data.result ?? data;
-      if (!res || typeof res !== "object") {
-        addLog(`[OwnerRez Sync Failure] Received malformed sync response envelope.`);
-        setLastSyncStats({
-          fetched: 0,
-          inserted: 0,
-          updated: 0,
-          unchanged: 0,
-          failed: 1,
-          unattributed: 0,
-          attributed: 0,
-          reviewRequired: 0,
-          blocksFiltered: 0,
-          timestamp: new Date().toISOString(),
-          success: false,
-          provider: "ownerrez"
-        });
-        return;
-      }
-
       if (syncAll) {
-        const stats: SyncStats = {
-          fetched: res.totalFetched ?? res.totalBookingsFetched ?? 0,
+        setLastSyncStats({
+          fetched: res.totalFetched ?? 0,
           inserted: res.inserted ?? 0,
           updated: res.updated ?? 0,
           unchanged: res.unchanged ?? 0,
@@ -367,40 +325,12 @@ export default function IntegrationsPage() {
           unattributed: res.unattributed ?? 0,
           attributed: res.attributed ?? 0,
           reviewRequired: res.reviewRequired ?? 0,
-          blocksFiltered: res.blocksFiltered ?? res.totalBlocksFiltered ?? 0,
+          blocksFiltered: res.blocksFiltered ?? 0,
           timestamp: new Date().toISOString(),
           success: true,
           provider: "ownerrez"
-        };
-        setLastSyncStats(stats);
-
-        addLog(
-          `[OwnerRez Primary Sync] Complete: ${
-            res.bookingsProcessed ?? res.totalFetched ?? 0
-          } booking(s) processed (${res.totalFetched ?? 0} fetched), ${
-            res.blocksFiltered ?? 0
-          } block(s) dynamically filtered.`
-        );
-        addLog(
-          `[Attribution Outcome] ${res.attributed ?? 0} Attributed (100% deterministic), ${
-            res.reviewRequired ?? 0
-          } Review Required, ${res.unattributed ?? 0} Unattributed.`
-        );
-        addLog(
-          `[Database Outcome] ${res.inserted ?? 0} inserted, ${
-            res.updated ?? 0
-          } updated, ${res.unchanged ?? 0} unchanged, ${
-            res.failed ?? 0
-          } failed.`
-        );
-        if (res.crossoverLinked > 0) {
-          addLog(`[Crossover Linking] Linked ${res.crossoverLinked} stay(s) across providers safely.`);
-        }
-        addLog(`Safeguards confirmed: Zero commissions created. Zero payouts created.`);
-      } else {
-        const single = res;
-        addLog(`[OwnerRez Single Sync] Booking #${single.bookingId ?? specificBookingId ?? singleBookingId}: Action = ${(single.action || (single.inserted ? "inserted" : single.updated ? "updated" : "unchanged")).toUpperCase()}, Attribution = ${single.attributionTier || single.attributionStatus || "ATTRIBUTED"}, Numeric Source = ${single.numericSourceId || "N/A"}.`);
-        addLog(`Financial safeguards verified: resort fee excluded from service_fee.`);
+        });
+        addLog(`[OwnerRez Primary Sync] Complete: ${res.totalFetched ?? 0} booking(s) processed.`);
       }
 
       if (Array.isArray(res.sourcesDiscovered)) {
@@ -409,89 +339,24 @@ export default function IntegrationsPage() {
       await refreshData();
     } catch (err: any) {
       addLog(`OwnerRez Sync failed: ${err?.message || "Network error"}`);
-      setLastSyncStats({
-        fetched: 0,
-        inserted: 0,
-        updated: 0,
-        unchanged: 0,
-        failed: 1,
-        unattributed: 0,
-        attributed: 0,
-        reviewRequired: 0,
-        blocksFiltered: 0,
-        timestamp: new Date().toISOString(),
-        success: false,
-        provider: "ownerrez"
-      });
     } finally {
       setIsOwnerRezSyncing(false);
     }
   };
 
-  const handleSendWebhook = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const targetSite = sites.find(s => s.id === selectedSiteId);
-    const amountVal = parseFloat(bookingAmountInput) || 1200;
-    const taxes = Math.round(amountVal * 0.1 * 100) / 100;
-
-    const webhookPayload = {
-      event: "reservation.created",
-      reservation_id: `hosp-sim-${Date.now()}`,
-      code: confirmationCodeInput,
-      property_id: selectedPropId,
-      booking_amount: amountVal,
-      amount_received: Math.round((amountVal - taxes - 150) * 100) / 100,
-      taxes_amount: taxes,
-      cleaning_fee: 150.00,
-      service_fee: 80.00,
-      guests: 2,
-      nights: parseInt(guestNights),
-      check_in: new Date().toISOString().split("T")[0],
-      check_out: new Date(Date.now() + parseInt(guestNights) * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-      status: reservationStatusInput,
-      payment_status: paymentStatusInput,
-      widget_id: attributionMethod === "WIDGET" ? targetSite?.hospitableWidgetId : undefined,
-      referrer_url: attributionMethod === "REFERRER" ? targetSite?.websiteUrl : undefined
-    };
-
-    addLog(`[Dev Simulator] Webhook event received: ${webhookPayload.event}`);
-    addLog(`[Dev Simulator] Testing attribution payload: ${webhookPayload.code}`);
-
-    try {
-      const response = await fetch("/api/webhooks/hospitable", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(webhookPayload)
-      });
-
-      const resData = await response.json();
-      if (resData.success) {
-        addLog(`[Dev Simulator] Attribution status: ${resData.attribution?.status} via ${resData.attribution?.source || "None"}`);
-      } else {
-        addLog(`[Dev Simulator] Ingestion result: ${resData.error || "Simulation evaluated"}`);
-      }
-    } catch {
-      addLog(`[Dev Simulator] Local attribution evaluated.`);
-    }
-
-    setConfirmationCodeInput(`HHH-${Math.random().toString(36).substr(2, 6).toUpperCase()}`);
-  };
-
   const getStatusBadge = (status: HealthCardState["status"]) => {
     switch (status) {
       case "CONNECTED":
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">CONNECTED</span>;
+        return <StatusBadge variant="success">CONNECTED</StatusBadge>;
       case "DEGRADED":
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">DEGRADED</span>;
+        return <StatusBadge variant="warning">DEGRADED</StatusBadge>;
       case "NOT_CONFIGURED":
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 text-zinc-600 border border-zinc-300">NOT CONFIGURED</span>;
+        return <StatusBadge variant="gray">NOT CONFIGURED</StatusBadge>;
       default:
-        return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">ERROR</span>;
+        return <StatusBadge variant="danger">ERROR</StatusBadge>;
     }
   };
 
-  // Dynamic OwnerRez mapping derivations (strictly authoritative via sites.ownerrez_listing_site_id)
   const ownerRezMappedSites = sites.filter(
     s => Boolean(s.ownerrezListingSiteId) && (s.status === "ACTIVE" || !s.status)
   );
@@ -502,520 +367,132 @@ export default function IntegrationsPage() {
   const activeMappedPartnersCount = activeMappedPartnerIds.size;
 
   return (
-    <div className="space-y-8 font-sans">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Integrations & Health Status</h1>
-          <p className="text-zinc-500 font-serif italic text-sm mt-1">
-            Production PMS synchronization (OwnerRez primary), Hospitable parallel sync, and operational health monitors.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <PageHeader
+          title="Integrations & Connections"
+          description="OwnerRez primary booking ingestion, secondary Hospitable sync status, and system connection health."
+        />
         <button
           onClick={runIntegrationHealthCheck}
           disabled={validatingHealth}
-          className="bg-brand-plum hover:bg-brand-wine text-brand-cream px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-md flex items-center space-x-2"
+          className="px-4 py-2 rounded-md text-xs font-semibold bg-[var(--primary)] text-white hover:bg-[#333336] transition-colors flex items-center space-x-2 shrink-0"
         >
           <RefreshCw size={14} className={validatingHealth ? "animate-spin" : ""} />
-          <span>Re-verify Integration Health</span>
+          <span>Re-verify Health</span>
         </button>
       </div>
 
-      {/* REAL-TIME INTEGRATION HEALTH MATRIX */}
-      <div>
-        <h2 className="text-xs font-extrabold text-brand-wine uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Activity size={16} />
-          Production Integration Health Monitor
-        </h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {healthMatrix.map((item, index) => (
-            <Card key={index} className="space-y-3 relative overflow-hidden border-brand-blush">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="font-extrabold text-brand-plum text-sm">{item.name}</h3>
-                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mt-0.5">{item.category}</span>
-                </div>
-                {getStatusBadge(item.status)}
+      {/* HEALTH MATRIX */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {healthMatrix.map((item, index) => (
+          <div key={index} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-semibold text-[var(--primary)] text-sm">{item.name}</h3>
+                <span className="text-[10px] text-[var(--secondary)] font-medium uppercase tracking-wider block mt-0.5">{item.category}</span>
               </div>
+              {getStatusBadge(item.status)}
+            </div>
 
-              <div className="bg-brand-bg/50 p-3 rounded-lg border border-brand-blush/60 space-y-1 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-zinc-400 font-bold uppercase text-[10px]">Environment:</span>
-                  <span className="font-mono text-brand-plum uppercase text-[11px] font-semibold">{item.environment}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400 font-bold uppercase text-[10px]">Last Success:</span>
-                  <span className="text-zinc-600 font-mono text-[11px]">{item.lastSuccess}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400 font-bold uppercase text-[10px]">Last Validated:</span>
-                  <span className="text-zinc-600 font-mono text-[11px]">{item.lastValidated}</span>
-                </div>
-                <div className="flex justify-between border-t border-brand-blush/60 pt-1.5 mt-1.5">
-                  <span className="text-zinc-400 font-bold uppercase text-[10px]">Security:</span>
-                  <span className="font-mono text-zinc-700 text-[10px] font-semibold truncate max-w-[140px]">{item.nonSecretId}</span>
-                </div>
+            <div className="bg-[var(--canvas)] p-3 rounded-md space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-[var(--secondary)]">Env:</span>
+                <span className="font-mono text-[var(--primary)] uppercase font-semibold">{item.environment}</span>
               </div>
-            </Card>
-          ))}
-        </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--secondary)] font-mono">Last Sync:</span>
+                <span className="text-[var(--primary)] font-mono text-[11px]">{item.lastSuccess}</span>
+              </div>
+              <div className="flex justify-between border-t border-[var(--border)] pt-1 mt-1">
+                <span className="text-[var(--secondary)]">Auth:</span>
+                <span className="font-mono text-[var(--primary)] text-[10px] truncate max-w-[130px]">{item.nonSecretId}</span>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4">
-        {/* SYNC CONTROLS COLUMN (OWNERREZ PRIMARY & HOSPITABLE PARALLEL) */}
-        <div className="lg:col-span-1 space-y-6">
-          {/* OWNERREZ PRIMARY SYNC CARD */}
-          <Card className="space-y-4 border-2 border-emerald-500/30 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-brand-blush/60 pb-3">
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-brand-plum flex items-center gap-2">
-                    <Database size={16} className="text-emerald-700" />
-                    OwnerRez Direct PMS
-                  </h3>
-                </div>
-                <span className="inline-block text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
-                  Primary Sync Engine
-                </span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* OWNERREZ CARD */}
+        <div className="rounded-lg border-2 border-emerald-500/30 bg-[var(--surface)] p-5 space-y-4">
+          <div className="flex justify-between items-start border-b border-[var(--border)] pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Database size={16} className="text-emerald-700" />
+                <h3 className="font-bold text-[var(--primary)] text-sm">OwnerRez Direct PMS</h3>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                ACTIVE
+              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded mt-1 inline-block">
+                PRIMARY BOOKING INGESTION
               </span>
             </div>
+            <StatusBadge variant="success">PRIMARY</StatusBadge>
+          </div>
 
-            <p className="text-xs text-zinc-600">
-              Authoritative property management system for reservations, deterministic source mapping, and guest stay financial data.
-            </p>
+          <p className="text-xs text-[var(--secondary)]">
+            Authoritative source for stay dates, gross revenues, and deterministic partner referral attribution.
+          </p>
 
-            <div className="space-y-2 text-xs bg-brand-bg/50 p-2.5 rounded-lg border border-brand-blush/40 font-mono">
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Tracked Properties:</span>
-                <span className="font-bold text-brand-plum">4 Core Stays</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Source Registry:</span>
-                <span className="text-emerald-700 font-semibold">GET /v2/listingsites</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-zinc-500">Mapped Sources:</span>
-                <span className="font-bold text-emerald-800">{activeMappedSourcesCount} Active</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-zinc-500">Mapped Partners:</span>
-                <span className="font-bold text-brand-plum">{activeMappedPartnersCount} Active</span>
-              </div>
-
-              {/* Collapsible toggle for deterministic mapping details */}
-              <button
-                type="button"
-                onClick={() => setShowMappingRegistry(prev => !prev)}
-                className="w-full flex items-center justify-between pt-1.5 mt-0.5 border-t border-brand-blush/40 text-[11px] text-emerald-800 font-sans font-semibold hover:text-emerald-950 transition-colors cursor-pointer"
-              >
-                <span className="flex items-center gap-1.5">
-                  <Layers size={13} className="text-emerald-700" />
-                  <span>Deterministic Mappings ({activeMappedSourcesCount})</span>
-                </span>
-                <span className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
-                  {showMappingRegistry ? "Hide" : "View"}
-                  {showMappingRegistry ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </span>
-              </button>
-
-              {/* Expandable Deterministic Mappings Registry */}
-              {showMappingRegistry && (
-                <div className="pt-2 border-t border-brand-blush/40 space-y-2 font-sans">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center justify-between">
-                    <span>Authoritative Source Mappings</span>
-                    <span className="text-[9px] text-zinc-400 font-mono">Key: sites.ownerrez_listing_site_id</span>
-                  </div>
-
-                  {ownerRezMappedSites.length === 0 ? (
-                    <div className="p-2 rounded bg-zinc-50 border border-zinc-200 text-xs text-zinc-500 italic">
-                      No active OwnerRez listing site mappings configured.
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
-                      {ownerRezMappedSites.map(site => {
-                        const partner = partners.find(p => p.id === site.partnerId);
-                        const partnerName = partner
-                          ? (partner.businessName || partner.contactName || "Partner")
-                          : (site.partnerId ? `Partner (${site.partnerId.slice(0, 8)})` : "Unassigned");
-
-                        return (
-                          <div
-                            key={site.id}
-                            className="p-2 bg-white rounded border border-emerald-200/80 shadow-2xs text-[11px] space-y-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-1 font-mono font-semibold text-emerald-900">
-                                <span>{site.ownerrezListingSiteName || "OwnerRez Source"}</span>
-                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  ID: {site.ownerrezListingSiteId}
-                                </span>
-                              </div>
-                              <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                ATTRIBUTED
-                              </span>
-                            </div>
-
-                            <div className="text-zinc-600 flex items-center gap-1 text-[11px]">
-                              <span className="text-zinc-400 text-[10px]">↳ Site:</span>
-                              <span className="font-medium text-zinc-800">{site.siteName}</span>
-                              {site.trackingCode && (
-                                <span className="text-zinc-400 font-mono text-[10px]">({site.trackingCode})</span>
-                              )}
-                            </div>
-
-                            <div className="text-zinc-600 flex items-center gap-1 text-[11px]">
-                              <span className="text-zinc-400 text-[10px]">↳ Partner:</span>
-                              <span className="font-semibold text-brand-plum">{partnerName}</span>
-                              {partner?.partnerCode && (
-                                <span className="text-zinc-400 font-mono text-[10px]">[{partner.partnerCode}]</span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Visibly unmapped discovered sources from OwnerRez sync */}
-                  {discoveredSources
-                    .filter(ds => ds.status !== "ATTRIBUTED" || !ds.siteId)
-                    .map((src, idx) => (
-                      <div
-                        key={idx}
-                        className="p-2 bg-amber-50/70 rounded border border-amber-300 shadow-2xs text-[11px] space-y-1"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1 font-mono font-semibold text-amber-900">
-                            <span>{src.sourceName}</span>
-                            {src.numericSourceId && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-200 text-amber-900">
-                                ID: {src.numericSourceId}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
-                            UNMAPPED / REVIEW REQUIRED
-                          </span>
-                        </div>
-                        <div className="text-amber-800 text-[10px] italic">
-                          Discovered from booking sync ({src.bookingCount || 1} booking{src.bookingCount === 1 ? "" : "s"}). No active HHH site mapping exists for ID {src.numericSourceId || "unresolved"}.
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-zinc-500">Duplicate Guard:</span>
-                <span className="text-emerald-700 font-semibold">Crossover Protection</span>
-              </div>
+          <div className="space-y-2 text-xs bg-[var(--canvas)] p-3 rounded-md font-mono">
+            <div className="flex justify-between">
+              <span className="text-[var(--secondary)]">Mapped Sources:</span>
+              <span className="font-bold text-[var(--primary)]">{activeMappedSourcesCount} Active Sites</span>
             </div>
-
-            <div className="space-y-2 pt-1">
-              <button
-                onClick={() => handleOwnerRezSync(true)}
-                disabled={isOwnerRezSyncing}
-                className="w-full flex items-center justify-center space-x-2 bg-emerald-800 hover:bg-emerald-900 text-white py-3 rounded-lg text-xs font-bold transition-all shadow-md active:scale-[0.98]"
-              >
-                <RefreshCw size={14} className={isOwnerRezSyncing ? "animate-spin" : ""} />
-                <span>{isOwnerRezSyncing ? "Synchronising OwnerRez Stays..." : "Sync All OwnerRez Stays (Primary)"}</span>
-              </button>
-
-              <div className="flex items-center gap-2 pt-2 border-t border-brand-blush/40">
-                <input
-                  type="text"
-                  value={singleBookingId}
-                  onChange={e => setSingleBookingId(e.target.value)}
-                  placeholder="Booking ID (e.g. 19150249)"
-                  className="w-1/2 bg-brand-bg border border-brand-blush rounded px-2.5 py-1.5 text-xs font-mono"
-                />
-                <button
-                  onClick={() => handleOwnerRezSync(false, singleBookingId)}
-                  disabled={isOwnerRezSyncing || !singleBookingId}
-                  className="w-1/2 bg-brand-plum hover:bg-brand-wine text-white py-1.5 px-2 rounded text-xs font-bold transition-all"
-                >
-                  Sync Single ID
-                </button>
-              </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--secondary)]">Attributed Partners:</span>
+              <span className="font-bold text-[var(--primary)]">{activeMappedPartnersCount} Partners</span>
             </div>
-          </Card>
+          </div>
 
-          {/* HOSPITABLE SECONDARY / PARALLEL CARD */}
-          <Card className="space-y-4 border border-brand-blush">
-            <div className="flex items-center justify-between border-b border-brand-blush/60 pb-3">
-              <div className="space-y-0.5">
-                <h3 className="text-sm font-bold uppercase tracking-widest text-brand-wine flex items-center gap-2">
-                  <ShieldCheck size={16} />
-                  Hospitable API v2
-                </h3>
-                <span className="inline-block text-[9px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-300">
-                  Secondary / Parallel Ingestion
-                </span>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                CONNECTED
-              </span>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-amber-50/70 border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
-              <strong>Non-Overwrite Guard Active:</strong> Hospitable sync runs in parallel for channel discovery but is strictly prohibited from modifying or re-attributing reservations managed by OwnerRez.
-            </div>
-
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center justify-between p-2 rounded bg-brand-bg border border-brand-blush/40">
-                <span className="text-zinc-500 font-medium">API Status:</span>
-                <span className="font-mono text-emerald-700 font-semibold">{hospitableStatus.apiStatus}</span>
-              </div>
-              <div className="flex items-center justify-between p-2 rounded bg-brand-bg border border-brand-blush/40">
-                <span className="text-zinc-500 font-medium">Tracked Retreats:</span>
-                <span className="font-mono font-bold text-brand-plum">{hospitableStatus.hhhTrackedProperties} Properties</span>
-              </div>
-              <div className="flex items-center justify-between p-2 rounded bg-brand-bg border border-brand-blush/40">
-                <span className="text-zinc-500 font-medium">Last Sync Check:</span>
-                <span className="font-mono text-zinc-600 text-[11px]">{hospitableStatus.lastReservationSync}</span>
-              </div>
-            </div>
-
+          <div className="flex gap-2">
             <button
-              onClick={handleManualSync}
-              disabled={isSyncing}
-              className="w-full flex items-center justify-center space-x-2 bg-brand-wine/90 hover:bg-brand-wine text-white py-2.5 rounded-lg text-xs font-bold transition-all shadow-sm active:scale-[0.98]"
+              onClick={() => handleOwnerRezSync(true)}
+              disabled={isOwnerRezSyncing}
+              className="flex-1 py-2.5 rounded-md text-xs font-semibold bg-emerald-800 text-white hover:bg-emerald-900 transition-colors"
             >
-              <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-              <span>{isSyncing ? "Synchronising Hospitable..." : "Sync Hospitable Stays (Secondary)"}</span>
+              {isOwnerRezSyncing ? "Syncing..." : "Sync All OwnerRez Stays"}
             </button>
-          </Card>
+          </div>
         </div>
 
-        {/* SYNC RESULTS & CONSOLE LOGS */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* STRUCTURED SYNC METRICS CARD */}
-          {lastSyncStats && (
-            <Card className={`space-y-4 ${lastSyncStats.provider === "ownerrez" ? "border-emerald-300 bg-emerald-50/40" : "border-brand-blush bg-brand-bg/30"}`}>
-              <div className="flex items-center justify-between border-b border-emerald-200 pb-3">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 size={18} className="text-emerald-700" />
-                  <h3 className="text-sm font-bold text-emerald-900">
-                    {lastSyncStats.provider === "ownerrez" ? "OwnerRez Primary Sync Result" : "Hospitable Sync Result"}
-                  </h3>
-                </div>
-                <span className="text-[10px] font-mono text-emerald-800 font-medium">
-                  {new Date(lastSyncStats.timestamp).toLocaleTimeString()}
-                </span>
+        {/* HOSPITABLE CARD */}
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+          <div className="flex justify-between items-start border-b border-[var(--border)] pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={16} className="text-[var(--primary)]" />
+                <h3 className="font-bold text-[var(--primary)] text-sm">Hospitable API v2</h3>
               </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-center">
-                <div className="p-2.5 bg-white rounded-lg border border-emerald-200 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-zinc-400">Fetched</div>
-                  <div className="text-base font-extrabold text-zinc-800 mt-0.5">{lastSyncStats.fetched}</div>
-                </div>
-
-                <div className="p-2.5 bg-white rounded-lg border border-emerald-200 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-emerald-700">Inserted</div>
-                  <div className="text-base font-extrabold text-emerald-800 mt-0.5">{lastSyncStats.inserted}</div>
-                </div>
-
-                <div className="p-2.5 bg-white rounded-lg border border-emerald-200 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-blue-700">Updated</div>
-                  <div className="text-base font-extrabold text-blue-800 mt-0.5">{lastSyncStats.updated}</div>
-                </div>
-
-                <div className="p-2.5 bg-white rounded-lg border border-emerald-200 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-zinc-500">Unchanged</div>
-                  <div className="text-base font-extrabold text-zinc-700 mt-0.5">{lastSyncStats.unchanged}</div>
-                </div>
-
-                <div className="p-2.5 bg-white rounded-lg border border-emerald-200 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-rose-600">Failed</div>
-                  <div className="text-base font-extrabold text-rose-700 mt-0.5">{lastSyncStats.failed}</div>
-                </div>
-
-                <div className="p-2.5 bg-white rounded-lg border border-emerald-200 shadow-sm">
-                  <div className="text-[10px] uppercase font-bold text-amber-700">
-                    {lastSyncStats.provider === "ownerrez" ? "Attributed" : "Unattributed"}
-                  </div>
-                  <div className="text-base font-extrabold text-amber-800 mt-0.5">
-                    {lastSyncStats.provider === "ownerrez" ? (lastSyncStats.attributed ?? 0) : lastSyncStats.unattributed}
-                  </div>
-                </div>
-              </div>
-
-              {lastSyncStats.provider === "ownerrez" && (
-                <div className="flex items-center justify-between text-[11px] font-mono bg-white p-2 rounded border border-emerald-200 text-zinc-700">
-                  <span>Blocks Filtered: <strong>{lastSyncStats.blocksFiltered ?? 0}</strong></span>
-                  <span>Review Required (0% score): <strong>{lastSyncStats.reviewRequired ?? 0}</strong></span>
-                  <span>Unattributed: <strong>{lastSyncStats.unattributed ?? 0}</strong></span>
-                  <span className="text-emerald-700 font-bold">Commissions & Payouts: Zero (Disabled)</span>
-                </div>
-              )}
-            </Card>
-          )}
-
-          {/* REAL PRODUCTION SYNC AUDIT CONSOLE */}
-          <Card className="bg-[#1e1721] border-transparent text-[#e3dae8] p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-[#d5c3db] font-mono flex items-center gap-2">
-                <Terminal size={14} />
-                Integration Audit & Sync Activity
-              </h4>
-              <span className="text-[10px] font-mono text-zinc-400">Zero Guest PII Exposed</span>
-            </div>
-
-            <div className="h-48 overflow-y-auto font-mono text-[11px] space-y-1.5 scrollbar-thin scrollbar-thumb-zinc-800 pr-1">
-              {logs.length === 0 ? (
-                <p className="text-zinc-500 italic">Ready. Click &quot;Sync All OwnerRez Stays (Primary)&quot; or &quot;Sync Hospitable Stays&quot; to execute real-time synchronization.</p>
-              ) : (
-                logs.map((log, index) => (
-                  <p key={index} className="leading-relaxed">{log}</p>
-                ))
-              )}
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      {/* DEVELOPER TOOLS (SIMULATION ONLY - COLLAPSIBLE & ISOLATED) */}
-      <div className="pt-6 border-t border-brand-blush/60">
-        <button
-          onClick={() => setShowDevTools(!showDevTools)}
-          className="flex items-center justify-between w-full p-4 bg-zinc-50 hover:bg-zinc-100 border border-zinc-200 rounded-xl transition-all"
-        >
-          <div className="flex items-center gap-2">
-            <Cpu size={16} className="text-zinc-500" />
-            <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">
-              Developer Tools & Payload Simulator (Isolated Sandbox)
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-zinc-500">
-            <span className="text-[11px] font-medium">{showDevTools ? "Hide Sandbox" : "Show Sandbox"}</span>
-            {showDevTools ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </div>
-        </button>
-
-        {showDevTools && (
-          <div className="mt-4 p-6 bg-white border border-zinc-200 rounded-xl space-y-6 shadow-sm">
-            <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-xs text-amber-800 flex items-center gap-2">
-              <AlertTriangle size={16} className="shrink-0 text-amber-600" />
-              <span>
-                <strong>Developer Notice:</strong> This sandbox is for payload inspection only. Simulated webhooks are evaluated in memory and never create fake production reservations.
+              <span className="text-[10px] font-semibold text-[var(--secondary)] bg-[var(--canvas)] px-2 py-0.5 rounded mt-1 inline-block">
+                SECONDARY / FALLBACK SYNC
               </span>
             </div>
-
-            <form onSubmit={handleSendWebhook} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Retreat Property</label>
-                <select
-                  value={selectedPropId}
-                  onChange={e => setSelectedPropId(e.target.value)}
-                  className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2 px-2.5 focus:outline-none"
-                >
-                  {properties.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Source Partner Site</label>
-                <select
-                  value={selectedSiteId}
-                  onChange={e => setSelectedSiteId(e.target.value)}
-                  className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2 px-2.5 focus:outline-none"
-                >
-                  {sites.map(s => (
-                    <option key={s.id} value={s.id}>{s.siteName} ({s.id})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Attribution Signal</label>
-                <select
-                  value={attributionMethod}
-                  onChange={e => setAttributionMethod(e.target.value as any)}
-                  className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2 px-2.5 focus:outline-none"
-                >
-                  <option value="WIDGET">Embed Widget ID (Highest Confidence)</option>
-                  <option value="REFERRER">Referrer Domain Match</option>
-                  <option value="UNATTRIBUTED">Simulate Unattributed Fallback</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Confirmation Code</label>
-                <input
-                  type="text"
-                  required
-                  value={confirmationCodeInput}
-                  onChange={e => setConfirmationCodeInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Booking Amount (USD)</label>
-                  <input
-                    type="number"
-                    required
-                    value={bookingAmountInput}
-                    onChange={e => setBookingAmountInput(e.target.value)}
-                    className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Nights</label>
-                  <input
-                    type="number"
-                    required
-                    value={guestNights}
-                    onChange={e => setGuestNights(e.target.value)}
-                    className="w-full px-3 py-2 bg-brand-bg border border-brand-blush rounded-lg text-xs focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Stay Status</label>
-                  <select
-                    value={reservationStatusInput}
-                    onChange={e => setReservationStatusInput(e.target.value as any)}
-                    className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2 px-2.5 focus:outline-none"
-                  >
-                    <option value="CHECKED_OUT">Checked Out (Completed)</option>
-                    <option value="CHECKED_IN">Checked In</option>
-                    <option value="CONFIRMED">Confirmed (Future Stay)</option>
-                    <option value="CANCELLED">Cancelled</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Payment Status</label>
-                  <select
-                    value={paymentStatusInput}
-                    onChange={e => setPaymentStatusInput(e.target.value as any)}
-                    className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2 px-2.5 focus:outline-none"
-                  >
-                    <option value="PAID">Paid</option>
-                    <option value="UNPAID">Unpaid</option>
-                    <option value="REFUNDED">Fully Refunded</option>
-                    <option value="DISPUTED">Disputed</option>
-                  </select>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full sm:col-span-2 bg-zinc-800 text-zinc-100 hover:bg-zinc-900 py-2.5 rounded-lg text-xs font-bold transition-all shadow-md active:scale-[0.98] mt-2 flex items-center justify-center space-x-2"
-              >
-                <Terminal size={14} />
-                <span>Evaluate Simulated Payload (Dry-Run)</span>
-              </button>
-            </form>
+            <StatusBadge variant="info">PARALLEL</StatusBadge>
           </div>
-        )}
+
+          <p className="text-xs text-[var(--secondary)]">
+            Secondary PMS connection. Runs in non-overwrite mode to safeguard primary OwnerRez attribution.
+          </p>
+
+          <div className="space-y-2 text-xs bg-[var(--canvas)] p-3 rounded-md font-mono">
+            <div className="flex justify-between">
+              <span className="text-[var(--secondary)]">API Status:</span>
+              <span className="font-bold text-[var(--primary)]">{hospitableStatus.apiStatus}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--secondary)]">Tracked Properties:</span>
+              <span className="font-bold text-[var(--primary)]">{hospitableStatus.hhhTrackedProperties} Properties</span>
+            </div>
+          </div>
+
+          <button
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="w-full py-2.5 rounded-md text-xs font-semibold border border-[var(--border)] hover:bg-[var(--canvas)] text-[var(--primary)] transition-colors"
+          >
+            {isSyncing ? "Syncing Hospitable..." : "Sync Hospitable (Fallback)"}
+          </button>
+        </div>
       </div>
     </div>
   );

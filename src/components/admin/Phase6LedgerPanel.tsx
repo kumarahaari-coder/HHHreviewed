@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   ShieldAlert,
   FileText,
@@ -13,40 +13,44 @@ import {
   RefreshCw,
   AlertCircle,
   Lock,
+  Calendar,
+  UserCheck,
+  TrendingDown,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import {
   CommissionLedgerEvent,
-  PartnerFinancialProjection,
   PayoutBatchRecord,
+  PartnerFinancialProjection,
   PayoutRail,
 } from "@/lib/commissions/types";
 
 export function Phase6LedgerPanel() {
-  const [partners, setPartners] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState<string>("");
-  const [projection, setProjection] = useState<PartnerFinancialProjection | null>(null);
+  const [partners, setPartners] = useState<{ id: string; name: string }[]>([]);
   const [ledgerEvents, setLedgerEvents] = useState<CommissionLedgerEvent[]>([]);
   const [batches, setBatches] = useState<PayoutBatchRecord[]>([]);
+  const [projection, setProjection] = useState<PartnerFinancialProjection | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
-  // Draft batch modal states
   const [selectedRail, setSelectedRail] = useState<PayoutRail>("MANUAL_ACH");
   const [isCreatingBatch, setIsCreatingBatch] = useState<boolean>(false);
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
 
-  // Load partners on mount
+  // Fetch partner list on mount
   useEffect(() => {
     async function loadPartners() {
       try {
         const res = await fetch("/api/admin/partners");
         const data = await res.json();
-        if (data.partners && data.partners.length > 0) {
-          const list = data.partners.map((p: any) => ({
-            id: p.id,
-            name: p.name || p.contactName || "Unnamed Partner",
-          }));
-          setPartners(list);
+        const list = (data.partners || []).map((p: any) => ({
+          id: p.id,
+          name: p.business_name || p.contact_name || p.id,
+        }));
+        setPartners(list);
+        if (list.length > 0) {
           setSelectedPartnerId(list[0].id);
         }
       } catch (err: any) {
@@ -57,14 +61,13 @@ export function Phase6LedgerPanel() {
   }, []);
 
   // Fetch partner projection, ledger, and batches
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!selectedPartnerId) return;
     setLoading(true);
     setError(null);
     setSuccessMessage(null);
 
     try {
-      // 1. Fetch ledger events & projection
       const ledgerRes = await fetch(`/api/admin/commissions/ledger?partnerId=${selectedPartnerId}`);
       const ledgerData = await ledgerRes.json();
       if (ledgerData.success) {
@@ -74,7 +77,6 @@ export function Phase6LedgerPanel() {
         setError(ledgerData.error || "Failed to load ledger data.");
       }
 
-      // 2. Fetch payout batches
       const batchRes = await fetch(`/api/admin/commissions/payout-batches?partnerId=${selectedPartnerId}`);
       const batchData = await batchRes.json();
       if (batchData.success) {
@@ -85,10 +87,40 @@ export function Phase6LedgerPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedPartnerId]);
 
   useEffect(() => {
-    fetchData();
+    let isMounted = true;
+    if (!selectedPartnerId) return;
+
+    fetch(`/api/admin/commissions/ledger?partnerId=${selectedPartnerId}`)
+      .then((res) => res.json())
+      .then((ledgerData) => {
+        if (!isMounted) return;
+        if (ledgerData.success) {
+          setLedgerEvents(ledgerData.events || []);
+          setProjection(ledgerData.projection || null);
+        } else {
+          setError(ledgerData.error || "Failed to load ledger data.");
+        }
+      })
+      .catch((err) => {
+        if (isMounted) setError(err.message || "Network error loading data.");
+      });
+
+    fetch(`/api/admin/commissions/payout-batches?partnerId=${selectedPartnerId}`)
+      .then((res) => res.json())
+      .then((batchData) => {
+        if (!isMounted) return;
+        if (batchData.success) {
+          setBatches(batchData.batches || []);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
   }, [selectedPartnerId]);
 
   // Create DRAFT batch
@@ -149,13 +181,13 @@ export function Phase6LedgerPanel() {
   return (
     <div className="space-y-6">
       {/* Partner Selector Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-brand-cream border border-brand-blush p-4 rounded-xl shadow-xs gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <Layers className="text-brand-plum" size={20} />
-            <h2 className="text-lg font-bold text-brand-plum">Phase 6 Commission Ledger & Batches</h2>
+            <Layers className="text-[var(--primary)]" size={20} />
+            <h2 className="text-base font-bold text-[var(--primary)]">Phase 6 Commission Ledger & Batches</h2>
           </div>
-          <p className="text-xs text-zinc-500 mt-0.5">
+          <p className="text-xs text-[var(--secondary)] mt-0.5">
             Append-only event ledger, FIFO negative carry-forward recovery, and maker-checker batching.
           </p>
         </div>
@@ -164,7 +196,7 @@ export function Phase6LedgerPanel() {
           <select
             value={selectedPartnerId}
             onChange={(e) => setSelectedPartnerId(e.target.value)}
-            className="bg-brand-bg border border-brand-blush text-brand-text text-xs rounded-lg px-3 py-2 font-medium focus:outline-hidden"
+            className="bg-[var(--canvas)] border border-[var(--border)] text-[var(--primary)] text-xs rounded-md px-3 py-2 font-medium focus:outline-none"
           >
             {partners.map((p) => (
               <option key={p.id} value={p.id}>
@@ -176,7 +208,7 @@ export function Phase6LedgerPanel() {
           <button
             onClick={fetchData}
             disabled={loading}
-            className="p-2 border border-brand-blush bg-brand-bg hover:bg-brand-blush/20 rounded-lg text-brand-plum disabled:opacity-50 transition-colors"
+            className="p-2 border border-[var(--border)] bg-[var(--canvas)] hover:bg-[var(--surface)] rounded-md text-[var(--primary)] disabled:opacity-50 transition-colors"
             title="Refresh Data"
           >
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
@@ -185,14 +217,14 @@ export function Phase6LedgerPanel() {
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-center space-x-2">
+        <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-800 text-xs flex items-center space-x-2">
           <AlertCircle size={16} className="shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {successMessage && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center space-x-2">
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-xs flex items-center space-x-2">
           <CheckCircle size={16} className="shrink-0" />
           <span>{successMessage}</span>
         </div>
@@ -200,51 +232,51 @@ export function Phase6LedgerPanel() {
 
       {/* Financial Metrics Cards */}
       {projection && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-brand-cream border border-brand-blush p-4 rounded-xl">
-            <div className="text-[11px] uppercase tracking-wider text-zinc-400 font-bold">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg">
+            <div className="text-[11px] uppercase tracking-wider text-[var(--secondary)] font-semibold">
               Accounting Liability
             </div>
-            <div className="text-2xl font-extrabold text-brand-plum mt-1">
+            <div className="text-xl font-bold tabular-nums font-mono text-[var(--primary)] mt-1">
               ${projection.partnerAccountingOutstanding.toFixed(2)}
             </div>
-            <div className="text-[10px] text-zinc-400 mt-1">
+            <div className="text-[10px] text-[var(--secondary)] mt-1">
               Total balance sheet payable (includes future stays)
             </div>
           </div>
 
-          <div className="bg-brand-cream border border-brand-blush p-4 rounded-xl">
-            <div className="text-[11px] uppercase tracking-wider text-emerald-600 font-bold">
+          <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg">
+            <div className="text-[11px] uppercase tracking-wider text-emerald-700 font-semibold">
               Completed Eligible
             </div>
-            <div className="text-2xl font-extrabold text-emerald-700 mt-1">
+            <div className="text-xl font-bold tabular-nums font-mono text-emerald-700 mt-1">
               ${projection.eligiblePositive.toFixed(2)}
             </div>
-            <div className="text-[10px] text-zinc-400 mt-1">
+            <div className="text-[10px] text-[var(--secondary)] mt-1">
               Passed departure + hold, zero open disputes
             </div>
           </div>
 
-          <div className="bg-brand-cream border border-brand-blush p-4 rounded-xl">
-            <div className="text-[11px] uppercase tracking-wider text-rose-600 font-bold">
+          <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg">
+            <div className="text-[11px] uppercase tracking-wider text-rose-700 font-semibold">
               Negative Carry-Forward
             </div>
-            <div className="text-2xl font-extrabold text-rose-700 mt-1">
+            <div className="text-xl font-bold tabular-nums font-mono text-rose-700 mt-1">
               -${projection.negativeCarryForward.toFixed(2)}
             </div>
-            <div className="text-[10px] text-zinc-400 mt-1">
+            <div className="text-[10px] text-[var(--secondary)] mt-1">
               Recoverable post-payout refund clawbacks
             </div>
           </div>
 
-          <div className="bg-brand-plum text-brand-cream border border-brand-plum p-4 rounded-xl shadow-xs">
-            <div className="text-[11px] uppercase tracking-wider text-brand-cream/70 font-bold">
+          <div className="bg-[var(--primary)] text-white border border-[var(--primary)] p-4 rounded-lg">
+            <div className="text-[11px] uppercase tracking-wider text-white/70 font-semibold">
               Payout Available
             </div>
-            <div className="text-2xl font-extrabold text-brand-cream mt-1">
+            <div className="text-xl font-bold tabular-nums font-mono text-white mt-1">
               ${projection.partnerPayoutAvailable.toFixed(2)}
             </div>
-            <div className="text-[10px] text-brand-cream/70 mt-1">
+            <div className="text-[10px] text-white/70 mt-1">
               Net available = Max(0, Eligible - Recoverable)
             </div>
           </div>
@@ -253,11 +285,11 @@ export function Phase6LedgerPanel() {
 
       {/* Batch Generator Control */}
       {projection && (
-        <div className="bg-brand-cream border border-brand-blush p-5 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="bg-[var(--surface)] border border-[var(--border)] p-4 rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h3 className="font-bold text-brand-plum text-sm">Generate Payout Batch</h3>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Drafts a new payout batch with deterministic FIFO netting deduction.
+            <h3 className="font-bold text-[var(--primary)] text-sm">Generate Payout Batch</h3>
+            <p className="text-xs text-[var(--secondary)] mt-0.5">
+              Snapshots and locks eligible liabilities into a new payout batch with deterministic FIFO netting deduction.
             </p>
           </div>
 
@@ -265,7 +297,7 @@ export function Phase6LedgerPanel() {
             <select
               value={selectedRail}
               onChange={(e) => setSelectedRail(e.target.value as PayoutRail)}
-              className="bg-brand-bg border border-brand-blush text-brand-text text-xs rounded-lg px-3 py-2 font-medium"
+              className="bg-[var(--canvas)] border border-[var(--border)] text-[var(--primary)] text-xs rounded-md px-3 py-2 font-medium"
             >
               <option value="MANUAL_ACH">Manual ACH</option>
               <option value="BANK_WIRE">Bank Wire</option>
@@ -276,7 +308,7 @@ export function Phase6LedgerPanel() {
             <button
               onClick={handleCreateDraftBatch}
               disabled={isCreatingBatch || !projection || projection.partnerPayoutAvailable <= 0}
-              className="bg-brand-plum text-brand-cream hover:bg-brand-wine disabled:opacity-40 px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5"
+              className="bg-[var(--primary)] text-white hover:bg-[#333336] disabled:opacity-40 px-4 py-2 rounded-md text-xs font-semibold transition-all flex items-center space-x-1.5"
             >
               <DollarSign size={14} />
               <span>Draft Batch (${projection.partnerPayoutAvailable.toFixed(2)})</span>
@@ -286,18 +318,18 @@ export function Phase6LedgerPanel() {
       )}
 
       {/* Batches Table */}
-      <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-        <div className="p-4 border-b border-brand-blush bg-brand-blush/20 flex justify-between items-center">
-          <h3 className="text-xs uppercase tracking-wider font-bold text-brand-plum">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
+        <div className="p-3 border-b border-[var(--border)] bg-[var(--canvas)] flex justify-between items-center">
+          <h3 className="text-xs uppercase tracking-wider font-bold text-[var(--primary)]">
             Payout Batches ({batches.length})
           </h3>
-          <span className="text-[11px] text-zinc-500">Maker-Checker Approval Required</span>
+          <span className="text-[11px] text-[var(--secondary)]">Maker-Checker Approval Required</span>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum font-bold">
+              <tr className="bg-[var(--canvas)] border-b border-[var(--border)] text-[var(--primary)] font-bold">
                 <th className="p-3">Batch Number</th>
                 <th className="p-3">Rail</th>
                 <th className="p-3">Gross</th>
@@ -307,25 +339,25 @@ export function Phase6LedgerPanel() {
                 <th className="p-3 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-brand-blush/60">
+            <tbody className="divide-y divide-[var(--border)]">
               {batches.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-zinc-400 italic">
+                  <td colSpan={7} className="p-6 text-center text-[var(--secondary)]">
                     No payout batches found for this partner.
                   </td>
                 </tr>
               ) : (
                 batches.map((b) => (
-                  <tr key={b.id} className="hover:bg-brand-blush/10 transition-colors">
-                    <td className="p-3 font-bold text-brand-plum">{b.batch_number}</td>
+                  <tr key={b.id} className="hover:bg-[var(--canvas)] transition-colors">
+                    <td className="p-3 font-bold font-mono text-[var(--primary)]">{b.batch_number}</td>
                     <td className="p-3 font-mono text-[11px]">{b.payout_rail}</td>
-                    <td className="p-3">${Number(b.total_gross_amount).toFixed(2)}</td>
-                    <td className="p-3 text-rose-600 font-medium">
+                    <td className="p-3 tabular-nums font-mono">${Number(b.total_gross_amount).toFixed(2)}</td>
+                    <td className="p-3 text-rose-700 font-medium tabular-nums font-mono">
                       {Number(b.total_netting_deduction) > 0
                         ? `-$${Number(b.total_netting_deduction).toFixed(2)}`
                         : "—"}
                     </td>
-                    <td className="p-3 font-extrabold text-brand-plum">
+                    <td className="p-3 font-bold tabular-nums font-mono text-[var(--primary)]">
                       ${Number(b.total_amount).toFixed(2)}
                     </td>
                     <td className="p-3">
@@ -396,7 +428,7 @@ export function Phase6LedgerPanel() {
                       )}
 
                       {b.status === "SETTLED" && (
-                        <span className="text-[10px] text-zinc-400 font-serif italic">Settled & Locked</span>
+                        <span className="text-[10px] text-[var(--secondary)] font-mono">Settled & Locked</span>
                       )}
                     </td>
                   </tr>
@@ -408,21 +440,21 @@ export function Phase6LedgerPanel() {
       </div>
 
       {/* Append-Only Event Ledger Table */}
-      <div className="bg-brand-cream border border-brand-blush rounded-xl overflow-hidden shadow-xs">
-        <div className="p-4 border-b border-brand-blush bg-brand-blush/20 flex justify-between items-center">
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
+        <div className="p-3 border-b border-[var(--border)] bg-[var(--canvas)] flex justify-between items-center">
           <div className="flex items-center space-x-2">
-            <FileText size={16} className="text-brand-plum" />
-            <h3 className="text-xs uppercase tracking-wider font-bold text-brand-plum">
+            <FileText size={16} className="text-[var(--primary)]" />
+            <h3 className="text-xs uppercase tracking-wider font-bold text-[var(--primary)]">
               Append-Only Commission Ledger ({ledgerEvents.length} Events)
             </h3>
           </div>
-          <span className="text-[10px] text-zinc-400 font-mono">public.commission_ledger_events</span>
+          <span className="text-[10px] text-[var(--secondary)] font-mono">public.commission_ledger_events</span>
         </div>
 
         <div className="overflow-x-auto max-h-96">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="bg-brand-blush/25 border-b border-brand-blush text-brand-plum font-bold sticky top-0 bg-brand-cream">
+              <tr className="bg-[var(--canvas)] border-b border-[var(--border)] text-[var(--primary)] font-bold sticky top-0 bg-[var(--surface)]">
                 <th className="p-3">Event Type</th>
                 <th className="p-3">Reservation / Booking</th>
                 <th className="p-3">Provider / Channel</th>
@@ -431,16 +463,16 @@ export function Phase6LedgerPanel() {
                 <th className="p-3">Created At</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-brand-blush/60">
+            <tbody className="divide-y divide-[var(--border)]">
               {ledgerEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-zinc-400 italic">
+                  <td colSpan={6} className="p-6 text-center text-[var(--secondary)]">
                     Zero ledger events posted for this partner.
                   </td>
                 </tr>
               ) : (
                 ledgerEvents.map((ev) => (
-                  <tr key={ev.id} className="hover:bg-brand-blush/10 transition-colors">
+                  <tr key={ev.id} className="hover:bg-[var(--canvas)] transition-colors">
                     <td className="p-3">
                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
                         ev.event_type === "INITIAL_ACCRUAL"
@@ -460,20 +492,20 @@ export function Phase6LedgerPanel() {
                     <td className="p-3">
                       <span className="font-semibold">{ev.source_provider}</span> / {ev.booking_channel}
                     </td>
-                    <td className={`p-3 font-extrabold ${
+                    <td className={`p-3 font-bold tabular-nums font-mono ${
                       Number(ev.delta_amount) > 0
                         ? "text-emerald-700"
                         : Number(ev.delta_amount) < 0
                         ? "text-rose-700"
-                        : "text-zinc-500"
+                        : "text-[var(--secondary)]"
                     }`}>
                       {Number(ev.delta_amount) > 0 ? "+" : ""}
                       ${Number(ev.delta_amount).toFixed(2)}
                     </td>
-                    <td className="p-3 font-mono text-[10px] text-zinc-400 truncate max-w-xs" title={ev.idempotency_key}>
+                    <td className="p-3 font-mono text-[10px] text-[var(--secondary)] truncate max-w-xs" title={ev.idempotency_key}>
                       {ev.idempotency_key}
                     </td>
-                    <td className="p-3 text-[10px] text-zinc-400 whitespace-nowrap">
+                    <td className="p-3 text-[10px] text-[var(--secondary)] whitespace-nowrap">
                       {new Date(ev.created_at).toLocaleString()}
                     </td>
                   </tr>

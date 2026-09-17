@@ -3,70 +3,101 @@
 import React, { useEffect, useState } from "react";
 import { db } from "@/lib/db/mockDb";
 import { Property } from "@/lib/db/schema";
-import { Card, Badge } from "@/components/ui/custom";
-import { Home, MapPin, Clock, ArrowRight, CheckCircle2 } from "lucide-react";
+import {
+  Card,
+  StatusBadge,
+  PageHeader,
+  LoadingState,
+  EmptyState,
+  ErrorBanner
+} from "@/components/ui";
+import { MapPin, Clock, Building2, CheckCircle2, CalendarDays } from "lucide-react";
+import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 
 export default function PropertiesListing() {
   const [properties, setProperties] = useState<Property[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    setProperties(db.properties);
+    setProperties(db.properties || []);
   }, []);
 
+  if (loading) {
+    return <LoadingState message="Loading HHH Property registry..." />;
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">HHH Properties</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Retreat property registry retrieved from Hospitable API integrations.
-        </p>
-      </div>
+    <div className="space-y-6 font-sans pb-8">
+      {/* 1. Page Header */}
+      <PageHeader
+        title="Properties"
+        description="Canonical HHH retreat properties and provider ingestion mappings."
+      />
 
+      {/* 2. Operational Property Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {properties.map(prop => (
-          <Card key={prop.id} className="flex flex-col sm:flex-row gap-6 p-4 items-stretch">
-            {/* Image section */}
-            <div className="w-full sm:w-48 h-36 bg-zinc-200 rounded-lg overflow-hidden relative shrink-0 shadow-xs border border-brand-blush/60">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={prop.imageUrl}
-                alt={prop.name}
-                className="object-cover w-full h-full hover:scale-105 transition-transform duration-300"
-              />
-            </div>
-
-            {/* Info details */}
-            <div className="flex-1 flex flex-col justify-between py-1">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-mono text-zinc-400 font-bold uppercase tracking-widest">{prop.hospitablePropertyId}</span>
-                  <Badge type="success">Active</Badge>
-                </div>
-                <h3 className="text-xl font-bold text-brand-plum">{prop.name}</h3>
-                
-                <div className="space-y-1 text-xs text-zinc-500">
-                  <p className="flex items-center gap-1.5">
-                    <MapPin size={12} className="text-zinc-400" />
-                    <span>{prop.location}</span>
-                  </p>
-                  <p className="flex items-center gap-1.5">
-                    <Clock size={12} className="text-zinc-400" />
-                    <span>Timezone: {prop.timezone}</span>
-                  </p>
-                </div>
+        {properties.length === 0 ? (
+          <div className="col-span-2">
+            <EmptyState
+              title="No properties registered"
+              description="No retreat properties currently match the operational registry."
+            />
+          </div>
+        ) : (
+          properties.map(prop => (
+            <Card key={prop.id} variant="default" className="p-4 sm:p-5 flex flex-col sm:flex-row gap-5">
+              {/* Property Image Container */}
+              <div className="w-full sm:w-48 h-36 bg-surface-muted rounded-lg overflow-hidden relative shrink-0 border border-divider-soft">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={prop.imageUrl}
+                  alt={prop.name}
+                  className="object-cover w-full h-full hover:scale-105 transition-transform duration-300"
+                />
               </div>
 
-              {/* API Integration details */}
-              <div className="mt-4 pt-3 border-t border-brand-blush/60 flex items-center justify-between text-[11px] text-brand-wine font-medium">
-                <span className="flex items-center gap-1">
-                  <CheckCircle2 size={12} className="text-brand-sage" />
-                  Synced with Hospitable
-                </span>
-                <span className="font-mono text-zinc-400">ID: {prop.id}</span>
+              {/* Property Operational Details */}
+              <div className="flex-1 flex flex-col justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <StatusBadge variant="success">
+                      Active
+                    </StatusBadge>
+                    <span className="text-[10px] text-tertiary font-mono">
+                      Ref: {prop.hospitablePropertyId}
+                    </span>
+                  </div>
+
+                  <h3 className="text-lg font-bold text-primary tracking-tight">
+                    {prop.name}
+                  </h3>
+
+                  <div className="space-y-1 text-xs text-secondary">
+                    <p className="flex items-center gap-1.5">
+                      <MapPin size={14} className="text-tertiary shrink-0" />
+                      <span>{prop.location}</span>
+                    </p>
+                    <p className="flex items-center gap-1.5">
+                      <Clock size={14} className="text-tertiary shrink-0" />
+                      <span>Timezone: {prop.timezone}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Integration Health Footer */}
+                <div className="mt-4 pt-3 border-t border-divider-soft flex items-center justify-between text-xs text-secondary font-medium">
+                  <span className="flex items-center gap-1.5 text-success">
+                    <CheckCircle2 size={14} />
+                    <span>Provider Synced</span>
+                  </span>
+                  <span className="text-[10px] text-tertiary font-mono">
+                    ID: {prop.id.slice(0, 8)}...
+                  </span>
+                </div>
               </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          ))
+        )}
       </div>
     </div>
   );

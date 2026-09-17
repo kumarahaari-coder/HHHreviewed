@@ -191,7 +191,7 @@ export function MobileNavigation({
                 onClose();
                 if (onReturnFromPreview) onReturnFromPreview();
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-3 rounded-lg text-xs font-medium text-accent bg-accent-subtle/40 border border-accent/20 min-h-[44px]"
+              className="w-full flex items-center gap-2.5 px-3 py-3 rounded-lg text-xs font-medium text-accent-hover bg-accent-subtle/40 border border-accent/20 min-h-[44px]"
             >
               <ShieldAlert size={18} />
               <span>Return from {previewPartnerName} Preview</span>

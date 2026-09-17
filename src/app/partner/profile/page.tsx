@@ -3,7 +3,9 @@
 import React, { useEffect, useState } from "react";
 import { db } from "@/lib/db/mockDb";
 import { Partner, User as UserType, TaxDocumentStatus, TaxDocumentType, W8Subtype } from "@/lib/db/schema";
-import { Card, Badge } from "@/components/ui/custom";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Building,
   CreditCard,
@@ -146,75 +148,74 @@ export default function PartnerProfile() {
     }
   };
 
-  const getStatusBadge = (status: TaxDocumentStatus) => {
+  const getStatusVariant = (status: TaxDocumentStatus) => {
     switch (status) {
       case "APPROVED":
-        return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300"><CheckCircle size={14} /> Approved</span>;
+        return "success";
       case "SUBMITTED":
       case "UNDER_REVIEW":
-        return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-300"><Clock size={14} /> Under Review</span>;
+        return "info";
       case "REJECTED":
-        return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300"><AlertTriangle size={14} /> Rejected</span>;
+        return "danger";
       case "REPLACEMENT_REQUIRED":
-        return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300"><RefreshCw size={14} /> Replacement Required</span>;
+        return "warning";
       default:
-        return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-zinc-100 text-zinc-600 border border-zinc-300"><Info size={14} /> Not Submitted</span>;
+        return "neutral";
     }
   };
 
   if (!partner) return null;
 
   return (
-    <div className="space-y-8 font-sans max-w-3xl">
-      <div>
-        <h1 className="text-3xl font-extrabold text-brand-plum tracking-tight">Creator Settings</h1>
-        <p className="text-zinc-500 font-serif italic text-sm mt-1">
-          Manage your partner profile, US tax documentation, and payout connection status.
-        </p>
-      </div>
+    <div className="space-y-8 max-w-3xl">
+      <PageHeader
+        title="Account & Tax Profile"
+        description="Manage your partner details, US tax documentation, and payout preferences."
+      />
+
 
       {/* PARTNER PROFILE CARD */}
-      <Card className="space-y-6">
-        <div className="flex items-center space-x-4 border-b border-brand-blush/60 pb-4">
-          <div className="w-12 h-12 rounded-full bg-brand-blush flex items-center justify-center text-brand-wine text-xl font-bold border border-brand-blush">
+      <Card className="space-y-6 p-6">
+        <div className="flex items-center space-x-4 border-b border-[#E8E8ED] pb-4">
+          <div className="w-12 h-12 rounded-full bg-[#F5F5F7] flex items-center justify-center text-[#1D1D1F] text-xl font-bold border border-[#D2D2D7]">
             {partner.contactName[0]}
           </div>
           <div>
-            <h3 className="font-extrabold text-brand-plum text-lg">{partner.contactName}</h3>
-            <span className="text-xs text-zinc-400 font-bold uppercase tracking-wider">{partner.id}</span>
+            <h3 className="font-bold text-[#1D1D1F] text-lg">{partner.contactName}</h3>
+            <span className="text-xs text-[#6E6E73] font-medium">{partner.businessName}</span>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm text-zinc-700">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm text-[#1D1D1F]">
           <div className="flex items-center space-x-3">
-            <Building size={16} className="text-zinc-400 shrink-0" />
+            <Building size={16} className="text-[#6E6E73] shrink-0" />
             <div>
-              <span className="text-[10px] text-zinc-400 block font-bold uppercase tracking-wider">Business Entity</span>
-              <span className="font-semibold text-brand-plum">{partner.businessName}</span>
+              <span className="text-[10px] text-[#6E6E73] block font-semibold uppercase tracking-wider">Business Entity</span>
+              <span className="font-medium text-[#1D1D1F]">{partner.businessName}</span>
             </div>
           </div>
 
           <div className="flex items-center space-x-3">
-            <Mail size={16} className="text-zinc-400 shrink-0" />
+            <Mail size={16} className="text-[#6E6E73] shrink-0" />
             <div>
-              <span className="text-[10px] text-zinc-400 block font-bold uppercase tracking-wider">Email Address</span>
-              <span className="font-semibold text-brand-plum">{partner.email}</span>
+              <span className="text-[10px] text-[#6E6E73] block font-semibold uppercase tracking-wider">Email Address</span>
+              <span className="font-medium text-[#1D1D1F]">{partner.email}</span>
             </div>
           </div>
 
           <div className="flex items-center space-x-3">
-            <Phone size={16} className="text-zinc-400 shrink-0" />
+            <Phone size={16} className="text-[#6E6E73] shrink-0" />
             <div>
-              <span className="text-[10px] text-zinc-400 block font-bold uppercase tracking-wider">Contact Phone</span>
-              <span className="font-semibold text-brand-plum">{partner.phone}</span>
+              <span className="text-[10px] text-[#6E6E73] block font-semibold uppercase tracking-wider">Contact Phone</span>
+              <span className="font-medium text-[#1D1D1F]">{partner.phone || "—"}</span>
             </div>
           </div>
 
           <div className="flex items-center space-x-3">
-            <CreditCard size={16} className="text-zinc-400 shrink-0" />
+            <CreditCard size={16} className="text-[#6E6E73] shrink-0" />
             <div>
-              <span className="text-[10px] text-zinc-400 block font-bold uppercase tracking-wider">Transfer Payout Frequency</span>
-              <span className="font-semibold text-brand-plum uppercase">
+              <span className="text-[10px] text-[#6E6E73] block font-semibold uppercase tracking-wider">Payout Frequency</span>
+              <span className="font-medium text-[#1D1D1F] uppercase">
                 {(partner.paymentMethod || "BANK_TRANSFER").replace(/_/g, " ")} ({partner.payoutFrequency || "MONTHLY"})
               </span>
             </div>
@@ -222,65 +223,56 @@ export default function PartnerProfile() {
         </div>
       </Card>
 
-      {/* STRIPE CONNECT PAYOUT STATUS CARD */}
-      <Card className="space-y-4">
-        <div className="flex justify-between items-center border-b border-brand-blush/60 pb-3">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-brand-wine flex items-center gap-2">
+      {/* PAYOUT CONNECTION STATUS */}
+      <Card className="space-y-4 p-6">
+        <div className="flex justify-between items-center border-b border-[#E8E8ED] pb-3">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6E6E73] flex items-center gap-2">
             <CreditCard size={16} />
-            Stripe Creator Payout Account
+            Payout Account Status
           </h3>
-          <Badge type="plum">Stripe Connect Express</Badge>
+          <StatusBadge variant="success">ACTIVE</StatusBadge>
         </div>
-        <div className="flex justify-between items-center bg-brand-bg/50 p-4 rounded-xl border border-brand-blush/60">
+        <div className="flex justify-between items-center bg-[#F5F5F7] p-4 rounded-xl border border-[#E8E8ED]">
           <div>
-            <p className="text-xs font-bold text-brand-plum">Direct Commission Payouts</p>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              {partner.stripeConnectAccountId
-                ? `Connected Account: ${partner.stripeConnectAccountId}`
-                : "Connect your bank account or debit card for direct commission payout transfers."}
+            <p className="text-xs font-semibold text-[#1D1D1F]">Direct Commission Transfer</p>
+            <p className="text-[11px] text-[#6E6E73] mt-0.5">
+              Account configured for direct ACH/bank commission payouts.
             </p>
           </div>
-          <button
-            onClick={() => alert("Redirecting to Stripe Connect Express onboarding portal...")}
-            className="bg-brand-plum text-brand-cream hover:bg-brand-wine px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 shrink-0"
-          >
-            <span>{partner.stripeConnectAccountId ? "Manage Account" : "Setup Payouts"}</span>
-            <ExternalLink size={14} />
-          </button>
         </div>
       </Card>
 
       {/* TAX INFORMATION SECTION */}
-      <Card className="space-y-6">
-        <div className="flex justify-between items-center border-b border-brand-blush/60 pb-3">
+      <Card className="space-y-6 p-6">
+        <div className="flex justify-between items-center border-b border-[#E8E8ED] pb-3">
           <div className="flex items-center space-x-2">
-            <FileText size={18} className="text-brand-plum" />
-            <h3 className="text-sm font-bold uppercase tracking-widest text-brand-wine">Tax Information</h3>
+            <FileText size={18} className="text-[#1D1D1F]" />
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6E6E73]">Tax Information</h3>
           </div>
-          {getStatusBadge(taxDocStatus)}
+          <StatusBadge variant={getStatusVariant(taxDocStatus)}>{taxDocStatus}</StatusBadge>
         </div>
 
-        {/* Status Callout & Admin Review Notes */}
+        {/* Status Callout */}
         {taxDetails && taxDetails.currentVersion && (
-          <div className="bg-brand-bg p-4 rounded-xl border border-brand-blush space-y-2">
+          <div className="bg-[#F5F5F7] p-4 rounded-xl border border-[#E8E8ED] space-y-2">
             <div className="flex justify-between items-center text-xs">
-              <span className="text-zinc-500 font-bold uppercase">Current Submitted Document:</span>
-              <span className="font-mono font-semibold text-brand-plum">{taxDetails.currentVersion.originalFilename}</span>
+              <span className="text-[#6E6E73] font-semibold uppercase">Submitted Document:</span>
+              <span className="font-mono font-medium text-[#1D1D1F]">{taxDetails.currentVersion.originalFilename}</span>
             </div>
             <div className="flex justify-between items-center text-xs">
-              <span className="text-zinc-500 font-bold uppercase">Form Type / Subtype:</span>
-              <span className="font-semibold text-brand-wine">
-                {taxDetails.currentVersion.documentType} {taxDetails.currentVersion.w8Subtype ? `(${taxDetails.currentVersion.w8Subtype})` : ""} (v{taxDetails.currentVersion.versionNumber})
+              <span className="text-[#6E6E73] font-semibold uppercase">Form Type:</span>
+              <span className="font-medium text-[#1D1D1F]">
+                {taxDetails.currentVersion.documentType} {taxDetails.currentVersion.w8Subtype ? `(${taxDetails.currentVersion.w8Subtype})` : ""}
               </span>
             </div>
             <div className="flex justify-between items-center text-xs">
-              <span className="text-zinc-500 font-bold uppercase">Submission Date:</span>
-              <span className="text-zinc-600">{new Date(taxDetails.currentVersion.submissionDate).toLocaleString()}</span>
+              <span className="text-[#6E6E73] font-semibold uppercase">Submission Date:</span>
+              <span className="text-[#6E6E73]">{new Date(taxDetails.currentVersion.submissionDate).toLocaleString()}</span>
             </div>
 
             {taxDetails.adminNote && (
-              <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
-                <span className="font-bold block mb-1">Admin Review Note:</span>
+              <div className="mt-3 p-3 bg-[#F5F5F7] border border-[#D2D2D7] rounded-lg text-xs text-[#1D1D1F]">
+                <span className="font-semibold block mb-1">Admin Review Note:</span>
                 {taxDetails.adminNote}
               </div>
             )}
@@ -288,36 +280,36 @@ export default function PartnerProfile() {
         )}
 
         {/* PRIVACY NOTICE */}
-        <div className="bg-sky-50 border border-sky-200 text-sky-900 text-xs p-4 rounded-xl flex gap-3 items-start">
-          <ShieldCheck size={20} className="text-sky-600 shrink-0 mt-0.5" />
+        <div className="bg-[#F5F5F7] border border-[#D2D2D7] text-[#1D1D1F] text-xs p-4 rounded-xl flex gap-3 items-start">
+          <ShieldCheck size={20} className="text-[#1D1D1F] shrink-0 mt-0.5" />
           <div className="space-y-1">
-            <p className="font-bold">Tax Compliance Privacy Safeguards</p>
-            <p className="text-[11px] text-sky-800 leading-relaxed">
-              Your tax form contains confidential information. Uploaded documents are encrypted and stored in private object storage. Access is restricted strictly to authorized finance administrators using short-lived authorization links. Hidden Honey Homes does not provide tax advice; please consult a qualified tax professional to choose between Form W-9 and Form W-8.
+            <p className="font-semibold">Tax Compliance & Privacy Protection</p>
+            <p className="text-[11px] text-[#6E6E73] leading-relaxed">
+              Your tax documents are encrypted and stored in private secure object storage. Access is restricted strictly to authorized finance administrators. Tax ID numbers and sensitive credentials are never displayed in ordinary user interfaces.
             </p>
           </div>
         </div>
 
         {/* FEEDBACK MESSAGES */}
         {message && (
-          <div className={`p-3 rounded-lg text-xs font-semibold ${message.type === "success" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200"}`}>
+          <div className={`p-3 rounded-lg text-xs font-medium ${message.type === "success" ? "bg-[#F5F5F7] text-[#1D1D1F] border border-[#D2D2D7]" : "bg-[#F5F5F7] text-rose-800 border border-rose-300"}`}>
             {message.text}
           </div>
         )}
 
         {/* UPLOAD FORM */}
-        <form onSubmit={handleTaxSubmit} className="space-y-5 border-t border-brand-blush/60 pt-5">
-          <h4 className="text-xs font-extrabold text-brand-plum uppercase tracking-wider">
+        <form onSubmit={handleTaxSubmit} className="space-y-5 border-t border-[#E8E8ED] pt-5">
+          <h4 className="text-xs font-semibold text-[#1D1D1F] uppercase tracking-wider">
             {taxDocStatus === "NOT_SUBMITTED" ? "Upload Completed US Tax Form" : "Replace Tax Document"}
           </h4>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Tax Document Category</label>
+              <label className="block text-[10px] font-semibold text-[#6E6E73] uppercase mb-1">Tax Document Category</label>
               <select
                 value={docType}
                 onChange={e => setDocType(e.target.value as TaxDocumentType)}
-                className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2.5 px-3 focus:outline-none focus:border-brand-plum"
+                className="w-full bg-[#FFFFFF] border border-[#D2D2D7] rounded-lg text-xs py-2.5 px-3 focus:outline-none focus:border-[#1D1D1F]"
               >
                 <option value="W_9">W-9 (US Persons / Entities)</option>
                 <option value="W_8">W-8 (Foreign Persons / Entities)</option>
@@ -326,11 +318,11 @@ export default function PartnerProfile() {
 
             {docType === "W_8" && (
               <div>
-                <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">W-8 Subtype</label>
+                <label className="block text-[10px] font-semibold text-[#6E6E73] uppercase mb-1">W-8 Subtype</label>
                 <select
                   value={w8Subtype}
                   onChange={e => setW8Subtype(e.target.value as W8Subtype)}
-                  className="w-full bg-brand-bg border border-brand-blush rounded-lg text-xs py-2.5 px-3 focus:outline-none focus:border-brand-plum"
+                  className="w-full bg-[#FFFFFF] border border-[#D2D2D7] rounded-lg text-xs py-2.5 px-3 focus:outline-none focus:border-[#1D1D1F]"
                 >
                   <option value="W_8BEN">W-8BEN (Foreign Individuals)</option>
                   <option value="W_8BEN_E">W-8BEN-E (Foreign Entities)</option>
@@ -341,21 +333,21 @@ export default function PartnerProfile() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-brand-wine uppercase mb-1">Signed PDF Document</label>
-            <div className="border-2 border-dashed border-brand-blush hover:border-brand-plum rounded-xl p-6 text-center bg-brand-bg/40 transition-colors cursor-pointer relative">
+            <label className="block text-[10px] font-semibold text-[#6E6E73] uppercase mb-1">Signed PDF Document</label>
+            <div className="border-2 border-dashed border-[#D2D2D7] hover:border-[#1D1D1F] rounded-xl p-6 text-center bg-[#F5F5F7]/40 transition-colors cursor-pointer relative">
               <input
                 type="file"
                 accept=".pdf,application/pdf"
                 onChange={handleFileChange}
                 className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
               />
-              <UploadCloud size={28} className="mx-auto text-brand-wine mb-2" />
+              <UploadCloud size={28} className="mx-auto text-[#6E6E73] mb-2" />
               {selectedFile ? (
-                <p className="text-xs font-bold text-brand-plum">{selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                <p className="text-xs font-semibold text-[#1D1D1F]">{selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)</p>
               ) : (
                 <>
-                  <p className="text-xs font-bold text-brand-plum">Click or drag PDF tax document here to upload</p>
-                  <p className="text-[10px] text-zinc-400 mt-1">Only PDF format supported (Max 10 MB). Executables and archives are rejected.</p>
+                  <p className="text-xs font-semibold text-[#1D1D1F]">Click or drag PDF tax document here to upload</p>
+                  <p className="text-[10px] text-[#6E6E73] mt-1">Only PDF format supported (Max 10 MB).</p>
                 </>
               )}
             </div>
@@ -367,9 +359,9 @@ export default function PartnerProfile() {
               id="declaration"
               checked={confirmationChecked}
               onChange={e => setConfirmationChecked(e.target.checked)}
-              className="mt-1 rounded border-brand-blush text-brand-plum focus:ring-brand-plum"
+              className="mt-1 rounded border-[#D2D2D7] text-[#1D1D1F] focus:ring-[#1D1D1F]"
             />
-            <label htmlFor="declaration" className="text-xs text-zinc-600 leading-snug cursor-pointer">
+            <label htmlFor="declaration" className="text-xs text-[#6E6E73] leading-snug cursor-pointer">
               I confirm that the uploaded tax form is fully completed, signed by an authorized signatory, and contains accurate personal or business tax information.
             </label>
           </div>
@@ -377,12 +369,12 @@ export default function PartnerProfile() {
           <button
             type="submit"
             disabled={uploading || !selectedFile || !confirmationChecked}
-            className="w-full bg-brand-plum hover:bg-brand-wine disabled:opacity-50 text-brand-cream py-3 rounded-lg text-xs font-bold transition-all shadow-md flex items-center justify-center space-x-2"
+            className="w-full bg-[#1D1D1F] hover:bg-[#6E6E73] disabled:opacity-50 text-[#FFFFFF] py-3 rounded-lg text-xs font-medium transition-all shadow-2xs flex items-center justify-center space-x-2"
           >
             {uploading ? (
               <>
                 <RefreshCw size={14} className="animate-spin" />
-                <span>Running PDF Security Checks & Uploading...</span>
+                <span>Submitting Tax Document...</span>
               </>
             ) : (
               <>
@@ -396,3 +388,4 @@ export default function PartnerProfile() {
     </div>
   );
 }
+
