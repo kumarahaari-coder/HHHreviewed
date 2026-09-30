@@ -40,7 +40,7 @@ export interface CommissionLedgerEvent {
   commission_rule_id?: string | null;
   payout_batch_id?: string | null;
   payout_item_id?: string | null;
-  source_provider: "ownerrez" | "hospitable";
+  source_provider: "ownerrez" | "hospitable" | "hostaway";
   booking_channel: string;
   provider_booking_id: string;
   ownerrez_booking_id?: number | null;

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { checkR2Connectivity } from "@/lib/storage/r2";
 import { checkOwnerRezHealth } from "@/lib/ownerrez/client";
+import { checkHostawayHealth } from "@/lib/hostaway/client";
+import { getPmsSystemStatus } from "@/lib/config/pms-mode";
 import { appConfig } from "@/lib/config";
 import { isSupabaseEnabled } from "@/lib/supabase/data-store";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -14,6 +16,7 @@ export async function GET(req: NextRequest) {
     }
 
     const now = new Date().toISOString();
+    const pmsStatus = getPmsSystemStatus();
 
     // 1. Perform Real Runtime Connectivity Check for Cloudflare R2
     const r2Health = await checkR2Connectivity();
@@ -22,7 +25,7 @@ export async function GET(req: NextRequest) {
     let databaseHealth = {
       status: "NOT_CONFIGURED",
       migrationVersion: "N/A",
-      errorDetails: null as string | null
+      errorDetails: null as string | null,
     };
 
     if (isSupabaseEnabled()) {
@@ -31,7 +34,8 @@ export async function GET(req: NextRequest) {
         const { data, error } = await supabase
           .from("schema_migrations")
           .select("version, applied_at")
-          .eq("version", "20260731_hhh_final_production_migration")
+          .order("applied_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         if (error) {
@@ -46,7 +50,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. OwnerRez Health Check
+    // 3. Hostaway Health Check
+    let hostawayHealth = { status: "unconfigured" as string, error: undefined as string | undefined };
+    try {
+      const hst = await checkHostawayHealth();
+      hostawayHealth = { status: hst.status, error: hst.error };
+    } catch (err: any) {
+      hostawayHealth = { status: "error", error: err?.message };
+    }
+
+    // 4. OwnerRez Health Check
     let ownerrezHealth = { status: "unconfigured" as string, error: undefined as string | undefined };
     try {
       const orz = await checkOwnerRezHealth();
@@ -55,19 +68,46 @@ export async function GET(req: NextRequest) {
       ownerrezHealth = { status: "error", error: err?.message };
     }
 
-    // 4. Assemble Full Integration Health Matrix
+    // 5. Assemble Full Integration Health Matrix
     const integrations = [
       {
+        name: "Hostaway API v1",
+        category: pmsStatus.hostaway.label,
+        status: hostawayHealth.status === "healthy" ? "CONNECTED" : hostawayHealth.status === "unconfigured" ? "NOT_CONFIGURED" : "ERROR",
+        environment: appConfig.env,
+        lastSuccess: hostawayHealth.status === "healthy" ? now : "—",
+        lastFailure: hostawayHealth.error || "None",
+        lastWebhook: "Unified Webhooks Active",
+        lastValidated: now,
+        nonSecretId: "OAuth 2.0 Bearer Token (Auto-Renewed)",
+        errorDetails: hostawayHealth.error || null,
+        isPrimary: pmsStatus.hostaway.isPrimary,
+      },
+      {
         name: "OwnerRez Direct API v2",
-        category: "Primary PMS & Direct Sync",
+        category: pmsStatus.ownerrez.label,
         status: ownerrezHealth.status === "healthy" ? "CONNECTED" : ownerrezHealth.status === "unconfigured" ? "NOT_CONFIGURED" : "ERROR",
         environment: appConfig.env,
         lastSuccess: ownerrezHealth.status === "healthy" ? now : "—",
         lastFailure: ownerrezHealth.error || "None",
-        lastWebhook: "Polling / REST Sync",
+        lastWebhook: pmsStatus.ownerrez.isReadOnly ? "Read-Only (Diagnostic Ingestion)" : "Polling / REST Sync",
         lastValidated: now,
-        nonSecretId: "OwnerRez OAuth / User Token",
-        errorDetails: ownerrezHealth.error || null
+        nonSecretId: "Server PAT Secured (Basic Auth)",
+        errorDetails: ownerrezHealth.error || null,
+        isPrimary: pmsStatus.ownerrez.isPrimary,
+      },
+      {
+        name: "Hospitable Fallback API v2",
+        category: "Legacy / Fallback",
+        status: appConfig.hospitable.isConfigured ? "CONNECTED" : "NOT_CONFIGURED",
+        environment: appConfig.env,
+        lastSuccess: appConfig.hospitable.isConfigured ? now : "—",
+        lastFailure: "None",
+        lastWebhook: "N/A (Cron Sync)",
+        lastValidated: now,
+        nonSecretId: "Personal Access Token Secured",
+        errorDetails: null,
+        isPrimary: false,
       },
       {
         name: "Supabase PostgreSQL Database",
@@ -79,7 +119,8 @@ export async function GET(req: NextRequest) {
         lastWebhook: "N/A (Database Engine)",
         lastValidated: now,
         nonSecretId: `Migration: ${databaseHealth.migrationVersion}`,
-        errorDetails: databaseHealth.errorDetails
+        errorDetails: databaseHealth.errorDetails,
+        isPrimary: false,
       },
       {
         name: "Cloudflare R2 Storage",
@@ -91,7 +132,8 @@ export async function GET(req: NextRequest) {
         lastWebhook: "N/A (R2 Presigned API)",
         lastValidated: r2Health.lastValidated,
         nonSecretId: r2Health.bucket,
-        errorDetails: r2Health.errorDetails
+        errorDetails: r2Health.errorDetails,
+        isPrimary: false,
       },
       {
         name: "Clerk Authentication",
@@ -102,18 +144,19 @@ export async function GET(req: NextRequest) {
         lastFailure: "None",
         lastWebhook: "Recent (user.created)",
         lastValidated: now,
-        nonSecretId: appConfig.clerk.publishableKey ? `pk_live_...${appConfig.clerk.publishableKey.slice(-6)}` : "clerk_prod_instance"
-      }
+        nonSecretId: appConfig.clerk.publishableKey ? `pk_live_...${appConfig.clerk.publishableKey.slice(-6)}` : "clerk_prod_instance",
+        isPrimary: false,
+      },
     ];
 
     return NextResponse.json({
       success: true,
       validatedAt: now,
+      pmsStatus,
       databaseHealth,
       r2Health,
-      integrations
+      integrations,
     });
-
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error?.message || "Health check failed." }, { status: 500 });
   }

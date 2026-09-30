@@ -9,7 +9,7 @@ export interface AppendLedgerEventParams {
   siteId?: string | null;
   reservationId: string;
   commissionRuleId?: string | null;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   ownerrezBookingId?: number | null;
@@ -138,7 +138,7 @@ export async function createInitialAccrual(params: {
   siteId?: string | null;
   reservationId: string;
   commissionRuleId?: string | null;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   ownerrezBookingId?: number | null;
@@ -178,7 +178,7 @@ export async function createPaymentRealized(params: {
   siteId?: string | null;
   reservationId: string;
   commissionRuleId?: string | null;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   ownerrezBookingId?: number | null;
@@ -215,7 +215,7 @@ export async function createRefundClawback(params: {
   siteId?: string | null;
   reservationId: string;
   commissionRuleId?: string | null;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   ownerrezBookingId?: number | null;
@@ -253,7 +253,7 @@ export async function createEligibilityRelease(params: {
   partnerId: string;
   siteId?: string | null;
   reservationId: string;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   ownerrezBookingId?: number | null;
@@ -284,7 +284,7 @@ export async function createDisputeHold(params: {
   partnerId: string;
   siteId?: string | null;
   reservationId: string;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   disputeId: string;
@@ -318,7 +318,7 @@ export async function createDisputeRelease(params: {
   partnerId: string;
   siteId?: string | null;
   reservationId: string;
-  sourceProvider: "ownerrez" | "hospitable";
+  sourceProvider: "ownerrez" | "hospitable" | "hostaway";
   bookingChannel: string;
   providerBookingId: string;
   disputeId: string;
@@ -360,7 +360,7 @@ export async function createDisputeRelease(params: {
  */
 export async function reconcileReservationPaymentRealization(params: {
   reservationId: string;
-  sourceProvider?: "ownerrez" | "hospitable";
+  sourceProvider?: "ownerrez" | "hospitable" | "hostaway";
   supabaseClient?: any;
 }): Promise<{
   reconciled: boolean;
@@ -498,7 +498,7 @@ export async function reconcileReservationPaymentRealization(params: {
     siteId: accrual.site_id,
     reservationId: accrual.reservation_id,
     commissionRuleId: accrual.commission_rule_id,
-    sourceProvider: (accrual.source_provider || params.sourceProvider || "ownerrez") as "ownerrez" | "hospitable",
+    sourceProvider: (accrual.source_provider || params.sourceProvider || "ownerrez") as "ownerrez" | "hospitable" | "hostaway",
     bookingChannel: accrual.booking_channel || reservation.platform || "direct",
     providerBookingId: accrual.provider_booking_id || String(reservation.ownerrez_booking_id || reservation.hospitable_reservation_id),
     ownerrezBookingId: accrual.ownerrez_booking_id || reservation.ownerrez_booking_id || null,

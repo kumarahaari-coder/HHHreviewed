@@ -56,6 +56,15 @@ export interface AppConfig {
     pat?: string;
     isConfigured: boolean;
   };
+  hostaway: {
+    accountId?: string;
+    apiKey?: string;
+    webhookUsername?: string;
+    webhookPassword?: string;
+    isConfigured: boolean;
+    ingestionEnabled: boolean;
+    commissionAttributionEnabled: boolean;
+  };
 }
 
 export function isMockAuthAllowed(): boolean {
@@ -147,6 +156,15 @@ export function loadAppConfig(): AppConfig {
     hospitable: {
       pat: hospitablePat,
       isConfigured: Boolean(hospitablePat)
+    },
+    hostaway: {
+      accountId: process.env.HOSTAWAY_ACCOUNT_ID,
+      apiKey: process.env.HOSTAWAY_API_KEY,
+      webhookUsername: process.env.HOSTAWAY_WEBHOOK_USERNAME,
+      webhookPassword: process.env.HOSTAWAY_WEBHOOK_PASSWORD,
+      isConfigured: Boolean(process.env.HOSTAWAY_ACCOUNT_ID && process.env.HOSTAWAY_API_KEY),
+      ingestionEnabled: process.env.HOSTAWAY_INGESTION_ENABLED === "true",
+      commissionAttributionEnabled: process.env.HOSTAWAY_COMMISSION_ATTRIBUTION_ENABLED === "true",
     }
   };
 }

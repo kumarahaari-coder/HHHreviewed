@@ -92,7 +92,7 @@ export interface TaxDocumentAuditLog {
 
 export interface IntegrationIdempotencyLog {
   id: string;
-  provider: "CLERK" | "STRIPE" | "BREVO";
+  provider: "CLERK" | "STRIPE" | "BREVO" | "HOSTAWAY" | "OWNERREZ";
   eventId: string;
   eventType: string;
   processedAt: string;
@@ -144,6 +144,7 @@ export interface Property {
   sourceVerifiedAt?: string;
   syncStatus?: string;
   ownerrezPropertyId?: number;
+  hostawayListingId?: number;
 }
 
 export interface Reservation {
@@ -183,6 +184,8 @@ export interface Reservation {
   grossAmount?: number;
   financialDataAvailable?: boolean;
   paymentConfirmationSource?: string;
+  hostawayReservationId?: number;
+  rawHostawayData?: Record<string, unknown>;
 }
 
 export interface CommissionRule {

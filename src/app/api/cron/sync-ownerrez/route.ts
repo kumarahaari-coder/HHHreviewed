@@ -63,6 +63,17 @@ export async function GET(request: Request) {
   }
 
   try {
+    // 2b. Check if OwnerRez has been retired to Legacy / Read-only mode
+    const { isHostawayPrimary } = await import("@/lib/config/pms-mode");
+    if (isHostawayPrimary()) {
+      return NextResponse.json({
+        success: true,
+        skipped: true,
+        reason: "LEGACY_PROVIDER_READ_ONLY",
+        message: "OwnerRez is in Legacy / Read-Only mode following Hostaway Primary cutover. Scheduled write ingestion is safely paused; historical evidence and manual diagnostic access are preserved.",
+      });
+    }
+
     // 3. Execute authoritative bulk synchronization & reconciliation
     const batchResult = await syncAllOwnerRezBookings();
 

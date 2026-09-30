@@ -33,6 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# temporary scratch
+scratch/
+scratch_*
+supabase/.temp/
+
 # vercel
 .vercel
 
