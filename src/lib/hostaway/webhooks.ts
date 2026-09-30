@@ -61,15 +61,12 @@ export function verifyHostawayWebhookRequest(req: Request | NextRequest): Webhoo
     }
   }
 
-  // If no credentials configured in environment, fail-closed in production
+  // If no credentials configured in environment, fail-closed
   if (!expectedUsername && !expectedPassword && !webhookSecret) {
-    if (process.env.NODE_ENV === "production") {
-      return { isValid: false, error: "Hostaway webhook authentication is not configured", statusCode: 500 };
-    }
-    // Permitted in non-production local development if explicit flag set
-    if (process.env.ALLOW_UNAUTHENTICATED_WEBHOOKS === "true") {
+    if (process.env.NODE_ENV !== "production" && process.env.ALLOW_UNAUTHENTICATED_WEBHOOKS === "true") {
       return { isValid: true };
     }
+    return { isValid: false, error: "Unauthorized. Hostaway webhook credentials required.", statusCode: 401 };
   }
 
   return { isValid: false, error: "Unauthorized. Valid credentials required.", statusCode: 401 };

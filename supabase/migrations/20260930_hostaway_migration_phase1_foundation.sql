@@ -77,7 +77,7 @@ END $$;
 -- ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.integration_idempotency_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    provider TEXT NOT NULL CHECK (upper(provider) IN ('HOSTAWAY', 'OWNERREZ', 'HOSPITABLE', 'CLERK', 'STRIPE', 'BREVO')),
+    provider TEXT NOT NULL CHECK (provider IN ('HOSTAWAY', 'OWNERREZ', 'HOSPITABLE', 'CLERK', 'STRIPE', 'BREVO')),
     event_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'PROCESSED',
@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS public.integration_idempotency_logs (
     CONSTRAINT uq_integration_provider_event UNIQUE (provider, event_id)
 );
 CREATE INDEX IF NOT EXISTS idx_integration_idempotency_provider_event ON public.integration_idempotency_logs (provider, event_id);
+
+ALTER TABLE public.integration_idempotency_logs ENABLE ROW LEVEL SECURITY;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'integration_idempotency_logs'
+          AND policyname = 'service_role_all_integration_logs'
+    ) THEN
+        CREATE POLICY service_role_all_integration_logs ON public.integration_idempotency_logs
+            FOR ALL TO service_role USING (true) WITH CHECK (true);
+    END IF;
+END $$;
 
 -- ------------------------------------------------------------------------------
 -- 6. RECORD SUCCESSFUL MIGRATION
