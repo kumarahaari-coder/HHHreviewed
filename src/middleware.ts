@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   "/pending-access(.*)",
   "/auth/resolve(.*)",
   "/api/webhooks(.*)",
+  "/api/hostaway(.*)",
   "/api/ownerrez/oauth/callback(.*)",
   "/api/cron(.*)",
   "/api/auth/session"
