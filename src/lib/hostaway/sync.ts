@@ -453,7 +453,6 @@ export async function syncHostawayReservationsBatch(
     page += 1;
     const pageResult = await getHostawayReservationsCursor({
       limit,
-      sortOrder: "updatedOn",
       afterId: cursor > 0 ? cursor : undefined,
       fromDate: options.fromDate,
       toDate: options.toDate,
@@ -534,7 +533,6 @@ export async function syncHostawayReservationsBatch(
         reconPage += 1;
         const reconResult = await getHostawayReservationsCursor({
           limit,
-          sortOrder: "updatedOn",
           afterId: reconCursor > 0 ? reconCursor : undefined,
           fromDate: options.fromDate,
           toDate: options.toDate,

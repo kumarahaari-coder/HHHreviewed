@@ -37,8 +37,9 @@ export async function getHostawayReservationsCursor(
   const query = new URLSearchParams();
   query.set("limit", String(limit));
 
-  // Hostaway documented sortOrder parameter (e.g. sortOrder=updatedOn)
-  if (options.sortOrder) {
+  // Hostaway API contract: afterId cursor pagination is not compatible with custom sortOrder
+  const hasAfterId = options.afterId !== undefined && options.afterId !== null && options.afterId > 0;
+  if (options.sortOrder && !hasAfterId) {
     query.set("sortOrder", options.sortOrder);
   }
 
@@ -48,7 +49,7 @@ export async function getHostawayReservationsCursor(
   query.set("includeResources", "1");
   query.set("includePayments", "1");
 
-  if (options.afterId !== undefined && options.afterId !== null && options.afterId > 0) {
+  if (hasAfterId) {
     query.set("afterId", String(options.afterId));
   }
 
