@@ -99,7 +99,7 @@ function PartnerManagementContent() {
   const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
-    type: "ARCHIVE" | "DELETE";
+    type: "ARCHIVE" | "RESTORE" | "DELETE";
     partner: Partner | null;
   }>({
     isOpen: false,
@@ -167,7 +167,7 @@ function PartnerManagementContent() {
 
   const handlePartnerAction = async (
     partnerId: string,
-    action: "RESEND_INVITE" | "RESET_PASSWORD" | "SUSPEND" | "ACTIVATE" | "ARCHIVE" | "DELETE" | "REMOVE"
+    action: "RESEND_INVITE" | "RESET_PASSWORD" | "SUSPEND" | "ACTIVATE" | "ARCHIVE" | "RESTORE" | "DELETE" | "REMOVE"
   ) => {
     setActiveMenuPartnerId(null);
     try {
@@ -187,7 +187,7 @@ function PartnerManagementContent() {
       } else {
         setBanner({
           type: "error",
-          title: `Action Failed (${action})`,
+          title: `Action Prohibited (${action})`,
           message: data.error || "The server rejected the requested partner action."
         });
       }
@@ -207,6 +207,8 @@ function PartnerManagementContent() {
 
     if (type === "DELETE") {
       await handlePartnerAction(partner.id, "DELETE");
+    } else if (type === "RESTORE") {
+      await handlePartnerAction(partner.id, "RESTORE");
     } else {
       await handlePartnerAction(partner.id, "ARCHIVE");
     }
@@ -520,21 +522,39 @@ function PartnerManagementContent() {
                                   </button>
                                 )}
 
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setActiveMenuPartnerId(null);
-                                    setConfirmDialog({
-                                      isOpen: true,
-                                      type: "ARCHIVE",
-                                      partner: p
-                                    });
-                                  }}
-                                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-secondary hover:bg-surface-subtle rounded font-medium cursor-pointer"
-                                >
-                                  <Archive size={14} />
-                                  <span>Archive Partner</span>
-                                </button>
+                                {p.status === "ARCHIVED" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveMenuPartnerId(null);
+                                      setConfirmDialog({
+                                        isOpen: true,
+                                        type: "RESTORE",
+                                        partner: p
+                                      });
+                                    }}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-emerald-400 hover:bg-emerald-500/10 rounded font-medium cursor-pointer"
+                                  >
+                                    <RotateCcw size={14} />
+                                    <span>Restore Partner</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveMenuPartnerId(null);
+                                      setConfirmDialog({
+                                        isOpen: true,
+                                        type: "ARCHIVE",
+                                        partner: p
+                                      });
+                                    }}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-secondary hover:bg-surface-subtle rounded font-medium cursor-pointer"
+                                  >
+                                    <Archive size={14} />
+                                    <span>Archive Partner</span>
+                                  </button>
+                                )}
 
                                 <button
                                   type="button"
@@ -549,7 +569,7 @@ function PartnerManagementContent() {
                                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-red-400 hover:bg-red-500/10 rounded font-medium cursor-pointer"
                                 >
                                   <Trash2 size={14} />
-                                  <span>Remove Record</span>
+                                  <span>Delete Permanently</span>
                                 </button>
                               </div>
                             )}
@@ -771,20 +791,37 @@ function PartnerManagementContent() {
                   Edit Profile
                 </Button>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon={Archive}
-                    onClick={() => {
-                      setConfirmDialog({
-                        isOpen: true,
-                        type: "ARCHIVE",
-                        partner: selectedPartner
-                      });
-                    }}
-                  >
-                    Archive
-                  </Button>
+                  {selectedPartner.status === "ARCHIVED" ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={RotateCcw}
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          type: "RESTORE",
+                          partner: selectedPartner
+                        });
+                      }}
+                    >
+                      Restore
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={Archive}
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          type: "ARCHIVE",
+                          partner: selectedPartner
+                        });
+                      }}
+                    >
+                      Archive
+                    </Button>
+                  )}
                   <Button
                     variant="destructive"
                     size="sm"
@@ -797,7 +834,7 @@ function PartnerManagementContent() {
                       });
                     }}
                   >
-                    Remove
+                    Delete Permanently
                   </Button>
                 </div>
               </div>
@@ -837,11 +874,17 @@ function PartnerManagementContent() {
         }}
       />
 
-      {/* 9. Archive & Delete Safety Confirmation Dialog */}
+      {/* 9. Archive, Restore & Delete Safety Confirmation Dialog */}
       <Dialog
         isOpen={confirmDialog.isOpen}
         onClose={() => setConfirmDialog({ isOpen: false, type: "ARCHIVE", partner: null })}
-        title={confirmDialog.type === "DELETE" ? "Remove Partner Record" : "Archive Partner Account"}
+        title={
+          confirmDialog.type === "DELETE"
+            ? "Permanently Delete Partner Record"
+            : confirmDialog.type === "RESTORE"
+            ? "Restore Partner to Operational Directory"
+            : "Archive Partner Account"
+        }
       >
         <div className="space-y-4 font-sans text-xs">
           <div className="p-3 bg-surface-subtle border border-divider-soft rounded-lg space-y-1.5">
@@ -851,17 +894,49 @@ function PartnerManagementContent() {
             <p className="text-secondary font-mono text-[11px]">{confirmDialog.partner?.id}</p>
           </div>
 
-          {confirmDialog.type === "DELETE" ? (
+          {confirmDialog.type === "DELETE" ? (() => {
+            const hasProtectedRecords =
+              sites.some(s => s.partnerId === confirmDialog.partner?.id) ||
+              confirmDialog.partner?.id === "b6cb0291-af01-43e3-8b2c-5d13ad5e266f";
+
+            return (
+              <div className="space-y-3 text-secondary">
+                {hasProtectedRecords && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg space-y-1 text-amber-300">
+                    <p className="font-semibold text-xs flex items-center gap-1.5">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span>Protected Historical Records Detected</span>
+                    </p>
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      This partner has associated websites, historical reservations, or commission ledger events. Destructive deletion is blocked to preserve financial and attribution audit trails.
+                    </p>
+                    <div className="pt-1.5 flex gap-2">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        icon={Archive}
+                        onClick={() => setConfirmDialog(prev => ({ ...prev, type: "ARCHIVE" }))}
+                      >
+                        Archive Partner Instead
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <p>
+                  Permanently deleting this partner will remove all database records. This cannot be undone.
+                </p>
+                <p className="text-[11px] text-tertiary">
+                  If this partner has any linked sites, bookings, or ledger events, the server will strictly reject the request.
+                </p>
+              </div>
+            );
+          })() : confirmDialog.type === "RESTORE" ? (
             <div className="space-y-2 text-secondary">
-              <p className="text-red-400 font-medium">
-                Authoritative Deletion Safeguards Active:
-              </p>
               <p>
-                If this partner has any associated websites, historical reservations, referrals, or commission ledger
-                entries, destructive deletion will be <strong>strictly blocked</strong> to preserve financial and attribution audit trails.
+                Restores the partner status to <strong>ACTIVE</strong>, unbans login access, and returns the partner to the default operational directory.
               </p>
-              <p className="text-[11px] text-tertiary">
-                If blocked, the server will instruct you to use <strong>Archive</strong> instead.
+              <p className="text-emerald-400 text-[11px]">
+                Referral attribution and partner dashboard access will be immediately restored.
               </p>
             </div>
           ) : (
@@ -870,7 +945,7 @@ function PartnerManagementContent() {
                 Archiving marks the partner as <strong>ARCHIVED</strong>, revokes portal access, and removes them from default operational views.
               </p>
               <p className="text-emerald-400 text-[11px]">
-                Historical attribution, site bindings, and financial ledger data are fully preserved. Archiving can be reversed at any time.
+                Historical attribution, site bindings, and financial ledger data are fully preserved. Archiving can be reversed at any time via Restore Partner.
               </p>
             </div>
           )}
@@ -886,7 +961,11 @@ function PartnerManagementContent() {
               variant={confirmDialog.type === "DELETE" ? "destructive" : "primary"}
               onClick={handleExecuteConfirmedAction}
             >
-              {confirmDialog.type === "DELETE" ? "Confirm Removal" : "Archive Partner"}
+              {confirmDialog.type === "DELETE"
+                ? "Permanently Delete"
+                : confirmDialog.type === "RESTORE"
+                ? "Restore Partner"
+                : "Archive Partner"}
             </Button>
           </div>
         </div>

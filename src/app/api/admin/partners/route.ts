@@ -216,6 +216,15 @@ export async function DELETE(req: NextRequest) {
 
     const result = await deletePartner(partnerId);
 
+    if (!result.success) {
+      return NextResponse.json({
+        success: false,
+        error: result.error,
+        requiresArchive: result.requiresArchive,
+        details: result.details
+      }, { status: 400 });
+    }
+
     if (clerkUserId && clerkUserId.startsWith("user_")) {
       await banClerkUser(clerkUserId);
     } else if (clerkInvitationId && clerkInvitationId.startsWith("inv_")) {

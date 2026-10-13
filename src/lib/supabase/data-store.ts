@@ -1,5 +1,5 @@
 import { createAdminClient } from "./admin";
-import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation } from "@/lib/db/schema";
+import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation, SiteReadinessStage } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
 /**
@@ -692,6 +692,10 @@ export async function archivePartner(partnerId: string): Promise<void> {
     .eq("partner_id", partnerId);
 }
 
+export async function restorePartner(partnerId: string): Promise<void> {
+  return activatePartner(partnerId);
+}
+
 export async function canDeletePartner(partnerId: string): Promise<{
   canDelete: boolean;
   reason?: string;
@@ -699,52 +703,81 @@ export async function canDeletePartner(partnerId: string): Promise<{
   siteCount: number;
   reservationCount: number;
   ledgerCount: number;
+  clickCount: number;
+  linkedUserCount: number;
 }> {
   const partner = await findPartnerById(partnerId);
   if (!partner) {
     return {
       canDelete: false,
-      reason: "Partner not found",
+      reason: `Partner with ID ${partnerId} not found.`,
       requiresArchive: false,
       siteCount: 0,
       reservationCount: 0,
-      ledgerCount: 0
+      ledgerCount: 0,
+      clickCount: 0,
+      linkedUserCount: 0
     };
   }
 
   if (!isSupabaseEnabled()) {
     const siteCount = mockDb.sites.filter(s => s.partnerId === partnerId).length;
     const reservationCount = mockDb.reservations.filter(r => r.partnerId === partnerId).length;
-    const canDelete = siteCount === 0 && reservationCount === 0;
+    const ledgerCount = ((mockDb as any).commissionLedgerEvents || []).filter((l: any) => l.partnerId === partnerId).length;
+    const clickCount = mockDb.redirectClicks.filter(c => c.partnerId === partnerId).length;
+    const hasHistory = siteCount > 0 || reservationCount > 0 || ledgerCount > 0 || clickCount > 0;
     return {
-      canDelete,
-      reason: canDelete ? undefined : `Partner has ${siteCount} site(s) and ${reservationCount} reservation(s).`,
-      requiresArchive: !canDelete,
+      canDelete: !hasHistory,
+      reason: hasHistory
+        ? `Cannot permanently delete partner with historical records (${siteCount} site(s), ${reservationCount} booking(s), ${ledgerCount} commission ledger event(s), ${clickCount} referral click(s)). To preserve financial and attribution audit integrity, destructive deletion is blocked. Please use Archive Partner instead.`
+        : undefined,
+      requiresArchive: hasHistory,
       siteCount,
       reservationCount,
-      ledgerCount: 0
+      ledgerCount,
+      clickCount,
+      linkedUserCount: 0
     };
   }
 
   const supabase = assertSupabaseClient();
-  const [{ count: siteCount }, { count: resCount }, { count: ledgerCount }] = await Promise.all([
+  const [
+    { count: siteCount },
+    { count: resCount },
+    { count: ledgerCount },
+    { count: clickCount },
+    { count: linkedUserCount }
+  ] = await Promise.all([
     supabase.from("sites").select("*", { count: "exact", head: true }).eq("partner_id", partnerId),
     supabase.from("reservations").select("*", { count: "exact", head: true }).eq("partner_id", partnerId),
-    supabase.from("commission_ledger_events").select("*", { count: "exact", head: true }).eq("partner_id", partnerId)
+    supabase.from("commission_ledger_events").select("*", { count: "exact", head: true }).eq("partner_id", partnerId),
+    supabase.from("redirect_clicks").select("*", { count: "exact", head: true }).eq("partner_id", partnerId),
+    supabase.from("users").select("*", { count: "exact", head: true }).eq("partner_id", partnerId).not("clerk_user_id", "is", null)
   ]);
 
   const sCount = siteCount || 0;
   const rCount = resCount || 0;
   const lCount = ledgerCount || 0;
+  const cCount = clickCount || 0;
+  const uCount = linkedUserCount || 0;
 
-  if (sCount > 0 || rCount > 0 || lCount > 0) {
+  if (sCount > 0 || rCount > 0 || lCount > 0 || cCount > 0 || uCount > 0) {
+    const parts: string[] = [];
+    if (sCount > 0) parts.push(`${sCount} site(s)`);
+    if (rCount > 0) parts.push(`${rCount} booking(s)`);
+    if (lCount > 0) parts.push(`${lCount} commission ledger event(s)`);
+    if (cCount > 0) parts.push(`${cCount} referral click(s)`);
+    if (uCount > 0) parts.push(`${uCount} active user account(s)`);
+
     return {
       canDelete: false,
       requiresArchive: true,
-      reason: `Cannot delete partner with historical records (${sCount} site(s), ${rCount} booking(s), ${lCount} commission ledger event(s)). To preserve financial and attribution integrity, destructive deletion is blocked. Please archive or deactivate instead.`,
+      reason: `Cannot permanently delete partner with historical records (${parts.join(", ")}). Destructive deletion is blocked to preserve historical attribution and ledger integrity. Please use Archive Partner instead.`,
       siteCount: sCount,
       reservationCount: rCount,
-      ledgerCount: lCount
+      ledgerCount: lCount,
+      clickCount: cCount,
+      linkedUserCount: uCount
     };
   }
 
@@ -753,7 +786,9 @@ export async function canDeletePartner(partnerId: string): Promise<{
     requiresArchive: false,
     siteCount: 0,
     reservationCount: 0,
-    ledgerCount: 0
+    ledgerCount: 0,
+    clickCount: 0,
+    linkedUserCount: 0
   };
 }
 
@@ -762,13 +797,27 @@ export async function deletePartner(partnerId: string): Promise<{
   message?: string;
   error?: string;
   requiresArchive?: boolean;
+  details?: {
+    siteCount: number;
+    reservationCount: number;
+    ledgerCount: number;
+    clickCount: number;
+    linkedUserCount: number;
+  };
 }> {
   const check = await canDeletePartner(partnerId);
   if (!check.canDelete) {
     return {
       success: false,
       error: check.reason || "Cannot delete partner. Historical records present.",
-      requiresArchive: check.requiresArchive
+      requiresArchive: check.requiresArchive,
+      details: {
+        siteCount: check.siteCount,
+        reservationCount: check.reservationCount,
+        ledgerCount: check.ledgerCount,
+        clickCount: check.clickCount,
+        linkedUserCount: check.linkedUserCount
+      }
     };
   }
 
@@ -987,25 +1036,73 @@ export async function getPartnerDashboardData(partnerId: string) {
   };
 }
 
+export function computeSiteReadiness(params: {
+  sitePropertiesCount: number;
+  clickCount: number;
+  reservationCount: number;
+  verifiedAttributionCount: number;
+}): SiteReadinessStage {
+  if (params.verifiedAttributionCount > 0) {
+    return "ATTRIBUTION_VERIFIED";
+  }
+  if (params.clickCount > 0) {
+    if (params.reservationCount > 0) {
+      return "BOOKING_ATTRIBUTION_UNPROVEN";
+    }
+    return "CLICK_TRACKING_VERIFIED";
+  }
+  if (params.sitePropertiesCount > 0) {
+    return "BOOKING_LINKS_CONFIGURED";
+  }
+  return "REGISTERED";
+}
+
 export async function getAllSites(): Promise<Site[]> {
   if (!isSupabaseEnabled()) {
-    return [...mockDb.sites];
+    return mockDb.sites.map(s => {
+      const clickCount = mockDb.redirectClicks.filter(c => c.siteId === s.id).length;
+      const resCount = mockDb.reservations.filter(r => r.siteId === s.id).length;
+      const ledgerCount = ((mockDb as any).commissionLedgerEvents || []).filter((l: any) => l.partnerId === s.partnerId).length;
+      const stage = computeSiteReadiness({
+        sitePropertiesCount: s.siteProperties?.length || 0,
+        clickCount,
+        reservationCount: resCount,
+        verifiedAttributionCount: ledgerCount
+      });
+      return { ...s, readinessStage: stage };
+    });
   }
 
   const supabase = assertSupabaseClient();
-  const { data: sitesData, error: sitesErr } = await supabase
-    .from("sites")
-    .select("id, partner_id, site_code, site_name, website_url, tracking_code, hospitable_widget_id, status, created_at, ownerrez_listing_site_id, ownerrez_listing_site_name, ownerrez_listing_site_domain")
-    .order("created_at", { ascending: false });
+  const [
+    { data: sitesData, error: sitesErr },
+    { data: sitePropsData },
+    { data: clicksData },
+    { data: resData },
+    { data: ledgerData }
+  ] = await Promise.all([
+    supabase
+      .from("sites")
+      .select("id, partner_id, site_code, site_name, website_url, tracking_code, hospitable_widget_id, status, created_at, ownerrez_listing_site_id, ownerrez_listing_site_name, ownerrez_listing_site_domain")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("site_properties")
+      .select("id, site_id, property_id, hospitable_widget_id, custom_booking_url, status, created_at"),
+    supabase
+      .from("redirect_clicks")
+      .select("site_id"),
+    supabase
+      .from("reservations")
+      .select("id, site_id, partner_id"),
+    supabase
+      .from("commission_ledger_events")
+      .select("id, partner_id")
+  ]);
 
   if (sitesErr) {
     console.error("[DataStore Error] getAllSites failed:", sitesErr);
     return [];
   }
-
-  const { data: sitePropsData } = await supabase
-    .from("site_properties")
-    .select("id, site_id, property_id, status, created_at");
 
   const sitePropertiesBySiteId = new Map<string, any[]>();
   (sitePropsData || []).forEach(sp => {
@@ -1014,43 +1111,94 @@ export async function getAllSites(): Promise<Site[]> {
       id: sp.id,
       siteId: sp.site_id,
       propertyId: sp.property_id,
-      hospitableWidgetId: "",
-      customBookingUrl: undefined,
+      hospitableWidgetId: sp.hospitable_widget_id || "",
+      customBookingUrl: sp.custom_booking_url || undefined,
       status: sp.status === "active" ? "ACTIVE" : "INACTIVE",
       createdAt: sp.created_at
     });
     sitePropertiesBySiteId.set(sp.site_id, list);
   });
 
-  return (sitesData || []).map(s => ({
-    id: s.id,
-    partnerId: s.partner_id,
-    siteName: s.site_name,
-    websiteUrl: s.website_url,
-    bookingUrl: s.website_url,
-    trackingCode: s.tracking_code || "",
-    hospitableWidgetId: s.hospitable_widget_id || "",
-    status: s.status === "active" ? "ACTIVE" : "PAUSED",
-    launchDate: s.created_at,
-    ownerrezListingSiteId: s.ownerrez_listing_site_id ? Number(s.ownerrez_listing_site_id) : undefined,
-    ownerrezListingSiteName: s.ownerrez_listing_site_name || undefined,
-    ownerrezListingSiteDomain: s.ownerrez_listing_site_domain || undefined,
-    siteProperties: sitePropertiesBySiteId.get(s.id) || []
-  }));
+  const clickCountBySiteId = new Map<string, number>();
+  (clicksData || []).forEach(c => {
+    if (c.site_id) {
+      clickCountBySiteId.set(c.site_id, (clickCountBySiteId.get(c.site_id) || 0) + 1);
+    }
+  });
+
+  const resCountBySiteId = new Map<string, number>();
+  const resCountByPartnerId = new Map<string, number>();
+  (resData || []).forEach(r => {
+    if (r.site_id) {
+      resCountBySiteId.set(r.site_id, (resCountBySiteId.get(r.site_id) || 0) + 1);
+    }
+    if (r.partner_id) {
+      resCountByPartnerId.set(r.partner_id, (resCountByPartnerId.get(r.partner_id) || 0) + 1);
+    }
+  });
+
+  const ledgerCountByPartnerId = new Map<string, number>();
+  (ledgerData || []).forEach(l => {
+    if (l.partner_id) {
+      ledgerCountByPartnerId.set(l.partner_id, (ledgerCountByPartnerId.get(l.partner_id) || 0) + 1);
+    }
+  });
+
+  return (sitesData || []).map(s => {
+    const sProps = sitePropertiesBySiteId.get(s.id) || [];
+    const clickCount = clickCountBySiteId.get(s.id) || 0;
+    const resCount = (resCountBySiteId.get(s.id) || 0) || (resCountByPartnerId.get(s.partner_id) || 0);
+    const ledgerCount = ledgerCountByPartnerId.get(s.partner_id) || 0;
+
+    const readinessStage = computeSiteReadiness({
+      sitePropertiesCount: sProps.length,
+      clickCount,
+      reservationCount: resCount,
+      verifiedAttributionCount: ledgerCount
+    });
+
+    return {
+      id: s.id,
+      partnerId: s.partner_id,
+      siteName: s.site_name,
+      websiteUrl: s.website_url,
+      bookingUrl: s.website_url,
+      trackingCode: s.tracking_code || "",
+      hospitableWidgetId: s.hospitable_widget_id || "",
+      status: s.status === "active" ? "ACTIVE" : "PAUSED",
+      launchDate: s.created_at,
+      readinessStage,
+      ownerrezListingSiteId: s.ownerrez_listing_site_id ? Number(s.ownerrez_listing_site_id) : undefined,
+      ownerrezListingSiteName: s.ownerrez_listing_site_name || undefined,
+      ownerrezListingSiteDomain: s.ownerrez_listing_site_domain || undefined,
+      siteProperties: sProps
+    };
+  });
 }
 
-export async function createSiteWithFourPropertyMappings(params: {
+export interface CreateReferralSiteParams {
   partnerId: string;
   siteName: string;
   websiteUrl: string;
   trackingCode: string;
-  mappings: { propertyId: string; hospitableWidgetId: string }[];
-}): Promise<Site> {
-  const { validateFourPropertyWidgetMappings } = await import("@/lib/hospitable/widgets");
-  const validation = validateFourPropertyWidgetMappings(params.mappings);
+  mappings?: Array<{
+    propertyId: string;
+    customBookingUrl?: string;
+    hospitableWidgetId?: string;
+  }>;
+}
 
-  if (!validation.valid) {
-    throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
+export const CANONICAL_PROPERTY_UUIDS = new Set([
+  "38d9159e-a35d-405e-826e-7381ad3c3197", // Uptown St. Augustine
+  "f0fb867d-47cd-47d4-afa6-c4bf226c1768", // Downtown St. Augustine (Lincoln)
+  "51be6158-268d-4c96-8f0b-9968f544ddfa", // Ellsworth, Maine
+  "55791a54-b1a3-459e-bbd5-9073a418b774"  // Beech Mountain, NC
+]);
+
+export async function createReferralSite(params: CreateReferralSiteParams): Promise<Site> {
+  const partner = await findPartnerById(params.partnerId);
+  if (!partner) {
+    throw new Error(`Partner with ID "${params.partnerId}" not found.`);
   }
 
   const cleanUrl = params.websiteUrl.toLowerCase().trim().startsWith("http")
@@ -1058,13 +1206,55 @@ export async function createSiteWithFourPropertyMappings(params: {
     : `https://${params.websiteUrl.toLowerCase().trim()}`;
   const cleanCode = params.trackingCode.toUpperCase().trim();
 
+  if (!cleanCode) {
+    throw new Error("Tracking Code is required.");
+  }
+
+  const validatedMappings: Array<{
+    propertyId: string;
+    customBookingUrl?: string;
+    hospitableWidgetId: string;
+  }> = [];
+
+  if (params.mappings && Array.isArray(params.mappings) && params.mappings.length > 0) {
+    const seenProperties = new Set<string>();
+
+    for (const m of params.mappings) {
+      if (!m.propertyId || !CANONICAL_PROPERTY_UUIDS.has(m.propertyId)) {
+        throw new Error(`Invalid property UUID "${m.propertyId}". Must match one of the 4 canonical properties.`);
+      }
+      if (seenProperties.has(m.propertyId)) {
+        throw new Error(`Duplicate mapping submitted for property ${m.propertyId}. Each property may only be mapped once.`);
+      }
+      seenProperties.add(m.propertyId);
+
+      const bookingUrl = m.customBookingUrl?.trim() || undefined;
+      const widgetId = m.hospitableWidgetId?.trim() || "hostaway-direct";
+
+      if (!bookingUrl && !m.hospitableWidgetId) {
+        throw new Error(`A destination booking URL or widget ID is required for property ${m.propertyId}.`);
+      }
+
+      validatedMappings.push({
+        propertyId: m.propertyId,
+        customBookingUrl: bookingUrl,
+        hospitableWidgetId: widgetId
+      });
+    }
+  }
+
   if (!isSupabaseEnabled()) {
+    if (mockDb.sites.some(s => s.trackingCode.toUpperCase() === cleanCode)) {
+      throw new Error(`Tracking code "${cleanCode}" is already registered.`);
+    }
+
     const newSiteId = `site-${Date.now().toString(36)}`;
-    const siteProps = validation.validatedMappings!.map((m, idx) => ({
+    const siteProps = validatedMappings.map((m, idx) => ({
       id: `sp-${Date.now()}-${idx}`,
       siteId: newSiteId,
       propertyId: m.propertyId,
       hospitableWidgetId: m.hospitableWidgetId,
+      customBookingUrl: m.customBookingUrl,
       status: "ACTIVE" as const
     }));
 
@@ -1074,11 +1264,12 @@ export async function createSiteWithFourPropertyMappings(params: {
       siteName: params.siteName.trim(),
       websiteUrl: cleanUrl,
       bookingUrl: cleanUrl,
-      hospitableWidgetId: validation.validatedMappings![0].hospitableWidgetId,
+      hospitableWidgetId: validatedMappings[0]?.hospitableWidgetId || "",
       trackingCode: cleanCode,
       status: "ACTIVE",
       launchDate: new Date().toISOString(),
-      siteProperties: siteProps
+      siteProperties: siteProps,
+      readinessStage: siteProps.length > 0 ? "BOOKING_LINKS_CONFIGURED" : "REGISTERED"
     };
 
     mockDb.sites.push(newSite);
@@ -1087,17 +1278,15 @@ export async function createSiteWithFourPropertyMappings(params: {
 
   const supabase = assertSupabaseClient();
 
-  const { data: rpcData, error: rpcErr } = await supabase.rpc("create_referral_site_tx", {
-    p_partner_id: params.partnerId,
-    p_site_name: params.siteName.trim(),
-    p_website_url: cleanUrl,
-    p_tracking_code: cleanCode,
-    p_mappings: validation.validatedMappings
-  });
+  // Check unique tracking code
+  const { data: existingCode } = await supabase
+    .from("sites")
+    .select("id, tracking_code")
+    .or(`tracking_code.ilike.${cleanCode},site_code.ilike.SITE_${cleanCode}`)
+    .maybeSingle();
 
-  if (!rpcErr && rpcData?.success && rpcData?.site_id) {
-    const sites = await getAllSites();
-    return sites.find(s => s.id === rpcData.site_id)!;
+  if (existingCode) {
+    throw new Error(`Tracking code "${cleanCode}" is already registered.`);
   }
 
   const siteCode = `SITE_${cleanCode}`;
@@ -1118,23 +1307,29 @@ export async function createSiteWithFourPropertyMappings(params: {
     throw new Error(`Failed to create site record in Supabase: ${siteInsertErr?.message || "Insert failed"}`);
   }
 
-  const sitePropRows = validation.validatedMappings!.map(m => ({
-    site_id: siteRow.id,
-    property_id: m.propertyId,
-    hospitable_widget_id: m.hospitableWidgetId,
-    custom_booking_url: m.customBookingUrl,
-    status: "active" as any
-  }));
+  let createdProps: any[] = [];
+  if (validatedMappings.length > 0) {
+    const sitePropRows = validatedMappings.map(m => ({
+      site_id: siteRow.id,
+      property_id: m.propertyId,
+      hospitable_widget_id: m.hospitableWidgetId || "hostaway-direct",
+      custom_booking_url: m.customBookingUrl,
+      status: "active" as any
+    }));
 
-  const { data: propsData, error: propsInsertErr } = await supabase
-    .from("site_properties")
-    .insert(sitePropRows)
-    .select("*");
+    const { data: propsData, error: propsInsertErr } = await supabase
+      .from("site_properties")
+      .insert(sitePropRows)
+      .select("*");
 
-  if (propsInsertErr) {
-    await supabase.from("sites").delete().eq("id", siteRow.id);
-    throw new Error(`Failed to create site_properties mappings. Site creation rolled back: ${propsInsertErr.message}`);
+    if (propsInsertErr) {
+      await supabase.from("sites").delete().eq("id", siteRow.id);
+      throw new Error(`Failed to create site_properties mappings. Site creation rolled back: ${propsInsertErr.message}`);
+    }
+    createdProps = propsData || [];
   }
+
+  const readinessStage: SiteReadinessStage = createdProps.length > 0 ? "BOOKING_LINKS_CONFIGURED" : "REGISTERED";
 
   return {
     id: siteRow.id,
@@ -1143,10 +1338,11 @@ export async function createSiteWithFourPropertyMappings(params: {
     websiteUrl: siteRow.website_url,
     bookingUrl: siteRow.website_url,
     trackingCode: siteRow.tracking_code,
-    hospitableWidgetId: validation.validatedMappings![0].hospitableWidgetId,
+    hospitableWidgetId: createdProps[0]?.hospitable_widget_id || "",
     status: "ACTIVE",
     launchDate: siteRow.created_at,
-    siteProperties: (propsData || []).map(p => ({
+    readinessStage,
+    siteProperties: createdProps.map(p => ({
       id: p.id,
       siteId: p.site_id,
       propertyId: p.property_id,
@@ -1155,6 +1351,97 @@ export async function createSiteWithFourPropertyMappings(params: {
       status: "ACTIVE"
     }))
   };
+}
+
+export async function createSiteWithFourPropertyMappings(params: {
+  partnerId: string;
+  siteName: string;
+  websiteUrl: string;
+  trackingCode: string;
+  mappings: { propertyId: string; hospitableWidgetId: string }[];
+}): Promise<Site> {
+  const { validateFourPropertyWidgetMappings } = await import("@/lib/hospitable/widgets");
+  const validation = validateFourPropertyWidgetMappings(params.mappings);
+
+  if (!validation.valid) {
+    throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
+  }
+
+  return createReferralSite({
+    partnerId: params.partnerId,
+    siteName: params.siteName,
+    websiteUrl: params.websiteUrl,
+    trackingCode: params.trackingCode,
+    mappings: validation.validatedMappings!.map(m => ({
+      propertyId: m.propertyId,
+      customBookingUrl: m.customBookingUrl,
+      hospitableWidgetId: m.hospitableWidgetId
+    }))
+  });
+}
+
+export async function updateSitePropertyMappings(
+  siteId: string,
+  mappings: Array<{ propertyId: string; customBookingUrl?: string; hospitableWidgetId?: string }>
+): Promise<Site> {
+  const seen = new Set<string>();
+  for (const m of mappings) {
+    if (!m.propertyId || !CANONICAL_PROPERTY_UUIDS.has(m.propertyId)) {
+      throw new Error(`Invalid property UUID "${m.propertyId}". Must match one of the 4 canonical properties.`);
+    }
+    if (seen.has(m.propertyId)) {
+      throw new Error(`Duplicate mapping submitted for property ${m.propertyId}.`);
+    }
+    seen.add(m.propertyId);
+  }
+
+  if (!isSupabaseEnabled()) {
+    const site = mockDb.sites.find(s => s.id === siteId);
+    if (!site) throw new Error(`Site with ID "${siteId}" not found.`);
+    site.siteProperties = mappings.map((m, idx) => ({
+      id: `sp-${siteId}-${idx}`,
+      siteId,
+      propertyId: m.propertyId,
+      hospitableWidgetId: m.hospitableWidgetId || "hostaway-direct",
+      customBookingUrl: m.customBookingUrl,
+      status: "ACTIVE" as const
+    }));
+    return site;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data: siteRow, error: siteErr } = await supabase
+    .from("sites")
+    .select("*")
+    .eq("id", siteId)
+    .maybeSingle();
+
+  if (siteErr || !siteRow) {
+    throw new Error(`Site with ID "${siteId}" not found.`);
+  }
+
+  await supabase.from("site_properties").delete().eq("site_id", siteId);
+
+  if (mappings.length > 0) {
+    const rows = mappings.map(m => ({
+      site_id: siteId,
+      property_id: m.propertyId,
+      hospitable_widget_id: m.hospitableWidgetId || "hostaway-direct",
+      custom_booking_url: m.customBookingUrl,
+      status: "active" as any
+    }));
+    const { error: insertErr } = await supabase.from("site_properties").insert(rows);
+    if (insertErr) {
+      throw new Error(`Failed to update site properties: ${insertErr.message}`);
+    }
+  }
+
+  const allSites = await getAllSites();
+  const updatedSite = allSites.find(s => s.id === siteId);
+  if (!updatedSite) {
+    throw new Error("Failed to reload updated site.");
+  }
+  return updatedSite;
 }
 
 /**

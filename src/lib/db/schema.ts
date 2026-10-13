@@ -1,6 +1,12 @@
 export type UserRole = "SUPER_ADMIN" | "FINANCE_ADMIN" | "PARTNER_OWNER" | "ADMIN" | "CREATOR";
 export type PartnerStatus = "INVITED" | "ACTIVE" | "SUSPENDED" | "ARCHIVED" | "INACTIVE";
 export type SiteStatus = "ACTIVE" | "PAUSED" | "SUSPENDED" | "ARCHIVED";
+export type SiteReadinessStage =
+  | "REGISTERED"
+  | "BOOKING_LINKS_CONFIGURED"
+  | "CLICK_TRACKING_VERIFIED"
+  | "BOOKING_ATTRIBUTION_UNPROVEN"
+  | "ATTRIBUTION_VERIFIED";
 export type ReservationStatus = "PENDING" | "CONFIRMED" | "CHECKED_IN" | "CHECKED_OUT" | "CANCELLED" | "COMPLETED" | "UNKNOWN";
 export type PaymentStatus = "UNPAID" | "PARTIAL" | "PAID" | "REFUNDED" | "PARTIALLY_REFUNDED" | "DISPUTED" | "UNKNOWN";
 export type AttributionStatus = "ATTRIBUTED" | "UNATTRIBUTED" | "SYSTEM_ERROR" | "RECONCILED";
@@ -124,6 +130,7 @@ export interface Site {
   ownerrezListingSiteId?: number;
   ownerrezListingSiteName?: string;
   ownerrezListingSiteDomain?: string;
+  readinessStage?: SiteReadinessStage;
 }
 
 export interface Property {

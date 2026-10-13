@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
         message: `Access suspended for partner ${partner.businessName}.`
       });
 
-    } else if (action === "ACTIVATE") {
+    } else if (action === "ACTIVATE" || action === "RESTORE") {
       await activatePartner(partner.id);
 
       if (clerkUserId && clerkUserId.startsWith("user_")) {
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: `Access reactivated for partner ${partner.businessName}.`
+        message: `Partner ${partner.businessName} restored to active operational status.`
       });
 
     } else if (action === "ARCHIVE") {
@@ -135,7 +135,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
           success: false,
           error: result.error,
-          requiresArchive: result.requiresArchive
+          requiresArchive: result.requiresArchive,
+          details: result.details
         }, { status: 400 });
       }
 

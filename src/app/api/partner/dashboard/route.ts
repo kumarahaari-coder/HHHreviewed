@@ -52,6 +52,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: `Partner record not found for ID: ${effectivePartnerId}` }, { status: 404 });
     }
 
+    if (!isAdminRole(session.role)) {
+      const pStatus = (dashboardData.partner.status || "").toLowerCase();
+      if (pStatus === "archived" || pStatus === "suspended") {
+        return NextResponse.json(
+          { success: false, error: `Partner account is ${pStatus}. Access to active tenant resources is revoked.` },
+          { status: 403 }
+        );
+      }
+    }
+
     return NextResponse.json({
       success: true,
       isPreviewMode,
