@@ -125,9 +125,10 @@ export async function GET(
   }
 
   // 5. Obtain stored custom_booking_url (canonical destination)
-  const destinationUrl = siteProperty?.custom_booking_url || (siteProperty?.hospitable_widget_id ? `https://booking.hospitable.com/widget/${siteProperty.hospitable_widget_id}` : null);
+  const isHostawayDirectSentinel = siteProperty?.hospitable_widget_id === "hostaway-direct";
+  const destinationUrl = siteProperty?.custom_booking_url || (siteProperty?.hospitable_widget_id && !isHostawayDirectSentinel ? `https://booking.hospitable.com/widget/${siteProperty.hospitable_widget_id}` : null);
   if (!destinationUrl) {
-    return new NextResponse("No destination widget URL configured for this property.", { status: 404 });
+    return new NextResponse("No valid destination booking URL configured for this property.", { status: 404 });
   }
 
   // 6. Capture telemetry & anonymous session

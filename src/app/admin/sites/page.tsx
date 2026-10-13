@@ -61,7 +61,7 @@ function getReadinessBadgeVariant(stage?: SiteReadinessStage): StatusType {
 
 function formatReadinessLabel(stage?: SiteReadinessStage): string {
   switch (stage) {
-    case "ATTRIBUTION_VERIFIED": return "Attribution Verified";
+    case "ATTRIBUTION_VERIFIED": return "Attribution Verified (Historical)";
     case "BOOKING_ATTRIBUTION_UNPROVEN": return "Attribution Unproven";
     case "CLICK_TRACKING_VERIFIED": return "Clicks Verified";
     case "BOOKING_LINKS_CONFIGURED": return "Links Configured";
@@ -74,7 +74,7 @@ function formatReadinessLabel(stage?: SiteReadinessStage): string {
 function getReadinessDescription(stage?: SiteReadinessStage): string {
   switch (stage) {
     case "ATTRIBUTION_VERIFIED":
-      return "Authoritative financial commission ledger events recorded. Referral attribution fully proven.";
+      return "Authoritative financial commission ledger events recorded from historical baseline (OwnerRez PMS). Hostaway direct commission attribution is currently disabled under Phase 6 freeze.";
     case "BOOKING_ATTRIBUTION_UNPROVEN":
       return "Referral clicks and reservations recorded, awaiting financial reconciliation and attribution settlement.";
     case "CLICK_TRACKING_VERIFIED":

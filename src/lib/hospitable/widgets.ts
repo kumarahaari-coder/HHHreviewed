@@ -28,7 +28,8 @@ const RESERVED_PLACEHOLDERS = new Set([
   "none",
   "null",
   "undefined",
-  "fake"
+  "fake",
+  "hostaway-direct"
 ]);
 
 /**

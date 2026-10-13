@@ -51,8 +51,8 @@ export function attributeReservation(res: Partial<Reservation>): AttributionResu
     try {
       const original = JSON.parse(res.originalData);
       const widgetId = original?.metadata?.widget_id || original?.widget_id;
-      if (widgetId) {
-        const site = sites.find(s => s.hospitableWidgetId === widgetId);
+      if (widgetId && widgetId !== "hostaway-direct") {
+        const site = sites.find(s => s.hospitableWidgetId === widgetId && s.hospitableWidgetId !== "hostaway-direct");
         if (site && site.status === "ACTIVE") {
           return {
             partnerId: site.partnerId,
