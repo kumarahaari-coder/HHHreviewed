@@ -2,13 +2,12 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { useClerk } from "@clerk/nextjs";
+import { signOut } from "@/lib/auth/client";
 import { ShieldAlert, RefreshCw, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function PendingAccessPage() {
   const router = useRouter();
-  const { signOut } = useClerk();
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-canvas font-sans px-4">

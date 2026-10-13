@@ -1,10 +1,14 @@
 import { getOwnerRezBookings, OwnerRezApiError, OwnerRezConfigurationError } from "@/lib/ownerrez/client";
 import { type NextRequest } from "next/server";
+import { requireAdminApi } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
+  const denied = await requireAdminApi();
+  if (denied) return denied;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const queryObj: Record<string, string> = {};

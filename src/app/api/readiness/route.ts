@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
 import { isSupabaseEnabled } from "@/lib/supabase/data-store";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireAdminApi } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 /**
- * Public Read-Only Readiness Endpoint
+ * Read-Only Readiness Endpoint
  * Used to verify database connectivity and migration version status before cutover.
- * Completely independent of Clerk authentication to prevent circular dependency issues during rollout.
+ * Admin-only.
  */
 export async function GET() {
+  const denied = await requireAdminApi();
+  if (denied) return denied;
+
   const now = new Date().toISOString();
 
   try {

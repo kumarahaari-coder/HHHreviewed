@@ -29,6 +29,7 @@ export interface User {
   createdAt: string;
   clerkUserId?: string;
   clerkInvitationId?: string;
+  hasPassword?: boolean;
   onboardingStatus?: "PENDING" | "INVITED" | "MAPPED" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
 }
 

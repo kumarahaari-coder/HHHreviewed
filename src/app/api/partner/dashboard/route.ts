@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getClerkAuthSession, isAdminRole, isCreatorRole } from "@/lib/authorization";
+import { getAuthSession, isAdminRole, isCreatorRole } from "@/lib/authorization";
 import { getPartnerDashboardData, getAllPartners } from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getClerkAuthSession();
+    const session = await getAuthSession();
 
     if (!session) {
       return NextResponse.json({ success: false, error: "Unauthenticated" }, { status: 401 });

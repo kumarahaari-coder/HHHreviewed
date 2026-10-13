@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAllSites, findPartnerById } from "@/lib/supabase/data-store";
-import { getClerkAuthSession, isAdminRole } from "@/lib/authorization";
+import { getAuthSession, isAdminRole } from "@/lib/authorization";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export async function GET(req: Request) {
       if (partner) {
         const pStatus = (partner.status || "").toLowerCase();
         if (pStatus === "archived" || pStatus === "suspended") {
-          const session = await getClerkAuthSession();
+          const session = await getAuthSession();
           if (!session || !isAdminRole(session.role)) {
             return NextResponse.json(
               { success: false, error: `Partner account is ${pStatus}. Access to active tenant resources is revoked.` },

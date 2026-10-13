@@ -3,7 +3,6 @@ import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import {
   findPartnerById,
   findUserByEmail,
-  updateClerkInvitation,
   createCreatorInvitation,
   suspendPartner,
   activatePartner,
@@ -11,12 +10,7 @@ import {
   deletePartner,
   updatePartner
 } from "@/lib/supabase/data-store";
-import {
-  createClerkPartnerInvitation,
-  revokeClerkInvitation,
-  banClerkUser,
-  unbanClerkUser
-} from "@/lib/auth/clerk-admin";
+import { sendPartnerInvitation, sendAdminPasswordReset, revokeUserAccess } from "@/lib/auth/invitations";
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,14 +32,9 @@ export async function POST(req: NextRequest) {
     }
 
     const user = await findUserByEmail(partner.email);
-    const clerkUserId = user?.clerkUserId || "";
-    const clerkInvitationId = user?.clerkInvitationId || "";
 
     if (action === "RESEND_INVITE") {
-      // 1. Revoke old pending invitation if present in Clerk
-      if (clerkInvitationId) {
-        await revokeClerkInvitation(clerkInvitationId);
-      }
+      // 1. (Older unused invitation links are voided automatically when a fresh one is issued)
 
       // 2. Ensure application user exists
       let targetUser = user;
@@ -62,41 +51,41 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 3. Create fresh invitation via Clerk
-      const clerkRes = await createClerkPartnerInvitation(
-        partner.email,
-        partner.id,
-        targetUser.id,
-        "PARTNER_OWNER"
-      );
+      // 3. Issue a fresh invitation link by email
+      const inviteRes = await sendPartnerInvitation(targetUser.id, partner.email, partner.businessName);
 
-      if (!clerkRes.success || !clerkRes.invitationId) {
+      if (!inviteRes.success) {
         return NextResponse.json({
           success: false,
-          error: `Clerk resend failed: ${clerkRes.error || "Unknown Clerk error"}`
+          error: `Invitation resend failed: ${inviteRes.error || "Unknown error"}`
         }, { status: 502 });
       }
 
-      // 4. Update Supabase with new Clerk invitation ID
-      await updateClerkInvitation(targetUser.id, clerkRes.invitationId);
-
       return NextResponse.json({
         success: true,
-        message: `Fresh Clerk invitation issued to ${partner.email}. Invitation ID: ${clerkRes.invitationId}`
+        message: `Fresh invitation emailed to ${partner.email}.`
       });
 
     } else if (action === "RESET_PASSWORD") {
+      if (!user || user.status !== "ACTIVE") {
+        return NextResponse.json({
+          success: false,
+          error: "Password reset is only available for active accounts. Resend the invitation instead."
+        }, { status: 400 });
+      }
+      const resetRes = await sendAdminPasswordReset(user.id, user.email);
+      if (!resetRes.success) {
+        return NextResponse.json({ success: false, error: `Reset email failed: ${resetRes.error}` }, { status: 502 });
+      }
       return NextResponse.json({
         success: true,
-        message: `Password reset instructions sent for ${partner.email}.`
+        message: `Password reset link emailed to ${partner.email}.`
       });
 
     } else if (action === "SUSPEND") {
       await suspendPartner(partner.id);
 
-      if (clerkUserId && clerkUserId.startsWith("user_")) {
-        await banClerkUser(clerkUserId);
-      }
+      if (user) await revokeUserAccess(user.id);
 
       return NextResponse.json({
         success: true,
@@ -106,10 +95,6 @@ export async function POST(req: NextRequest) {
     } else if (action === "ACTIVATE" || action === "RESTORE") {
       await activatePartner(partner.id);
 
-      if (clerkUserId && clerkUserId.startsWith("user_")) {
-        await unbanClerkUser(clerkUserId);
-      }
-
       return NextResponse.json({
         success: true,
         message: `Partner ${partner.businessName} restored to active operational status.`
@@ -118,15 +103,11 @@ export async function POST(req: NextRequest) {
     } else if (action === "ARCHIVE") {
       await archivePartner(partner.id);
 
-      if (clerkUserId && clerkUserId.startsWith("user_")) {
-        await banClerkUser(clerkUserId);
-      } else if (clerkInvitationId && clerkInvitationId.startsWith("inv_")) {
-        await revokeClerkInvitation(clerkInvitationId);
-      }
+      if (user) await revokeUserAccess(user.id);
 
       return NextResponse.json({
         success: true,
-        message: `Partner ${partner.businessName} archived and access revoked in Clerk.`
+        message: `Partner ${partner.businessName} archived and access revoked.`
       });
 
     } else if (action === "REMOVE" || action === "DELETE") {
@@ -140,11 +121,7 @@ export async function POST(req: NextRequest) {
         }, { status: 400 });
       }
 
-      if (clerkUserId && clerkUserId.startsWith("user_")) {
-        await banClerkUser(clerkUserId);
-      } else if (clerkInvitationId && clerkInvitationId.startsWith("inv_")) {
-        await revokeClerkInvitation(clerkInvitationId);
-      }
+      if (user) await revokeUserAccess(user.id);
       return NextResponse.json({
         success: true,
         message: result.message

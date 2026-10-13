@@ -6,13 +6,7 @@
 
 export interface AppConfig {
   env: "development" | "preview" | "production";
-  authMode: "clerk" | "mock_dev_only";
-  clerk: {
-    secretKey?: string;
-    publishableKey?: string;
-    webhookSecret?: string;
-    isConfigured: boolean;
-  };
+  authMode: "password" | "mock_dev_only";
   r2: {
     accountId?: string;
     accessKeyId?: string;
@@ -82,10 +76,8 @@ export function isMockAuthAllowed(): boolean {
 export function loadAppConfig(): AppConfig {
   const nodeEnv = (process.env.NODE_ENV || "development") as AppConfig["env"];
 
-  const authMode: AppConfig["authMode"] = isMockAuthAllowed() ? "mock_dev_only" : "clerk";
+  const authMode: AppConfig["authMode"] = isMockAuthAllowed() ? "mock_dev_only" : "password";
 
-  const clerkSecret = process.env.CLERK_SECRET_KEY;
-  const clerkPub = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
   // Cloudflare R2 Credentials
   const r2AccountId = process.env.R2_ACCOUNT_ID;
@@ -108,12 +100,6 @@ export function loadAppConfig(): AppConfig {
   return {
     env: nodeEnv,
     authMode,
-    clerk: {
-      secretKey: clerkSecret,
-      publishableKey: clerkPub,
-      webhookSecret: process.env.CLERK_WEBHOOK_SECRET,
-      isConfigured: Boolean(clerkSecret && clerkPub)
-    },
     r2: {
       accountId: r2AccountId,
       accessKeyId: r2AccessKeyId,

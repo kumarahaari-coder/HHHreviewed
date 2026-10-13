@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { getClerkAuthSession, isAdminRole } from "@/lib/authorization";
+import { getAuthSession, isAdminRole } from "@/lib/authorization";
 import { isMockAuthAllowed } from "@/lib/config";
 
 export async function POST(req: NextRequest) {
@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
     const isMock = isMockAuthAllowed();
 
     if (!isMock) {
-      const session = await getClerkAuthSession();
+      const session = await getAuthSession();
       if (!session) {
         return NextResponse.json({ success: false, error: "Unauthenticated" }, { status: 401 });
       }
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
       const targetRole = body.role;
       const targetPartnerId = body.partnerId;
 
-      // In production, role comes strictly from Clerk -> Supabase. Roles cannot be mutated.
+      // In production, role comes strictly from the database session. Roles cannot be mutated.
       if (targetRole && targetRole !== session.role) {
         return NextResponse.json({ success: false, error: "Forbidden: Production roles cannot be mutated." }, { status: 403 });
       }

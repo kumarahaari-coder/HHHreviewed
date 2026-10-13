@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
-import { createClerkPartnerInvitation, banClerkUser, revokeClerkInvitation } from "@/lib/auth/clerk-admin";
+import { sendPartnerInvitation, revokeUserAccess } from "@/lib/auth/invitations";
 import {
   createPartner,
   deletePartner,
   createCreatorInvitation,
-  updateClerkInvitation,
   findUserByEmail,
   findPartnerById,
   findPartnerByEmail,
@@ -70,7 +69,7 @@ export async function POST(req: NextRequest) {
       if (isInvitedOnly && existingPartner) {
         return NextResponse.json({
           success: false,
-          error: `A partner account with email ${email} already exists (${existingPartner.businessName}). You can resend the Clerk invitation from the partner actions menu without creating duplicate records.`
+          error: `A partner account with email ${email} already exists (${existingPartner.businessName}). You can resend the invitation from the partner actions menu without creating duplicate records.`
         }, { status: 409 });
       }
 
@@ -119,33 +118,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: `Failed to create partner user: ${userErr.message}` }, { status: 500 });
     }
 
-    // STEP 4: Issue Clerk Invitation
-    const clerkResult = await createClerkPartnerInvitation(
-      normalizedEmail,
-      createdPartner.id,
-      user.id,
-      "PARTNER_OWNER"
-    );
+    // STEP 4: Issue invitation email (single-use set-password link)
+    const inviteResult = await sendPartnerInvitation(user.id, normalizedEmail, businessName);
 
-    if (!clerkResult.success || !clerkResult.invitationId) {
-      console.error("[Admin Partner Create] Clerk invitation failed for user:", user.id, clerkResult.error);
+    if (!inviteResult.success) {
+      console.error("[Admin Partner Create] Invitation failed for user:", user.id, inviteResult.error);
       return NextResponse.json({
         success: false,
-        error: `Partner "${businessName}" was created in database, but failed to send Clerk invitation: ${clerkResult.error}. You can resend the invitation from the partner actions menu.`,
+        error: `Partner "${businessName}" was created in database, but the invitation email failed: ${inviteResult.error}. You can resend the invitation from the partner actions menu.`,
         partner: createdPartner,
         user
       }, { status: 502 });
     }
 
-    // STEP 5: Store Clerk Invitation ID
-    await updateClerkInvitation(user.id, clerkResult.invitationId);
-
     return NextResponse.json({
       success: true,
-      message: `Partner "${businessName}" created successfully. Status set to INVITED. Clerk invitation sent.`,
+      message: `Partner "${businessName}" created successfully. Status set to INVITED. Invitation email sent.`,
       partner: createdPartner,
-      user,
-      clerkInvitationId: clerkResult.invitationId
+      user
     });
 
   } catch (error: any) {
@@ -211,9 +201,6 @@ export async function DELETE(req: NextRequest) {
     }
 
     const user = await findUserByEmail(partner.email);
-    const clerkUserId = user?.clerkUserId;
-    const clerkInvitationId = user?.clerkInvitationId;
-
     const result = await deletePartner(partnerId);
 
     if (!result.success) {
@@ -225,10 +212,8 @@ export async function DELETE(req: NextRequest) {
       }, { status: 400 });
     }
 
-    if (clerkUserId && clerkUserId.startsWith("user_")) {
-      await banClerkUser(clerkUserId);
-    } else if (clerkInvitationId && clerkInvitationId.startsWith("inv_")) {
-      await revokeClerkInvitation(clerkInvitationId);
+    if (user) {
+      await revokeUserAccess(user.id);
     }
 
     return NextResponse.json({

@@ -1,4 +1,5 @@
 import { runHospitableSync } from "@/lib/hospitable/sync-runner";
+import { requireAdminApi } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,6 +10,9 @@ type SyncRequest = {
 };
 
 export async function POST(request: Request) {
+  const denied = await requireAdminApi();
+  if (denied) return denied;
+
   const body = (await request.json().catch(() => ({}))) as SyncRequest;
 
   const result = await runHospitableSync({

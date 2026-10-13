@@ -1,10 +1,14 @@
 import { getOwnerRezProperties, OwnerRezApiError, OwnerRezConfigurationError } from "@/lib/ownerrez/client";
 import { matchOwnerRezProperty, getCorePropertiesMappingSummary } from "@/lib/ownerrez/properties";
+import { requireAdminApi } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  const denied = await requireAdminApi();
+  if (denied) return denied;
+
   try {
     const data = (await getOwnerRezProperties()) as { items?: any[]; count?: number } | any[];
     

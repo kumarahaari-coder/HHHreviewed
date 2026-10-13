@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSupabaseEnabled } from "@/lib/supabase/data-store";
-import { createClerkClient } from "@clerk/backend";
+import { createAuthToken } from "@/lib/auth/tokens";
+import { getAppBaseUrl } from "@/lib/auth/email";
 
 // Shared secret token configured in both systems
 const BRIDGE_TOKEN = process.env.SHOPIFY_HHH_BRIDGE_TOKEN;
-const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
         // Fetch user details
         const { data: user, error: userErr } = await supabase
           .from("users")
-          .select("id, email, role, status, clerk_user_id")
+          .select("id, email, role, status")
           .eq("id", applicationUserId)
           .maybeSingle();
 
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
         // Fallback: match by email address for pre-approved users
         const { data: user, error: userErr } = await supabase
           .from("users")
-          .select("id, email, role, status, clerk_user_id")
+          .select("id, email, role, status")
           .eq("email", email.toLowerCase().trim())
           .maybeSingle();
 
@@ -111,7 +111,6 @@ export async function POST(req: NextRequest) {
           email: matchedUser.email,
           role: matchedUser.role,
           status: matchedUser.status,
-          clerk_user_id: matchedUser.clerkUserId || "mock_clerk_id_" + matchedUser.id,
         };
       }
     }
@@ -133,32 +132,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Access Denied: Role ${role} is not authorized for Shopify storefront access` }, { status: 403 });
     }
 
-    // Get clerkUserId
-    const clerkUserId = dbUser.clerk_user_id;
-    if (!clerkUserId) {
-      console.warn(`[Shopify Handoff Denied] Clerk user ID not mapped for ${dbUser.email}`);
-      return NextResponse.json({ error: "Access Denied: User has not completed Clerk sign-up" }, { status: 400 });
-    }
-
-    // 4. Generate Clerk Sign-in Token (Ticket)
-    if (!CLERK_SECRET_KEY) {
-      // Dev simulation fallback
-      console.log(`[Shopify Handoff Dev Mode] Generating mock Clerk ticket for ${clerkUserId}`);
-      const mockTicketUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/resolve?ticket=mock_ticket_${Math.random().toString(36).substring(2)}`;
-      return NextResponse.json({ success: true, redirectUrl: mockTicketUrl });
-    }
-
-    const clerk = createClerkClient({ secretKey: CLERK_SECRET_KEY });
-    const signInToken = await clerk.signInTokens.createSignInToken({
-      userId: clerkUserId,
-      expiresInSeconds: 60, // short-lived token
-    });
-
-    console.log(`[Shopify Handoff] Generated sign-in token for user ${clerkUserId}`);
+    // 4. Issue a single-use, 60-second handoff token. Visiting the URL below creates the session.
+    const handoffToken = await createAuthToken(dbUser.id, "HANDOFF");
+    console.log(`[Shopify Handoff] Issued handoff token for user ${dbUser.id}`);
 
     return NextResponse.json({
       success: true,
-      redirectUrl: signInToken.url
+      redirectUrl: `${getAppBaseUrl()}/api/auth/handoff?token=${encodeURIComponent(handoffToken)}`
     });
 
   } catch (error: any) {

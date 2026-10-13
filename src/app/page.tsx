@@ -2,14 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
 import { ShieldCheck, Landmark, Users, ArrowRight, Heart, LogIn } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { User } from "@/lib/db/schema";
 
 export default function EntryPortal() {
   const router = useRouter();
-  const { isLoaded, isSignedIn } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [mounted, setMounted] = useState(false);
 
@@ -53,7 +51,7 @@ export default function EntryPortal() {
       {/* Main Authentication / Entry Card */}
       <div className="w-full max-w-xl bg-brand-cream border border-brand-blush shadow-xl rounded-2xl p-8">
         {!isDevMockMode ? (
-          /* Clerk Production Auth Entry */
+          /* Production Auth Entry */
           <div className="text-center space-y-6">
             <h2 className="text-2xl font-extrabold text-brand-plum tracking-tight">
               Approved Partner Sign In

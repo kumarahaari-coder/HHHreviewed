@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { UserRole } from "./db/schema";
-import { findUserByClerkUserId, findUserByEmail, findUserById, mapClerkUser } from "./supabase/data-store";
+import { User, UserRole } from "./db/schema";
+import { findUserById } from "./supabase/data-store";
 import { isMockAuthAllowed } from "./config";
+import { getSessionUserId } from "./auth/session";
 
 export interface AuthSession {
   userId: string;
@@ -52,6 +52,66 @@ export interface AuthResolutionResult {
   } | null;
 }
 
+function evaluateUserAccess(user: User, clerkUserId?: string): AuthResolutionResult {
+  // Require active state
+  const isApprovedStatus = user.status === "ACTIVE";
+  if (!isApprovedStatus) {
+    return {
+      authenticated: true,
+      status: "PENDING_ACCESS",
+      reason: `ACCOUNT_${user.status || "INACTIVE"}`,
+      session: null,
+      user: null
+    };
+  }
+
+  if (!user.role) {
+    return {
+      authenticated: true,
+      status: "PENDING_ACCESS",
+      reason: "NO_ROLE_ASSIGNED",
+      session: null,
+      user: null
+    };
+  }
+
+  // Require valid partner mapping for creators
+  if (isCreatorRole(user.role) && !user.partnerId) {
+    return {
+      authenticated: true,
+      status: "PENDING_ACCESS",
+      reason: "NO_PARTNER_ASSIGNED",
+      session: null,
+      user: null
+    };
+  }
+
+  const userName = user.name || (isAdminRole(user.role) ? "Admin User" : "Partner Owner");
+
+  const session: AuthSession = {
+    userId: user.id,
+    name: userName,
+    email: user.email,
+    role: user.role,
+    partnerId: isAdminRole(user.role) ? undefined : user.partnerId,
+    clerkUserId
+  };
+
+  return {
+    authenticated: true,
+    status: "APPROVED",
+    session,
+    user: {
+      id: user.id,
+      name: userName,
+      email: user.email,
+      role: user.role,
+      partnerId: session.partnerId,
+      clerkUserId
+    }
+  };
+}
+
 /**
  * Server-side authoritative session resolution with detailed diagnostic status.
  */
@@ -75,141 +135,21 @@ export async function resolveAuthSession(): Promise<AuthResolutionResult> {
         } catch (_) {}
       }
 
-      // Canonical identity resolution via Clerk
-      let clerkUserId: string | null = null;
-      try {
-        const authData = await auth();
-        clerkUserId = authData.userId;
-      } catch (_) {
-        return {
-          authenticated: false,
-          status: "UNAUTHENTICATED",
-          session: null,
-          user: null
-        };
-      }
-
-      if (!clerkUserId) {
-        return {
-          authenticated: false,
-          status: "UNAUTHENTICATED",
-          session: null,
-          user: null
-        };
-      }
-
-      let user = await findUserByClerkUserId(clerkUserId);
-
-      // Verified Primary Email Mapping Fallback:
-      // If clerk_user_id was never linked (e.g. invited user or seeded account),
-      // resolve against Clerk's cryptographically verified primary email.
-      if (!user) {
-        let clerkUser: any = null;
-        try {
-          clerkUser = await currentUser();
-        } catch (_) {}
-
-        if (clerkUser) {
-          const primaryEmailObj = clerkUser.emailAddresses?.find(
-            (e: any) => e.id === clerkUser.primaryEmailAddressId
-          );
-          const isVerified = primaryEmailObj?.verification?.status === "verified";
-          const verifiedEmail = isVerified ? primaryEmailObj?.emailAddress?.toLowerCase().trim() : null;
-
-          if (verifiedEmail) {
-            const existingUser = await findUserByEmail(verifiedEmail);
-            if (existingUser) {
-              // SECURITY: Never overwrite an existing different Clerk identity
-              if (existingUser.clerkUserId && existingUser.clerkUserId !== clerkUserId) {
-                console.warn(`[Auth Security] Refusing to link Clerk user ${clerkUserId} to ${existingUser.email}: already linked to ${existingUser.clerkUserId}`);
-                return {
-                  authenticated: true,
-                  status: "PENDING_ACCESS",
-                  reason: "IDENTITY_CONFLICT",
-                  session: null,
-                  user: null
-                };
-              }
-
-              await mapClerkUser({
-                internalUserId: existingUser.id,
-                email: verifiedEmail,
-                clerkUserId: clerkUserId,
-                operation: "MAP",
-                source: "SESSION_RESOLVER"
-              });
-              user = await findUserById(existingUser.id);
-            }
-          }
+      // Native password session (hhh_session cookie), validated against the database
+      const nativeUserId = await getSessionUserId();
+      if (nativeUserId) {
+        const nativeUser = await findUserById(nativeUserId);
+        if (nativeUser) {
+          return evaluateUserAccess(nativeUser);
         }
       }
 
-      if (!user) {
-        return {
-          authenticated: true,
-          status: "PENDING_ACCESS",
-          reason: "USER_NOT_REGISTERED",
-          session: null,
-          user: null
-        };
-      }
-
-      // Require active state
-      const isApprovedStatus = user.status === "ACTIVE";
-      if (!isApprovedStatus) {
-        return {
-          authenticated: true,
-          status: "PENDING_ACCESS",
-          reason: `ACCOUNT_${user.status || "INACTIVE"}`,
-          session: null,
-          user: null
-        };
-      }
-
-      if (!user.role) {
-        return {
-          authenticated: true,
-          status: "PENDING_ACCESS",
-          reason: "NO_ROLE_ASSIGNED",
-          session: null,
-          user: null
-        };
-      }
-
-      // Require valid partner mapping for creators
-      if (isCreatorRole(user.role) && !user.partnerId) {
-        return {
-          authenticated: true,
-          status: "PENDING_ACCESS",
-          reason: "NO_PARTNER_ASSIGNED",
-          session: null,
-          user: null
-        };
-      }
-
-      const userName = user.name || (isAdminRole(user.role) ? "Admin User" : "Partner Owner");
-
-      const session: AuthSession = {
-        userId: user.id,
-        name: userName,
-        email: user.email,
-        role: user.role,
-        partnerId: isAdminRole(user.role) ? undefined : user.partnerId,
-        clerkUserId: clerkUserId
-      };
-
+      // No valid native session
       return {
-        authenticated: true,
-        status: "APPROVED",
-        session,
-        user: {
-          id: user.id,
-          name: userName,
-          email: user.email,
-          role: user.role,
-          partnerId: session.partnerId,
-          clerkUserId: clerkUserId
-        }
+        authenticated: false,
+        status: "UNAUTHENTICATED",
+        session: null,
+        user: null
       };
     }
 
@@ -286,12 +226,12 @@ export async function resolveAuthSession(): Promise<AuthResolutionResult> {
 /**
  * Server-side authoritative session resolver.
  */
-export async function getClerkAuthSession(): Promise<AuthSession | null> {
+export async function getAuthSession(): Promise<AuthSession | null> {
   const result = await resolveAuthSession();
   return result.session;
 }
 
 export async function getCurrentSession(): Promise<AuthSession | null> {
-  return getClerkAuthSession();
+  return getAuthSession();
 }
 

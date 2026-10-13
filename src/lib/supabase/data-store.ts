@@ -29,43 +29,6 @@ function assertSupabaseClient() {
   return createAdminClient();
 }
 
-/**
- * User & Authorization Queries
- */
-export async function findUserByClerkUserId(clerkUserId: string): Promise<User | null> {
-  if (!isSupabaseEnabled()) {
-    return mockDb.users.find(u => u.clerkUserId === clerkUserId) || null;
-  }
-
-  const supabase = assertSupabaseClient();
-  const { data, error } = await supabase
-    .from("users")
-    .select("id, name, email, role, partner_id, status, clerk_invitation_id, clerk_user_id, onboarding_status, created_at, last_login")
-    .eq("clerk_user_id", clerkUserId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("[DataStore Error] findUserByClerkUserId failed:", error);
-    throw new Error(`Failed to query user by Clerk User ID: ${error.message}`);
-  }
-
-  if (!data) return null;
-
-  return {
-    id: data.id,
-    name: data.name,
-    email: data.email,
-    role: data.role as UserRole,
-    partnerId: data.partner_id || undefined,
-    status: data.status,
-    clerkInvitationId: data.clerk_invitation_id || undefined,
-    clerkUserId: data.clerk_user_id || undefined,
-    onboardingStatus: data.onboarding_status,
-    createdAt: data.created_at,
-    lastLogin: data.last_login || undefined
-  };
-}
-
 export async function findUserByEmail(email: string): Promise<User | null> {
   const normalizedEmail = email.toLowerCase().trim();
   if (!isSupabaseEnabled()) {
@@ -212,157 +175,6 @@ export async function createCreatorInvitation(params: {
   if (error || !data?.success) {
     console.error("[DataStore Error] create_creator_invitation_tx failed:", error);
     throw new Error(`Failed creator invitation in Supabase: ${error?.message || data?.error}`);
-  }
-
-  const userRow = data.user;
-  return {
-    id: userRow.id,
-    name: userRow.name,
-    email: userRow.email,
-    role: userRow.role,
-    partnerId: userRow.partner_id,
-    status: userRow.status,
-    onboardingStatus: userRow.onboarding_status,
-    createdAt: userRow.created_at
-  };
-}
-
-export async function updateClerkInvitation(userId: string, invitationId: string): Promise<void> {
-  if (!isSupabaseEnabled()) {
-    const u = mockDb.users.find(usr => usr.id === userId);
-    if (u) {
-      u.clerkInvitationId = invitationId;
-      u.onboardingStatus = "INVITED";
-    }
-    return;
-  }
-
-  const supabase = assertSupabaseClient();
-  const { error } = await supabase
-    .from("users")
-    .update({
-      clerk_invitation_id: invitationId,
-      onboarding_status: "INVITED",
-      updated_at: new Date().toISOString()
-    })
-    .eq("id", userId);
-
-  if (error) {
-    console.error("[DataStore Error] updateClerkInvitation failed:", error);
-    throw new Error(`Failed to update Clerk invitation ID in Supabase: ${error.message}`);
-  }
-}
-
-/**
- * Generic Clerk User Mapping RPC (Used by Webhooks, /auth/resolve, and Repairs)
- */
-export async function mapClerkUser(params: {
-  internalUserId?: string;
-  email?: string;
-  clerkUserId: string;
-  partnerId?: string;
-  partnerCode?: string;
-  operation?: "MAP" | "REPAIR";
-  performedByUserId?: string;
-  source?: string;
-}): Promise<User> {
-  // SECURITY: Check if target user already exists and verify no identity conflict
-  let targetUser: User | null = null;
-  if (params.internalUserId) {
-    targetUser = await findUserById(params.internalUserId);
-  } else if (params.email) {
-    targetUser = await findUserByEmail(params.email);
-  }
-
-  if (targetUser?.clerkUserId && targetUser.clerkUserId !== params.clerkUserId) {
-    throw new Error(`[DataStore Security Violation] Refusing to overwrite existing Clerk identity '${targetUser.clerkUserId}' with '${params.clerkUserId}' for user ${targetUser.id} (${targetUser.email})`);
-  }
-
-  if (!isSupabaseEnabled()) {
-    const u = mockDb.users.find(usr => 
-      (params.internalUserId && usr.id === params.internalUserId) || 
-      (params.email && usr.email.toLowerCase().trim() === params.email.toLowerCase().trim())
-    );
-    if (u) {
-      if (u.clerkUserId && u.clerkUserId !== params.clerkUserId) {
-        throw new Error(`[MockDb] Security violation: cannot overwrite existing clerk_user_id ${u.clerkUserId} with ${params.clerkUserId}`);
-      }
-      u.clerkUserId = params.clerkUserId;
-      u.onboardingStatus = "MAPPED";
-      return u;
-    }
-    throw new Error(`[MockDb] No user found to map Clerk ID: ${params.clerkUserId}`);
-  }
-
-  const supabase = assertSupabaseClient();
-  const { data, error } = await supabase.rpc("map_clerk_user_tx", {
-    p_internal_user_id: params.internalUserId || null,
-    p_email: params.email ? params.email.toLowerCase().trim() : null,
-    p_exact_clerk_user_id: params.clerkUserId,
-    p_partner_id: params.partnerId || null,
-    p_partner_code: params.partnerCode || null,
-    p_operation: params.operation || "MAP",
-    p_performed_by_user_id: params.performedByUserId || null,
-    p_source: params.source || "CLERK_WEBHOOK"
-  });
-
-  if (error || !data?.success) {
-    const errMessage = error?.message || data?.error || "";
-    // Clean Multi-Role Mapping: If remote RPC has legacy CREATOR role restriction, perform standard data store user mapping for all supported roles
-    if (errMessage.includes("expected CREATOR") || errMessage.includes("invalid role")) {
-      if (!targetUser && params.internalUserId) {
-        targetUser = await findUserById(params.internalUserId);
-      }
-      if (!targetUser && params.email) {
-        targetUser = await findUserByEmail(params.email);
-      }
-
-      if (targetUser && ["SUPER_ADMIN", "FINANCE_ADMIN", "ADMIN", "PARTNER_OWNER", "CREATOR"].includes(targetUser.role)) {
-        const { data: updatedData, error: updateErr } = await supabase
-          .from("users")
-          .update({
-            clerk_user_id: params.clerkUserId,
-            onboarding_status: "MAPPED",
-            status: targetUser.status === "INVITED" ? "ACTIVE" : targetUser.status,
-            updated_at: new Date().toISOString()
-          })
-          .eq("id", targetUser.id)
-          .select("id, name, email, role, partner_id, status, clerk_user_id, onboarding_status, created_at, updated_at")
-          .single();
-
-        if (!updateErr && updatedData) {
-          // Log audit entry
-          await supabase.from("application_audit_logs").insert({
-            action: "USER_CLERK_IDENTITY_MAPPED",
-            target_user_id: updatedData.id,
-            partner_id: updatedData.partner_id,
-            performed_by_user_id: params.performedByUserId || "SYSTEM",
-            source: params.source || "AUTH_RESOLVER",
-            details: {
-              email: updatedData.email,
-              role: updatedData.role,
-              clerkUserId: params.clerkUserId,
-              operation: params.operation || "MAP"
-            }
-          });
-
-          return {
-            id: updatedData.id,
-            name: updatedData.name,
-            email: updatedData.email,
-            role: updatedData.role as UserRole,
-            partnerId: updatedData.partner_id || undefined,
-            status: updatedData.status,
-            clerkUserId: updatedData.clerk_user_id || undefined,
-            onboardingStatus: updatedData.onboarding_status,
-            createdAt: updatedData.created_at
-          };
-        }
-      }
-    }
-
-    console.error("[DataStore Error] map_clerk_user_tx failed:", errMessage);
-    throw new Error(`Failed to map Clerk user in Supabase: ${errMessage || "RPC transaction failure"}`);
   }
 
   const userRow = data.user;
@@ -851,7 +663,7 @@ export async function getAllPartnerUsers(): Promise<User[]> {
   const supabase = assertSupabaseClient();
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, role, partner_id, status, clerk_user_id, clerk_invitation_id, onboarding_status, created_at, updated_at")
+    .select("id, name, email, role, partner_id, status, clerk_user_id, clerk_invitation_id, onboarding_status, created_at, updated_at, password_hash")
     .not("partner_id", "is", null);
 
   if (error) {
@@ -869,6 +681,7 @@ export async function getAllPartnerUsers(): Promise<User[]> {
     clerkInvitationId: u.clerk_invitation_id || undefined,
     clerkUserId: u.clerk_user_id || undefined,
     clerkId: u.clerk_user_id || undefined,
+    hasPassword: Boolean(u.password_hash),
     onboardingStatus: u.onboarding_status,
     createdAt: u.created_at
   }));

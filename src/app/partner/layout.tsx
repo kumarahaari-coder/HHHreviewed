@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, Suspense } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { useClerk } from "@clerk/nextjs";
+import { signOut } from "@/lib/auth/client";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -117,8 +117,6 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
       isSubscribed = false;
     };
   }, [pathname, previewPartnerId, router]);
-
-  const { signOut } = useClerk();
 
   const handleLogout = async () => {
     db.currentUser = null;

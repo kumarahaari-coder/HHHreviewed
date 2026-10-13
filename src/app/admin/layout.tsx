@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useClerk } from "@clerk/nextjs";
+import { signOut } from "@/lib/auth/client";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -23,7 +23,6 @@ import { isMockAuthAllowed } from "@/lib/config";
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { signOut } = useClerk();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 

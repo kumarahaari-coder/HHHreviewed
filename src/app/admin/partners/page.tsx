@@ -54,6 +54,7 @@ interface PartnerUserRecord {
   role: string;
   partnerId?: string;
   clerkId?: string;
+  hasPassword?: boolean;
   clerkUserId?: string;
   status: string;
 }
@@ -380,7 +381,7 @@ function PartnerManagementContent() {
                   const matchingUser = partnerUsers.find(
                     u => u.partnerId === p.id || (u.email && u.email.toLowerCase() === p.email.toLowerCase())
                   );
-                  const hasClerkLink = Boolean(matchingUser && (matchingUser.clerkId || matchingUser.clerkUserId));
+                  const hasLoginAccount = Boolean(matchingUser && (matchingUser.hasPassword || matchingUser.clerkId || matchingUser.clerkUserId));
 
                   return (
                     <TableRow key={p.id} onClick={() => setSelectedPartner(p)}>
@@ -416,13 +417,13 @@ function PartnerManagementContent() {
                             {formatStatusLabel(p.status)}
                           </StatusBadge>
                           {p.status === "ACTIVE" && (
-                            hasClerkLink ? (
+                            hasLoginAccount ? (
                               <span className="text-[10px] text-emerald-400 block font-medium">
-                                ✓ Login Ready (Clerk Linked)
+                                ✓ Login Ready
                               </span>
                             ) : (
                               <span className="text-[10px] text-amber-400 block font-medium">
-                                ⚠ Pending Clerk Registration
+                                ⚠ Awaiting Account Setup
                               </span>
                             )
                           )}
@@ -598,7 +599,7 @@ function PartnerManagementContent() {
             const matchingUser = partnerUsers.find(
               u => u.partnerId === p.id || (u.email && u.email.toLowerCase() === p.email.toLowerCase())
             );
-            const hasClerkLink = Boolean(matchingUser && (matchingUser.clerkId || matchingUser.clerkUserId));
+            const hasLoginAccount = Boolean(matchingUser && (matchingUser.hasPassword || matchingUser.clerkId || matchingUser.clerkUserId));
 
             return (
               <TableMobileCard
@@ -624,9 +625,9 @@ function PartnerManagementContent() {
                     label: "Login State",
                     value:
                       p.status === "ACTIVE"
-                        ? hasClerkLink
+                        ? hasLoginAccount
                           ? "Login Ready"
-                          : "Pending Registration"
+                          : "Awaiting Setup"
                         : formatStatusLabel(p.status)
                   },
                   { label: "Linked Sites", value: partnerSites.length, numeric: true },
@@ -652,7 +653,7 @@ function PartnerManagementContent() {
           const matchingUser = partnerUsers.find(
             u => u.partnerId === selectedPartner.id || (u.email && u.email.toLowerCase() === selectedPartner.email.toLowerCase())
           );
-          const hasClerkLink = Boolean(matchingUser && (matchingUser.clerkId || matchingUser.clerkUserId));
+          const hasLoginAccount = Boolean(matchingUser && (matchingUser.hasPassword || matchingUser.clerkId || matchingUser.clerkUserId));
 
           return (
             <div className="space-y-5 font-sans py-1">
@@ -695,11 +696,11 @@ function PartnerManagementContent() {
                 </h4>
                 <div className="bg-surface border border-divider rounded-lg p-3.5 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-secondary">Clerk Identity Link:</span>
-                    <span className={`text-xs font-medium ${hasClerkLink ? "text-emerald-400" : "text-amber-400"}`}>
-                      {hasClerkLink
-                        ? `Linked (${matchingUser?.clerkId || matchingUser?.clerkUserId})`
-                        : "Pending Clerk Registration"}
+                    <span className="text-xs font-medium text-secondary">Login Account:</span>
+                    <span className={`text-xs font-medium ${hasLoginAccount ? "text-emerald-400" : "text-amber-400"}`}>
+                      {hasLoginAccount
+                        ? "Password set — can sign in"
+                        : "Awaiting Account Setup"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">

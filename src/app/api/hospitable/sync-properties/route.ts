@@ -6,11 +6,15 @@ import {
 } from "@/lib/hospitable/client";
 
 import { normalizeHospitableProperty } from "@/lib/hospitable/normalize";
+import { requireAdminApi } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST() {
+  const denied = await requireAdminApi();
+  if (denied) return denied;
+
   try {
     const propertyPage = await fetchHospitableCollection(
       buildCollectionPath("properties", "page=1&per_page=100")

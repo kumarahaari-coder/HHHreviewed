@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getClerkAuthSession, canPerformAdminReview, canAccessCreatorData, isAdminRole, isCreatorRole } from "../src/lib/authorization";
+import { getAuthSession, canPerformAdminReview, canAccessCreatorData, isAdminRole, isCreatorRole } from "../src/lib/authorization";
 import { isMockAuthAllowed } from "../src/lib/config";
 import { POST as ownerrezSyncHandler } from "../src/app/api/ownerrez/sync/route";
 import { GET as reservationsHandler } from "../src/app/api/admin/reservations/route";
@@ -53,7 +53,7 @@ async function runProductionAuthHardeningTests() {
   assert(resRes.status === 401 || resRes.status === 403, "Anonymous caller to /api/admin/reservations receives HTTP 401/403");
 
   // Test D: Forged demo cookies ingestion
-  const forgedSession = await getClerkAuthSession();
+  const forgedSession = await getAuthSession();
   assert(forgedSession === null, "Forged/stale demo cookies return null session in production mode");
 
   // Test E: Anonymous call to POST /api/auth/switch-role

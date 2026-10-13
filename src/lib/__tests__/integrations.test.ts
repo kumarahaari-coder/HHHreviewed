@@ -3,7 +3,6 @@ import { db } from "../db/mockDb";
 import { validatePdfFileSecurity, generateOpaqueR2Key, isSignedUrlExpired, checkR2Connectivity } from "../storage/r2";
 import { isAdminRole, isCreatorRole, canAccessCreatorData } from "../authorization";
 import { sendTransactionalEmail } from "../email/brevo";
-import { verifyClerkWebhookSignature } from "../auth/clerk";
 import { verifyStripeSignature } from "../stripe";
 import { beforeSendSanitizer } from "../monitoring/sentry";
 import { attributeReservation } from "../attribution";
@@ -116,14 +115,6 @@ export async function runIntegrationTestSuite() {
   assert.ok(auditLogs.some((l: any) => l.action === "DOWNLOAD" && l.performedByUserId === "creator1"));
   console.log("✔ Test Group 4 Passed: Creator Document Download & Audit Logging");
 
-  // Group 5: Clerk Webhook Signature Validation & User Idempotency
-  const validSvix = verifyClerkWebhookSignature("{}", { svixId: "msg_123", svixTimestamp: "10000", svixSignature: "v1,sig" });
-  assert.strictEqual(validSvix, true);
-
-  db.recordIdempotency("CLERK", "clerk_evt_100", "user.created");
-  assert.strictEqual(db.isIdempotentEvent("CLERK", "clerk_evt_100"), true);
-  assert.strictEqual(db.isIdempotentEvent("CLERK", "clerk_evt_999"), false);
-  console.log("✔ Test Group 5 Passed: Clerk Webhook Signatures & User Idempotency");
 
   // Group 6: Stripe Webhook Signature Validation & Out-Of-Order Event Handling
   const validStripeSig = verifyStripeSignature("{}", "t=100,v1=sig");

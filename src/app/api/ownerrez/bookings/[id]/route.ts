@@ -1,4 +1,5 @@
 import { getOwnerRezBooking, OwnerRezApiError, OwnerRezConfigurationError } from "@/lib/ownerrez/client";
+import { requireAdminApi } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,6 +8,9 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const denied = await requireAdminApi();
+  if (denied) return denied;
+
   try {
     const { id } = await params;
     if (!id || !id.trim()) {

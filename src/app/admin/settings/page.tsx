@@ -28,7 +28,7 @@ export default function SettingsAndAudits() {
             <div className="space-y-3 text-xs text-secondary">
               <div className="flex items-start gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
-                <span>Clerk Session Authentication & Role Boundaries Enforced</span>
+                <span>Password Session Authentication & Role Boundaries Enforced</span>
               </div>
               <div className="flex items-start gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
