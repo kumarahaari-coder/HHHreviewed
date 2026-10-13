@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
-import { createClerkPartnerInvitation } from "@/lib/auth/clerk-admin";
-import { createPartner, deletePartner, createCreatorInvitation, updateClerkInvitation, findUserByEmail, getAllPartners } from "@/lib/supabase/data-store";
+import { createClerkPartnerInvitation, banClerkUser, revokeClerkInvitation } from "@/lib/auth/clerk-admin";
+import {
+  createPartner,
+  deletePartner,
+  createCreatorInvitation,
+  updateClerkInvitation,
+  findUserByEmail,
+  findPartnerById,
+  findPartnerByEmail,
+  getAllPartners,
+  getAllPartnerUsers,
+  updatePartner
+} from "@/lib/supabase/data-store";
 
 export async function GET(req: NextRequest) {
   try {
@@ -10,13 +21,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
     }
 
-    const partners = await getAllPartners();
+    const [partners, users] = await Promise.all([
+      getAllPartners(),
+      getAllPartnerUsers()
+    ]);
 
     return NextResponse.json({
       success: true,
-      partners
+      partners,
+      users
     });
   } catch (error: any) {
+    console.error("[Admin Partners GET Error]", error);
     return NextResponse.json({ success: false, error: error?.message || "Failed to list partners" }, { status: 500 });
   }
 }
@@ -33,6 +49,7 @@ export async function POST(req: NextRequest) {
       contactName,
       businessName,
       email,
+      phone,
       partnerCode: customPartnerCode
     } = body;
 
@@ -44,8 +61,23 @@ export async function POST(req: NextRequest) {
 
     // STEP 1: Duplicate Email Pre-Check
     const existingUser = await findUserByEmail(normalizedEmail);
-    if (existingUser) {
-      return NextResponse.json({ success: false, error: `A partner account with email ${email} already exists.` }, { status: 409 });
+    const existingPartner = await findPartnerByEmail(normalizedEmail);
+
+    if (existingUser || existingPartner) {
+      const isInvitedOnly = (existingUser?.status === "INVITED" || !existingUser) && 
+        (existingPartner?.status === "INVITED" || existingPartner?.status === "ACTIVE");
+
+      if (isInvitedOnly && existingPartner) {
+        return NextResponse.json({
+          success: false,
+          error: `A partner account with email ${email} already exists (${existingPartner.businessName}). You can resend the Clerk invitation from the partner actions menu without creating duplicate records.`
+        }, { status: 409 });
+      }
+
+      return NextResponse.json({
+        success: false,
+        error: `A partner account with email ${email} already exists and is active.`
+      }, { status: 409 });
     }
 
     // STEP 2: Create Real Partner Row
@@ -99,7 +131,7 @@ export async function POST(req: NextRequest) {
       console.error("[Admin Partner Create] Clerk invitation failed for user:", user.id, clerkResult.error);
       return NextResponse.json({
         success: false,
-        error: `Partner "${businessName}" was created, but failed to send Clerk invitation: ${clerkResult.error}. You can resend the invitation from the partner menu.`,
+        error: `Partner "${businessName}" was created in database, but failed to send Clerk invitation: ${clerkResult.error}. You can resend the invitation from the partner actions menu.`,
         partner: createdPartner,
         user
       }, { status: 502 });
@@ -119,5 +151,83 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error("[Admin Partner Create Error]", error);
     return NextResponse.json({ success: false, error: error?.message || "Failed to create partner" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const session = await getCurrentSession();
+    if (!session || !canPerformAdminReview(session)) {
+      return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
+    }
+
+    const body = await req.json();
+    const { partnerId, contactName, businessName, phone, status } = body;
+
+    if (!partnerId) {
+      return NextResponse.json({ success: false, error: "partnerId is required." }, { status: 400 });
+    }
+
+    const existing = await findPartnerById(partnerId);
+    if (!existing) {
+      return NextResponse.json({ success: false, error: `Partner with ID ${partnerId} not found.` }, { status: 404 });
+    }
+
+    const updated = await updatePartner(partnerId, {
+      contactName,
+      businessName,
+      phone,
+      status
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `Partner "${updated.businessName}" updated successfully.`,
+      partner: updated
+    });
+  } catch (error: any) {
+    console.error("[Admin Partner PATCH Error]", error);
+    return NextResponse.json({ success: false, error: error?.message || "Failed to update partner" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const session = await getCurrentSession();
+    if (!session || !canPerformAdminReview(session)) {
+      return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const partnerId = searchParams.get("partnerId");
+
+    if (!partnerId) {
+      return NextResponse.json({ success: false, error: "partnerId query parameter is required." }, { status: 400 });
+    }
+
+    const partner = await findPartnerById(partnerId);
+    if (!partner) {
+      return NextResponse.json({ success: false, error: `Partner with ID ${partnerId} not found.` }, { status: 404 });
+    }
+
+    const user = await findUserByEmail(partner.email);
+    const clerkUserId = user?.clerkUserId;
+    const clerkInvitationId = user?.clerkInvitationId;
+
+    const result = await deletePartner(partnerId);
+
+    if (clerkUserId && clerkUserId.startsWith("user_")) {
+      await banClerkUser(clerkUserId);
+    } else if (clerkInvitationId && clerkInvitationId.startsWith("inv_")) {
+      await revokeClerkInvitation(clerkInvitationId);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: result.message
+    });
+  } catch (error: any) {
+    console.error("[Admin Partner DELETE Error]", error);
+    return NextResponse.json({ success: false, error: error?.message || "Failed to delete partner" }, { status: 400 });
   }
 }

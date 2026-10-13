@@ -488,15 +488,341 @@ export async function createPartner(params: {
   };
 }
 
-export async function deletePartner(partnerId: string): Promise<void> {
+export async function findPartnerById(partnerId: string): Promise<Partner | null> {
   if (!isSupabaseEnabled()) {
-    const idx = mockDb.partners.findIndex(p => p.id === partnerId);
-    if (idx !== -1) mockDb.partners.splice(idx, 1);
+    return mockDb.partners.find(p => p.id === partnerId) || null;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("partners")
+    .select("id, partner_code, business_name, contact_name, contact_email, phone, payout_currency, payout_frequency, status, created_at")
+    .eq("id", partnerId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[DataStore Error] findPartnerById failed:", error);
+    throw new Error(`Failed to query partner by ID: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    partnerCode: data.partner_code,
+    businessName: data.business_name,
+    contactName: data.contact_name,
+    email: data.contact_email,
+    phone: data.phone || "",
+    paymentMethod: "BANK_TRANSFER",
+    currency: data.payout_currency || "USD",
+    payoutFrequency: data.payout_frequency || "MONTHLY",
+    status: data.status === "active" ? "ACTIVE" : data.status === "invited" ? "INVITED" : data.status === "suspended" ? "SUSPENDED" : data.status === "archived" ? "ARCHIVED" : (data.status?.toUpperCase() as any) || "ACTIVE",
+    createdAt: data.created_at
+  };
+}
+
+export async function findPartnerByEmail(email: string): Promise<Partner | null> {
+  const normEmail = email.toLowerCase().trim();
+  if (!isSupabaseEnabled()) {
+    return mockDb.partners.find(p => p.email.toLowerCase().trim() === normEmail) || null;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("partners")
+    .select("id, partner_code, business_name, contact_name, contact_email, phone, payout_currency, payout_frequency, status, created_at")
+    .eq("contact_email", normEmail)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[DataStore Error] findPartnerByEmail failed:", error);
+    throw new Error(`Failed to query partner by email: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: data.id,
+    partnerCode: data.partner_code,
+    businessName: data.business_name,
+    contactName: data.contact_name,
+    email: data.contact_email,
+    phone: data.phone || "",
+    paymentMethod: "BANK_TRANSFER",
+    currency: data.payout_currency || "USD",
+    payoutFrequency: data.payout_frequency || "MONTHLY",
+    status: data.status === "active" ? "ACTIVE" : data.status === "invited" ? "INVITED" : data.status === "suspended" ? "SUSPENDED" : data.status === "archived" ? "ARCHIVED" : (data.status?.toUpperCase() as any) || "ACTIVE",
+    createdAt: data.created_at
+  };
+}
+
+export async function updatePartner(partnerId: string, updates: {
+  contactName?: string;
+  businessName?: string;
+  phone?: string;
+  status?: string;
+}): Promise<Partner> {
+  if (!isSupabaseEnabled()) {
+    const p = mockDb.partners.find(x => x.id === partnerId);
+    if (!p) throw new Error(`Partner not found: ${partnerId}`);
+    if (updates.contactName !== undefined) p.contactName = updates.contactName;
+    if (updates.businessName !== undefined) p.businessName = updates.businessName;
+    if (updates.phone !== undefined) p.phone = updates.phone;
+    if (updates.status !== undefined) p.status = updates.status as any;
+    return p;
+  }
+
+  const supabase = assertSupabaseClient();
+  const dbUpdates: Record<string, any> = {
+    updated_at: new Date().toISOString()
+  };
+  if (updates.contactName !== undefined) dbUpdates.contact_name = updates.contactName;
+  if (updates.businessName !== undefined) dbUpdates.business_name = updates.businessName;
+  if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
+  if (updates.status !== undefined) {
+    dbUpdates.status = updates.status.toLowerCase();
+  }
+
+  const { data, error } = await supabase
+    .from("partners")
+    .update(dbUpdates)
+    .eq("id", partnerId)
+    .select("id, partner_code, business_name, contact_name, contact_email, phone, payout_currency, payout_frequency, status, created_at")
+    .single();
+
+  if (error) {
+    console.error("[DataStore Error] updatePartner failed:", error);
+    throw new Error(`Failed to update partner: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    partnerCode: data.partner_code,
+    businessName: data.business_name,
+    contactName: data.contact_name,
+    email: data.contact_email,
+    phone: data.phone || "",
+    paymentMethod: "BANK_TRANSFER",
+    currency: data.payout_currency || "USD",
+    payoutFrequency: data.payout_frequency || "MONTHLY",
+    status: data.status === "active" ? "ACTIVE" : data.status === "invited" ? "INVITED" : data.status === "suspended" ? "SUSPENDED" : data.status === "archived" ? "ARCHIVED" : (data.status?.toUpperCase() as any) || "ACTIVE",
+    createdAt: data.created_at
+  };
+}
+
+export async function suspendPartner(partnerId: string): Promise<void> {
+  if (!isSupabaseEnabled()) {
+    const p = mockDb.partners.find(x => x.id === partnerId);
+    if (!p) throw new Error(`Partner with ID ${partnerId} not found.`);
+    p.status = "SUSPENDED";
+    const u = mockDb.users.find(x => x.partnerId === partnerId);
+    if (u) u.status = "SUSPENDED";
     return;
   }
 
   const supabase = assertSupabaseClient();
-  await supabase.from("partners").delete().eq("id", partnerId);
+  const { error: pErr } = await supabase
+    .from("partners")
+    .update({ status: "suspended", updated_at: new Date().toISOString() })
+    .eq("id", partnerId);
+
+  if (pErr) {
+    console.error("[DataStore Error] suspendPartner failed:", pErr);
+    throw new Error(`Failed to suspend partner: ${pErr.message}`);
+  }
+
+  await supabase
+    .from("users")
+    .update({ status: "SUSPENDED", updated_at: new Date().toISOString() })
+    .eq("partner_id", partnerId);
+}
+
+export async function activatePartner(partnerId: string): Promise<void> {
+  if (!isSupabaseEnabled()) {
+    const p = mockDb.partners.find(x => x.id === partnerId);
+    if (!p) throw new Error(`Partner with ID ${partnerId} not found.`);
+    p.status = "ACTIVE";
+    const u = mockDb.users.find(x => x.partnerId === partnerId);
+    if (u) u.status = "ACTIVE";
+    return;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { error: pErr } = await supabase
+    .from("partners")
+    .update({ status: "active", updated_at: new Date().toISOString() })
+    .eq("id", partnerId);
+
+  if (pErr) {
+    console.error("[DataStore Error] activatePartner failed:", pErr);
+    throw new Error(`Failed to activate partner: ${pErr.message}`);
+  }
+
+  await supabase
+    .from("users")
+    .update({ status: "ACTIVE", updated_at: new Date().toISOString() })
+    .eq("partner_id", partnerId);
+}
+
+export async function archivePartner(partnerId: string): Promise<void> {
+  if (!isSupabaseEnabled()) {
+    const p = mockDb.partners.find(x => x.id === partnerId);
+    if (!p) throw new Error(`Partner with ID ${partnerId} not found.`);
+    p.status = "ARCHIVED";
+    const u = mockDb.users.find(x => x.partnerId === partnerId);
+    if (u) u.status = "SUSPENDED";
+    return;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { error: pErr } = await supabase
+    .from("partners")
+    .update({ status: "archived", updated_at: new Date().toISOString() })
+    .eq("id", partnerId);
+
+  if (pErr) {
+    console.error("[DataStore Error] archivePartner failed:", pErr);
+    throw new Error(`Failed to archive partner: ${pErr.message}`);
+  }
+
+  await supabase
+    .from("users")
+    .update({ status: "SUSPENDED", updated_at: new Date().toISOString() })
+    .eq("partner_id", partnerId);
+}
+
+export async function canDeletePartner(partnerId: string): Promise<{
+  canDelete: boolean;
+  reason?: string;
+  requiresArchive?: boolean;
+  siteCount: number;
+  reservationCount: number;
+  ledgerCount: number;
+}> {
+  const partner = await findPartnerById(partnerId);
+  if (!partner) {
+    return {
+      canDelete: false,
+      reason: "Partner not found",
+      requiresArchive: false,
+      siteCount: 0,
+      reservationCount: 0,
+      ledgerCount: 0
+    };
+  }
+
+  if (!isSupabaseEnabled()) {
+    const siteCount = mockDb.sites.filter(s => s.partnerId === partnerId).length;
+    const reservationCount = mockDb.reservations.filter(r => r.partnerId === partnerId).length;
+    const canDelete = siteCount === 0 && reservationCount === 0;
+    return {
+      canDelete,
+      reason: canDelete ? undefined : `Partner has ${siteCount} site(s) and ${reservationCount} reservation(s).`,
+      requiresArchive: !canDelete,
+      siteCount,
+      reservationCount,
+      ledgerCount: 0
+    };
+  }
+
+  const supabase = assertSupabaseClient();
+  const [{ count: siteCount }, { count: resCount }, { count: ledgerCount }] = await Promise.all([
+    supabase.from("sites").select("*", { count: "exact", head: true }).eq("partner_id", partnerId),
+    supabase.from("reservations").select("*", { count: "exact", head: true }).eq("partner_id", partnerId),
+    supabase.from("commission_ledger_events").select("*", { count: "exact", head: true }).eq("partner_id", partnerId)
+  ]);
+
+  const sCount = siteCount || 0;
+  const rCount = resCount || 0;
+  const lCount = ledgerCount || 0;
+
+  if (sCount > 0 || rCount > 0 || lCount > 0) {
+    return {
+      canDelete: false,
+      requiresArchive: true,
+      reason: `Cannot delete partner with historical records (${sCount} site(s), ${rCount} booking(s), ${lCount} commission ledger event(s)). To preserve financial and attribution integrity, destructive deletion is blocked. Please archive or deactivate instead.`,
+      siteCount: sCount,
+      reservationCount: rCount,
+      ledgerCount: lCount
+    };
+  }
+
+  return {
+    canDelete: true,
+    requiresArchive: false,
+    siteCount: 0,
+    reservationCount: 0,
+    ledgerCount: 0
+  };
+}
+
+export async function deletePartner(partnerId: string): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+  requiresArchive?: boolean;
+}> {
+  const check = await canDeletePartner(partnerId);
+  if (!check.canDelete) {
+    return {
+      success: false,
+      error: check.reason || "Cannot delete partner. Historical records present.",
+      requiresArchive: check.requiresArchive
+    };
+  }
+
+  if (!isSupabaseEnabled()) {
+    const idx = mockDb.partners.findIndex(p => p.id === partnerId);
+    if (idx !== -1) mockDb.partners.splice(idx, 1);
+    return { success: true, message: "Partner record removed successfully." };
+  }
+
+  const supabase = assertSupabaseClient();
+  // Delete any unlinked invited user if exists
+  await supabase.from("users").delete().eq("partner_id", partnerId).eq("status", "INVITED").is("clerk_user_id", null);
+  
+  const { error } = await supabase.from("partners").delete().eq("id", partnerId);
+  if (error) {
+    console.error("[DataStore Error] deletePartner failed:", error);
+    return {
+      success: false,
+      error: `Failed to delete partner: ${error.message}`
+    };
+  }
+
+  return { success: true, message: "Partner record removed successfully." };
+}
+
+export async function getAllPartnerUsers(): Promise<User[]> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.users.filter(u => !!u.partnerId);
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, name, email, role, partner_id, status, clerk_user_id, clerk_invitation_id, onboarding_status, created_at, updated_at")
+    .not("partner_id", "is", null);
+
+  if (error) {
+    console.error("[DataStore Error] getAllPartnerUsers failed:", error);
+    throw new Error(`Failed to query partner users: ${error.message}`);
+  }
+
+  return (data || []).map(u => ({
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role as UserRole,
+    partnerId: u.partner_id || undefined,
+    status: u.status,
+    clerkInvitationId: u.clerk_invitation_id || undefined,
+    clerkUserId: u.clerk_user_id || undefined,
+    clerkId: u.clerk_user_id || undefined,
+    onboardingStatus: u.onboarding_status,
+    createdAt: u.created_at
+  }));
 }
 
 export async function getAllPartners(): Promise<Partner[]> {
@@ -512,7 +838,7 @@ export async function getAllPartners(): Promise<Partner[]> {
 
   if (error) {
     console.error("[DataStore Error] getAllPartners failed:", error);
-    return [...mockDb.partners];
+    throw new Error(`Failed to query partners from Supabase: ${error.message}`);
   }
 
   return (data || []).map(p => ({
