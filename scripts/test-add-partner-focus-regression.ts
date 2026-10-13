@@ -13,6 +13,10 @@ async function runAddPartnerFocusAndCrudRegressionTests() {
   console.log("  HHH ADD/EDIT PARTNER FOCUS STABILITY & CRUD REGRESSION TESTS    ");
   console.log("==================================================================");
 
+  try {
+    process.loadEnvFile?.(".env.local");
+  } catch {}
+
   const supabaseAdmin = createAdminClient();
   assert(supabaseAdmin, "Supabase Admin client must be initialized");
 

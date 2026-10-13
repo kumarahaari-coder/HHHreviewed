@@ -14,6 +14,10 @@ async function runPartnerReconciliationTests() {
   console.log("  HHH PRODUCTION PARTNER DIRECTORY RECONCILIATION & CRUD TESTS   ");
   console.log("==================================================================");
 
+  try {
+    process.loadEnvFile?.(".env.local");
+  } catch {}
+
   const supabaseAdmin = createAdminClient();
   assert(supabaseAdmin, "Supabase Admin client must be available");
 
