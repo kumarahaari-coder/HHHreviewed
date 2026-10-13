@@ -266,12 +266,27 @@ export async function mapClerkUser(params: {
   performedByUserId?: string;
   source?: string;
 }): Promise<User> {
+  // SECURITY: Check if target user already exists and verify no identity conflict
+  let targetUser: User | null = null;
+  if (params.internalUserId) {
+    targetUser = await findUserById(params.internalUserId);
+  } else if (params.email) {
+    targetUser = await findUserByEmail(params.email);
+  }
+
+  if (targetUser?.clerkUserId && targetUser.clerkUserId !== params.clerkUserId) {
+    throw new Error(`[DataStore Security Violation] Refusing to overwrite existing Clerk identity '${targetUser.clerkUserId}' with '${params.clerkUserId}' for user ${targetUser.id} (${targetUser.email})`);
+  }
+
   if (!isSupabaseEnabled()) {
     const u = mockDb.users.find(usr => 
       (params.internalUserId && usr.id === params.internalUserId) || 
       (params.email && usr.email.toLowerCase().trim() === params.email.toLowerCase().trim())
     );
     if (u) {
+      if (u.clerkUserId && u.clerkUserId !== params.clerkUserId) {
+        throw new Error(`[MockDb] Security violation: cannot overwrite existing clerk_user_id ${u.clerkUserId} with ${params.clerkUserId}`);
+      }
       u.clerkUserId = params.clerkUserId;
       u.onboardingStatus = "MAPPED";
       return u;
@@ -295,8 +310,7 @@ export async function mapClerkUser(params: {
     const errMessage = error?.message || data?.error || "";
     // Clean Multi-Role Mapping: If remote RPC has legacy CREATOR role restriction, perform standard data store user mapping for all supported roles
     if (errMessage.includes("expected CREATOR") || errMessage.includes("invalid role")) {
-      let targetUser = null;
-      if (params.internalUserId) {
+      if (!targetUser && params.internalUserId) {
         targetUser = await findUserById(params.internalUserId);
       }
       if (!targetUser && params.email) {
@@ -541,18 +555,35 @@ export async function getPartnerDashboardData(partnerId: string) {
   const { data: statements } = await supabase.from("payouts").select("*").eq("partner_id", partnerId).eq("payout_status", "PAID");
   const { data: taxDoc } = await supabase.from("creator_tax_documents").select("*").eq("partner_id", partnerId).maybeSingle();
 
+  // Authoritatively source commissions from commission_ledger_events
+  const { data: ledgerEvents } = await supabase
+    .from("commission_ledger_events")
+    .select("reservation_id, calculated_commission, delta_amount, event_type")
+    .eq("partner_id", partnerId);
+
+  const ledgerByResId = new Map<string, number>();
+  if (ledgerEvents) {
+    for (const evt of ledgerEvents) {
+      if (evt.reservation_id) {
+        const cur = ledgerByResId.get(evt.reservation_id) || 0;
+        const amt = Number(evt.calculated_commission || evt.delta_amount || 0);
+        ledgerByResId.set(evt.reservation_id, cur + amt);
+      }
+    }
+  }
+
   return {
     partner: {
       id: partner.id,
       businessName: partner.business_name,
       contactName: partner.contact_name,
       email: partner.contact_email,
-      phone: partner.phone,
-      paymentMethod: partner.payment_method,
-      currency: partner.currency,
-      payoutFrequency: partner.payout_frequency,
-      status: partner.status,
-      commissionRate: Number(partner.commission_rate),
+      phone: partner.phone || "",
+      paymentMethod: partner.payment_method || "BANK_TRANSFER",
+      currency: partner.payout_currency || partner.currency || "USD",
+      payoutFrequency: partner.payout_frequency || "MONTHLY",
+      status: partner.status === "active" ? "ACTIVE" : partner.status === "invited" ? "INVITED" : partner.status === "suspended" ? "SUSPENDED" : partner.status === "archived" ? "ARCHIVED" : (partner.status?.toUpperCase() as any) || "ACTIVE",
+      commissionRate: Number((partner as any).commission_rate || 0),
       createdAt: partner.created_at,
       lastLogin: partner.last_login || undefined,
       notes: partner.notes,
@@ -570,31 +601,40 @@ export async function getPartnerDashboardData(partnerId: string) {
       status: s.status,
       launchDate: s.launch_date
     })),
-    reservations: (reservations || []).map(r => ({
-      id: r.id,
-      hospitableReservationId: r.hospitable_reservation_id,
-      confirmationCode: r.confirmation_code,
-      partnerId: r.partner_id,
-      siteId: r.site_id,
-      propertyId: r.property_id,
-      guestName: r.guest_name,
-      bookingDate: r.booking_date,
-      checkInDate: r.check_in_date,
-      checkOutDate: r.check_out_date,
-      nights: r.nights,
-      guests: r.guests,
-      reservationStatus: r.reservation_status,
-      paymentStatus: r.payment_status,
-      bookingAmount: Number(r.gross_amount || 0),
-      partnerPayoutAmount: Number(r.partner_payout_amount || 0),
-      lastSyncedAt: r.last_synced_at
-    })),
+    reservations: (reservations || []).map(r => {
+      const hasLedger = ledgerByResId.has(r.id);
+      const ledgerCommission = ledgerByResId.get(r.id);
+      const payoutAmount = hasLedger
+        ? ledgerCommission
+        : (r.partner_payout_amount != null ? Number(r.partner_payout_amount) : undefined);
+
+      return {
+        id: r.id,
+        hospitableReservationId: r.hospitable_reservation_id,
+        confirmationCode: r.confirmation_code,
+        partnerId: r.partner_id,
+        siteId: r.site_id,
+        propertyId: r.property_id,
+        guestName: r.guest_name,
+        bookingDate: r.booking_date,
+        checkInDate: r.check_in_date,
+        checkOutDate: r.check_out_date,
+        nights: r.nights,
+        guests: r.guests,
+        reservationStatus: r.reservation_status,
+        paymentStatus: r.payment_status,
+        bookingAmount: Number(r.gross_amount || 0),
+        partnerPayoutAmount: payoutAmount,
+        financialDataAvailable: payoutAmount !== undefined,
+        lastSyncedAt: r.last_synced_at
+      };
+    }),
     payouts: (payouts || []).map(p => ({
       id: p.id,
       partnerId: p.partner_id,
       reservationId: p.reservation_id,
-      payoutBaseAmount: Number(p.payout_base_amount),
-      finalPayout: Number(p.final_payout),
+      payoutBaseAmount: Number(p.payout_base_amount || 0),
+      finalPayout: Number(p.final_payout || 0),
       approvalDate: p.approval_date,
       transactionReference: p.transaction_reference,
       status: p.payout_status || p.status,
@@ -603,7 +643,7 @@ export async function getPartnerDashboardData(partnerId: string) {
     statements: (statements || []).map(p => ({
       id: p.id,
       partnerId: p.partner_id,
-      finalPayout: Number(p.final_payout),
+      finalPayout: Number(p.final_payout || 0),
       approvalDate: p.approval_date,
       transactionReference: p.transaction_reference,
       status: p.payout_status || p.status

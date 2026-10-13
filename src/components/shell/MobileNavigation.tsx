@@ -46,12 +46,15 @@ export function MobileNavigation({
     onClose();
   };
 
-  const initials = user.name
-    .split(" ")
+  const displayName = user?.name || user?.email || "User";
+  const initials = displayName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
     .map(n => n[0])
     .join("")
     .substring(0, 2)
-    .toUpperCase();
+    .toUpperCase() || "U";
 
   return (
     <SlideOver
@@ -178,9 +181,9 @@ export function MobileNavigation({
               {initials}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-primary truncate">{user.name}</p>
-              <p className="text-[11px] text-secondary truncate">{user.email}</p>
-              <p className="text-[10px] text-tertiary font-medium mt-0.5 truncate">{formatRoleLabel(user.role)}</p>
+              <p className="text-xs font-semibold text-primary truncate">{displayName}</p>
+              <p className="text-[11px] text-secondary truncate">{user?.email || ""}</p>
+              <p className="text-[10px] text-tertiary font-medium mt-0.5 truncate">{formatRoleLabel(user?.role || "")}</p>
             </div>
           </div>
 

@@ -234,7 +234,13 @@ function PartnerOverviewContent() {
                   <TableCell className="font-mono font-medium text-[var(--primary)]">{res.confirmationCode || res.id}</TableCell>
                   <TableCell className="text-xs text-[var(--secondary)]">{res.checkInDate} to {res.checkOutDate}</TableCell>
                   <TableCell className="tabular-nums font-mono font-semibold">${res.bookingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                  <TableCell className="tabular-nums font-mono font-bold text-emerald-700">${(res.partnerPayoutAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                  <TableCell className="tabular-nums font-mono font-bold text-emerald-700">
+                    {res.partnerPayoutAmount != null ? (
+                      `$${res.partnerPayoutAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    ) : (
+                      <span className="text-[var(--secondary)] text-xs font-normal">Pending</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <StatusBadge variant={res.reservationStatus === "CHECKED_OUT" || res.reservationStatus === "COMPLETED" ? "success" : "info"}>
                       {res.reservationStatus}
@@ -259,7 +265,11 @@ function PartnerOverviewContent() {
               }
               details={[
                 { label: "Booking Value", value: `$${res.bookingAmount.toFixed(2)}`, numeric: true },
-                { label: "Commission", value: `$${(res.partnerPayoutAmount || 0).toFixed(2)}`, numeric: true }
+                { 
+                  label: "Commission", 
+                  value: res.partnerPayoutAmount != null ? `$${res.partnerPayoutAmount.toFixed(2)}` : "Pending", 
+                  numeric: res.partnerPayoutAmount != null 
+                }
               ]}
             />
           ))}

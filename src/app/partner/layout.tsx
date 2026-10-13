@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, Suspense } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useClerk } from "@clerk/nextjs";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -76,7 +77,7 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
           setIsPreviewMode(Boolean(previewPartnerId));
           setIsAdminWithoutPartner(false);
         } else if (!data.isAdminWithoutPartner) {
-          router.push("/sign-in");
+          router.replace("/pending-access");
           return;
         }
 
@@ -84,6 +85,9 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
         const sessionData = await sessionRes.json();
         if (sessionData.user) {
           setCurrentUser(sessionData.user);
+        } else if (sessionData.status === "PENDING_ACCESS") {
+          router.replace("/pending-access");
+          return;
         } else if (process.env.NODE_ENV !== "production") {
           const devUser: UserType = {
             id: "user-partner-1",
@@ -95,7 +99,8 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
           };
           setCurrentUser(devUser);
         } else {
-          router.push("/sign-in");
+          router.replace("/sign-in");
+          return;
         }
       } catch (err) {
         console.error("[Partner Layout Error]", err);
@@ -113,9 +118,11 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
     };
   }, [pathname, previewPartnerId, router]);
 
+  const { signOut } = useClerk();
+
   const handleLogout = async () => {
     db.currentUser = null;
-    router.push("/login");
+    await signOut({ redirectUrl: "/sign-in" });
   };
 
   const handleReturnToAdmin = () => {
@@ -214,8 +221,8 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
       }}
       headerTitle={getPartnerHeaderTitle(pathname)}
       user={{
-        name: currentUser ? currentUser.name : partner ? partner.contactName : "Partner Owner",
-        email: currentUser ? currentUser.email : partner ? partner.email : "",
+        name: currentUser?.name || partner?.contactName || "Partner Owner",
+        email: currentUser?.email || partner?.email || "",
         role: isPreviewMode ? "Admin Preview" : "Partner Owner"
       }}
       isPreviewActive={isPreviewMode}

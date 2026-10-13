@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { useClerk } from "@clerk/nextjs";
 import {
   LayoutDashboard,
   CalendarDays,
@@ -22,6 +23,7 @@ import { isMockAuthAllowed } from "@/lib/config";
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { signOut } = useClerk();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -43,6 +45,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             setLoading(false);
             return;
           }
+
+          // Authenticated user with creator/partner role -> Redirect to /partner
+          if (authUser.role === "PARTNER_OWNER" || authUser.role === "CREATOR") {
+            router.replace("/partner");
+            return;
+          }
+
+          router.replace("/pending-access");
+          return;
         } else if (isMockAuthAllowed()) {
           const devUser: User = {
             id: "user-admin-1",
@@ -58,12 +69,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           return;
         }
 
-        // Unauthenticated or unauthorized role -> Redirect to sign-in
-        router.push("/sign-in");
+        if (data.status === "PENDING_ACCESS") {
+          router.replace("/pending-access");
+          return;
+        }
+
+        // Unauthenticated -> Redirect to sign-in
+        router.replace("/sign-in");
       } catch (err) {
         console.error(`[Admin Layout Error]`, err);
         if (isSubscribed) {
-          router.push("/sign-in");
+          router.replace("/sign-in");
         }
       }
     }
@@ -77,7 +93,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const handleLogout = async () => {
     db.currentUser = null;
-    router.push("/login");
+    await signOut({ redirectUrl: "/sign-in" });
   };
 
   if (loading || !currentUser) {

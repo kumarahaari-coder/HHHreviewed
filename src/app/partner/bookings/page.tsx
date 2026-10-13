@@ -133,7 +133,11 @@ function PartnerBookingsContent() {
                       {formatCurrency(res.bookingAmount)}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-[#1D1D1F] tabular-nums">
-                      {formatCurrency(res.partnerPayoutAmount || 0)}
+                      {res.partnerPayoutAmount != null ? (
+                        formatCurrency(res.partnerPayoutAmount)
+                      ) : (
+                        <span className="text-xs text-[#6E6E73] font-normal">Pending</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <StatusBadge variant={getStatusVariant(res.reservationStatus)}>{res.reservationStatus}</StatusBadge>
@@ -170,7 +174,7 @@ function PartnerBookingsContent() {
                 badge={<StatusBadge variant={getStatusVariant(res.reservationStatus)}>{res.reservationStatus}</StatusBadge>}
                 details={[
                   { label: "Dates", value: `${res.checkInDate} – ${res.checkOutDate}` },
-                  { label: "Commission", value: formatCurrency(res.partnerPayoutAmount || 0), numeric: true }
+                  { label: "Commission", value: res.partnerPayoutAmount != null ? formatCurrency(res.partnerPayoutAmount) : "Pending", numeric: res.partnerPayoutAmount != null }
                 ]}
               />
             ))
@@ -211,7 +215,7 @@ function PartnerBookingsContent() {
                 <div className="flex justify-between py-1 border-t border-[#E8E8ED]">
                   <span className="text-[#6E6E73]">Calculated Commission</span>
                   <span className="font-mono font-semibold text-[#1D1D1F] tabular-nums">
-                    {formatCurrency(selectedRes.partnerPayoutAmount || 0)}
+                    {selectedRes.partnerPayoutAmount != null ? formatCurrency(selectedRes.partnerPayoutAmount) : "Pending"}
                   </span>
                 </div>
               </div>

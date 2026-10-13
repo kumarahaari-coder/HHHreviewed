@@ -50,12 +50,15 @@ export function UserMenu({
     };
   }, [isOpen]);
 
-  const initials = user.name
-    .split(" ")
+  const displayName = user?.name || user?.email || "User";
+  const initials = displayName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
     .map(n => n[0])
     .join("")
     .substring(0, 2)
-    .toUpperCase();
+    .toUpperCase() || "U";
 
   const popoverPosition = align === "top"
     ? "bottom-full mb-2 left-0 w-64"
@@ -78,10 +81,10 @@ export function UserMenu({
           </div>
           <div className="hidden sm:block min-w-0">
             <p className="text-xs font-semibold text-primary truncate leading-tight">
-              {user.name}
+              {displayName}
             </p>
             <p className="text-[11px] text-secondary truncate mt-0.5 leading-tight">
-              {formatRoleLabel(user.role)}
+              {formatRoleLabel(user?.role || "")}
             </p>
           </div>
         </div>
@@ -93,11 +96,11 @@ export function UserMenu({
         <div className={`absolute ${popoverPosition} bg-surface border border-divider rounded-xl shadow-lg p-1.5 z-50 animate-fade-in font-sans`}>
           {/* Header Info */}
           <div className="px-3 py-2 border-b border-divider-soft space-y-0.5">
-            <p className="text-xs font-semibold text-primary">{user.name}</p>
-            <p className="text-[11px] text-secondary truncate">{user.email}</p>
+            <p className="text-xs font-semibold text-primary">{displayName}</p>
+            <p className="text-[11px] text-secondary truncate">{user?.email || ""}</p>
             <div className="pt-1 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-success" />
-              <span className="text-[10px] text-tertiary font-medium tracking-wider">{formatRoleLabel(user.role)}</span>
+              <span className="text-[10px] text-tertiary font-medium tracking-wider">{formatRoleLabel(user?.role || "")}</span>
             </div>
           </div>
 

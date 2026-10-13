@@ -149,6 +149,20 @@ export async function POST(req: NextRequest) {
       }
 
       if (user && realClerkUserId && realClerkUserId.startsWith("user_")) {
+        if (user.clerkUserId && user.clerkUserId !== realClerkUserId) {
+          console.warn(`[Clerk Webhook Security] Refusing to overwrite existing Clerk identity ${user.clerkUserId} with ${realClerkUserId} for user ${user.id}`);
+          if (isSupabaseEnabled() && claimToken) {
+            const supabase = createAdminClient();
+            await supabase.rpc("complete_webhook_event_tx", {
+              p_provider: provider,
+              p_event_id: eventId,
+              p_claim_token: claimToken,
+              p_outcome: "IGNORED_IDENTITY_CONFLICT"
+            });
+          }
+          return NextResponse.json({ success: false, message: "Identity conflict: user already mapped to different Clerk ID" }, { status: 409 });
+        }
+
         console.log(`[Clerk Webhook] Mapping verified primary email ${primaryEmailStr} (${realClerkUserId}) to app user ${user.id}...`);
         await mapClerkUser({
           internalUserId: user.id,
