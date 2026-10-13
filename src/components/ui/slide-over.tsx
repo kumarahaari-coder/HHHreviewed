@@ -28,6 +28,11 @@ export function SlideOver({
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -38,22 +43,24 @@ export function SlideOver({
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    // Set initial focus
-    setTimeout(() => {
-      panelRef.current?.focus();
+    // Set initial focus only if panel doesn't already contain focus
+    const focusTimeout = setTimeout(() => {
+      if (panelRef.current && !panelRef.current.contains(document.activeElement)) {
+        panelRef.current.focus();
+      }
     }, 10);
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
       // Focus trap
       if (e.key === "Tab" && panelRef.current) {
         const focusables = panelRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
         );
         if (focusables.length === 0) return;
 
@@ -77,13 +84,14 @@ export function SlideOver({
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
+      clearTimeout(focusTimeout);
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", handleKeyDown);
-      if (previousFocusRef.current) {
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === "function") {
         previousFocusRef.current.focus();
       }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   const sizeStyles = {
     md: "sm:max-w-md",

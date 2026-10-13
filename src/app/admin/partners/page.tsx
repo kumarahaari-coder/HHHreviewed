@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useCallback, Suspense, memo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   UserPlus,
@@ -23,8 +23,6 @@ import {
   Edit,
   Trash2,
   Archive,
-  KeyRound,
-  ExternalLink,
   RefreshCw
 } from "lucide-react";
 import { Partner, PartnerStatus, TaxDocumentType } from "@/lib/db/schema";
@@ -96,35 +94,9 @@ function PartnerManagementContent() {
   // Menu Dropdown State
   const [activeMenuPartnerId, setActiveMenuPartnerId] = useState<string | null>(null);
 
-  // "Add Partner" Modal State
+  // Modal Dialog states
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [contactName, setContactName] = useState("");
-  const [businessName, setBusinessName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [website, setWebsite] = useState("");
-  const [taxDocumentCategory, setTaxDocumentCategory] = useState<TaxDocumentType>("W_9");
-  const [commissionRate, setCommissionRate] = useState("10");
-  const [status, setStatus] = useState<PartnerStatus>("INVITED");
-  const [notes, setNotes] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  // "Edit Partner" Modal State
-  const [showEditDialog, setShowEditDialog] = useState(false);
   const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
-  const [editContactName, setEditContactName] = useState("");
-  const [editBusinessName, setEditBusinessName] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  const [editPhone, setEditPhone] = useState("");
-  const [editWebsite, setEditWebsite] = useState("");
-  const [editCommissionRate, setEditCommissionRate] = useState("10");
-  const [editStatus, setEditStatus] = useState<PartnerStatus>("ACTIVE");
-  const [editNotes, setEditNotes] = useState("");
-  const [editSubmitting, setEditSubmitting] = useState(false);
-  const [editError, setEditError] = useState("");
-
-  // Confirmation Modals (Archive / Delete)
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     type: "ARCHIVE" | "DELETE";
@@ -192,118 +164,6 @@ function PartnerManagementContent() {
       }
     }
   }, [deepLinkedPartnerId, partners]);
-
-  const handleCreatePartner = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError("");
-    setSubmitting(true);
-
-    try {
-      const res = await fetch("/api/admin/partners", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contactName: contactName.trim(),
-          businessName: businessName.trim(),
-          email: email.trim().toLowerCase(),
-          phone: phone.trim(),
-          website: website.trim(),
-          taxDocumentCategory,
-          commissionRate: Number(commissionRate) || 10,
-          status,
-          notes: notes.trim()
-        })
-      });
-
-      const data = await res.json();
-
-      if (data.success) {
-        setShowAddDialog(false);
-        setContactName("");
-        setBusinessName("");
-        setEmail("");
-        setPhone("");
-        setWebsite("");
-        setCommissionRate("10");
-        setStatus("INVITED");
-        setNotes("");
-
-        setBanner({
-          type: "success",
-          title: "Partner Created",
-          message: `Successfully created partner "${data.partner?.businessName || data.partner?.contactName}".`
-        });
-
-        await refreshData();
-      } else {
-        setFormError(data.error || "Failed to create partner");
-      }
-    } catch (err: any) {
-      setFormError(err?.message || "Network error while creating partner");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const openEditModal = (partner: Partner) => {
-    setEditingPartner(partner);
-    setEditContactName(partner.contactName || "");
-    setEditBusinessName(partner.businessName || "");
-    setEditEmail(partner.email || "");
-    setEditPhone(partner.phone || "");
-    setEditWebsite(partner.website || "");
-    setEditCommissionRate(String(partner.commissionRate ?? 10));
-    setEditStatus(partner.status || "ACTIVE");
-    setEditNotes(partner.notes || "");
-    setEditError("");
-    setShowEditDialog(true);
-    setActiveMenuPartnerId(null);
-  };
-
-  const handleEditPartner = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingPartner) return;
-    setEditError("");
-    setEditSubmitting(true);
-
-    try {
-      const res = await fetch("/api/admin/partners/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "EDIT",
-          partnerId: editingPartner.id,
-          updates: {
-            contactName: editContactName.trim(),
-            businessName: editBusinessName.trim(),
-            email: editEmail.trim().toLowerCase(),
-            phone: editPhone.trim(),
-            website: editWebsite.trim(),
-            commissionRate: Number(editCommissionRate) || 10,
-            status: editStatus,
-            notes: editNotes.trim()
-          }
-        })
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setShowEditDialog(false);
-        setBanner({
-          type: "success",
-          title: "Partner Updated",
-          message: `Partner details for "${editBusinessName || editContactName}" successfully updated.`
-        });
-        await refreshData();
-      } else {
-        setEditError(data.error || "Failed to update partner");
-      }
-    } catch (err: any) {
-      setEditError(err?.message || "Network error during update");
-    } finally {
-      setEditSubmitting(false);
-    }
-  };
 
   const handlePartnerAction = async (
     partnerId: string,
@@ -622,7 +482,10 @@ function PartnerManagementContent() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => openEditModal(p)}
+                                  onClick={() => {
+                                    setActiveMenuPartnerId(null);
+                                    setEditingPartner(p);
+                                  }}
                                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-primary hover:bg-surface-subtle rounded font-medium cursor-pointer"
                                 >
                                   <Edit size={14} className="text-secondary" />
@@ -902,7 +765,7 @@ function PartnerManagementContent() {
                   size="sm"
                   icon={Edit}
                   onClick={() => {
-                    openEditModal(selectedPartner);
+                    setEditingPartner(selectedPartner);
                   }}
                 >
                   Edit Profile
@@ -943,183 +806,36 @@ function PartnerManagementContent() {
         })()}
       </SlideOver>
 
-      {/* 7. Add Partner Dialog */}
-      <Dialog
+      {/* 7. Add Partner Dialog Component */}
+      <AddPartnerModal
         isOpen={showAddDialog}
         onClose={() => setShowAddDialog(false)}
-        title="Add Partner Account"
-      >
-        <form onSubmit={handleCreatePartner} className="space-y-4 font-sans text-xs">
-          {formError && <ErrorBanner message={formError} />}
+        onSuccess={async (newPartner) => {
+          setShowAddDialog(false);
+          setBanner({
+            type: "success",
+            title: "Partner Created",
+            message: `Successfully created partner "${newPartner.businessName || newPartner.contactName}".`
+          });
+          await refreshData();
+        }}
+      />
 
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Contact Name *</label>
-            <input
-              type="text"
-              required
-              value={contactName}
-              onChange={e => setContactName(e.target.value)}
-              placeholder="e.g. Megan Brass"
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Business Name</label>
-            <input
-              type="text"
-              value={businessName}
-              onChange={e => setBusinessName(e.target.value)}
-              placeholder="e.g. Megs Brass Direct LLC"
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Email Address *</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="partner@example.com"
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-secondary mb-1">Commission Rate (%)</label>
-              <input
-                type="number"
-                value={commissionRate}
-                onChange={e => setCommissionRate(e.target.value)}
-                placeholder="10"
-                className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-secondary mb-1">Initial Status</label>
-              <select
-                value={status}
-                onChange={e => setStatus(e.target.value as PartnerStatus)}
-                className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-              >
-                <option value="INVITED">Invited</option>
-                <option value="ACTIVE">Active</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="pt-3 border-t border-divider-soft flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setShowAddDialog(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" disabled={submitting}>
-              {submitting ? "Creating..." : "Create Partner"}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
-
-      {/* 8. Edit Partner Dialog */}
-      <Dialog
-        isOpen={showEditDialog}
-        onClose={() => setShowEditDialog(false)}
-        title="Edit Partner Account"
-      >
-        <form onSubmit={handleEditPartner} className="space-y-4 font-sans text-xs">
-          {editError && <ErrorBanner message={editError} />}
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Contact Name *</label>
-            <input
-              type="text"
-              required
-              value={editContactName}
-              onChange={e => setEditContactName(e.target.value)}
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Business Name</label>
-            <input
-              type="text"
-              value={editBusinessName}
-              onChange={e => setEditBusinessName(e.target.value)}
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Email Address *</label>
-            <input
-              type="email"
-              required
-              value={editEmail}
-              onChange={e => setEditEmail(e.target.value)}
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-secondary mb-1">Commission Rate (%)</label>
-              <input
-                type="number"
-                value={editCommissionRate}
-                onChange={e => setEditCommissionRate(e.target.value)}
-                className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-secondary mb-1">Status</label>
-              <select
-                value={editStatus}
-                onChange={e => setEditStatus(e.target.value as PartnerStatus)}
-                className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-              >
-                <option value="ACTIVE">Active</option>
-                <option value="INVITED">Invited</option>
-                <option value="SUSPENDED">Suspended</option>
-                <option value="ARCHIVED">Archived</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Website URL</label>
-            <input
-              type="url"
-              value={editWebsite}
-              onChange={e => setEditWebsite(e.target.value)}
-              placeholder="https://example.com"
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-secondary mb-1">Notes</label>
-            <textarea
-              rows={2}
-              value={editNotes}
-              onChange={e => setEditNotes(e.target.value)}
-              placeholder="Internal partner notes..."
-              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5"
-            />
-          </div>
-
-          <div className="pt-3 border-t border-divider-soft flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setShowEditDialog(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" disabled={editSubmitting}>
-              {editSubmitting ? "Saving..." : "Save Changes"}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
+      {/* 8. Edit Partner Dialog Component */}
+      <EditPartnerModal
+        isOpen={editingPartner !== null}
+        partner={editingPartner}
+        onClose={() => setEditingPartner(null)}
+        onSuccess={async (updated) => {
+          setEditingPartner(null);
+          setBanner({
+            type: "success",
+            title: "Partner Updated",
+            message: `Partner details for "${updated.businessName || updated.contactName}" successfully updated.`
+          });
+          await refreshData();
+        }}
+      />
 
       {/* 9. Archive & Delete Safety Confirmation Dialog */}
       <Dialog
@@ -1178,3 +894,391 @@ function PartnerManagementContent() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Standalone, Memoized AddPartnerModal to ensure 100% stable input identities
+// ---------------------------------------------------------------------------
+interface AddPartnerModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: (partner: Partner) => void;
+}
+
+const AddPartnerModal = memo(function AddPartnerModal({
+  isOpen,
+  onClose,
+  onSuccess
+}: AddPartnerModalProps) {
+  const [contactName, setContactName] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [email, setEmail] = useState("");
+  const [commissionRate, setCommissionRate] = useState("10");
+  const [status, setStatus] = useState<PartnerStatus>("INVITED");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  // Intentionally reset form when closed and reopened
+  useEffect(() => {
+    if (!isOpen) {
+      setContactName("");
+      setBusinessName("");
+      setEmail("");
+      setCommissionRate("10");
+      setStatus("INVITED");
+      setSubmitting(false);
+      setFormError("");
+    }
+  }, [isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError("");
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/admin/partners", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contactName: contactName.trim(),
+          businessName: businessName.trim(),
+          email: email.trim().toLowerCase(),
+          commissionRate: Number(commissionRate) || 10,
+          status
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.partner) {
+        onSuccess(data.partner);
+      } else {
+        setFormError(data.error || "Failed to create partner");
+      }
+    } catch (err: any) {
+      setFormError(err?.message || "Network error while creating partner");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog isOpen={isOpen} onClose={onClose} title="Add Partner Account">
+      <form onSubmit={handleSubmit} className="space-y-4 font-sans text-xs">
+        {formError && <ErrorBanner message={formError} onDismiss={() => setFormError("")} />}
+
+        <div>
+          <label htmlFor="add-partner-contact-name" className="block text-xs font-medium text-secondary mb-1">
+            Contact Name *
+          </label>
+          <input
+            id="add-partner-contact-name"
+            name="contactName"
+            type="text"
+            required
+            autoComplete="name"
+            value={contactName}
+            onChange={e => setContactName(e.target.value)}
+            placeholder="e.g. Megan Brass"
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="add-partner-business-name" className="block text-xs font-medium text-secondary mb-1">
+            Business Name
+          </label>
+          <input
+            id="add-partner-business-name"
+            name="businessName"
+            type="text"
+            autoComplete="organization"
+            value={businessName}
+            onChange={e => setBusinessName(e.target.value)}
+            placeholder="e.g. Megs Brass Direct LLC"
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="add-partner-email" className="block text-xs font-medium text-secondary mb-1">
+            Email Address *
+          </label>
+          <input
+            id="add-partner-email"
+            name="email"
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="partner@example.com"
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="add-partner-commission-rate" className="block text-xs font-medium text-secondary mb-1">
+              Commission Rate (%)
+            </label>
+            <input
+              id="add-partner-commission-rate"
+              name="commissionRate"
+              type="number"
+              min="0"
+              max="100"
+              step="0.5"
+              value={commissionRate}
+              onChange={e => setCommissionRate(e.target.value)}
+              placeholder="10"
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+            />
+          </div>
+          <div>
+            <label htmlFor="add-partner-initial-status" className="block text-xs font-medium text-secondary mb-1">
+              Initial Status
+            </label>
+            <select
+              id="add-partner-initial-status"
+              name="status"
+              value={status}
+              onChange={e => setStatus(e.target.value as PartnerStatus)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+            >
+              <option value="INVITED">Invited</option>
+              <option value="ACTIVE">Active</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="pt-3 border-t border-divider-soft flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" disabled={submitting}>
+            {submitting ? "Creating..." : "Create Partner"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Standalone, Memoized EditPartnerModal
+// ---------------------------------------------------------------------------
+interface EditPartnerModalProps {
+  isOpen: boolean;
+  partner: Partner | null;
+  onClose: () => void;
+  onSuccess: (updated: Partner) => void;
+}
+
+const EditPartnerModal = memo(function EditPartnerModal({
+  isOpen,
+  partner,
+  onClose,
+  onSuccess
+}: EditPartnerModalProps) {
+  const [contactName, setContactName] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [website, setWebsite] = useState("");
+  const [commissionRate, setCommissionRate] = useState("10");
+  const [status, setStatus] = useState<PartnerStatus>("ACTIVE");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  useEffect(() => {
+    if (partner && isOpen) {
+      setContactName(partner.contactName || "");
+      setBusinessName(partner.businessName || "");
+      setEmail(partner.email || "");
+      setPhone(partner.phone || "");
+      setWebsite(partner.website || "");
+      setCommissionRate(String(partner.commissionRate ?? 10));
+      setStatus(partner.status || "ACTIVE");
+      setNotes(partner.notes || "");
+      setFormError("");
+    }
+  }, [partner, isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!partner) return;
+    setFormError("");
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/admin/partners/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "EDIT",
+          partnerId: partner.id,
+          updates: {
+            contactName: contactName.trim(),
+            businessName: businessName.trim(),
+            email: email.trim().toLowerCase(),
+            phone: phone.trim(),
+            website: website.trim(),
+            commissionRate: Number(commissionRate) || 10,
+            status,
+            notes: notes.trim()
+          }
+        })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        onSuccess({
+          ...partner,
+          contactName: contactName.trim(),
+          businessName: businessName.trim(),
+          email: email.trim().toLowerCase(),
+          phone: phone.trim(),
+          website: website.trim(),
+          commissionRate: Number(commissionRate) || 10,
+          status,
+          notes: notes.trim()
+        });
+      } else {
+        setFormError(data.error || "Failed to update partner");
+      }
+    } catch (err: any) {
+      setFormError(err?.message || "Network error during update");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog isOpen={isOpen} onClose={onClose} title="Edit Partner Account">
+      <form onSubmit={handleSubmit} className="space-y-4 font-sans text-xs">
+        {formError && <ErrorBanner message={formError} onDismiss={() => setFormError("")} />}
+
+        <div>
+          <label htmlFor="edit-partner-contact-name" className="block text-xs font-medium text-secondary mb-1">
+            Contact Name *
+          </label>
+          <input
+            id="edit-partner-contact-name"
+            name="contactName"
+            type="text"
+            required
+            value={contactName}
+            onChange={e => setContactName(e.target.value)}
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="edit-partner-business-name" className="block text-xs font-medium text-secondary mb-1">
+            Business Name
+          </label>
+          <input
+            id="edit-partner-business-name"
+            name="businessName"
+            type="text"
+            value={businessName}
+            onChange={e => setBusinessName(e.target.value)}
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="edit-partner-email" className="block text-xs font-medium text-secondary mb-1">
+            Email Address *
+          </label>
+          <input
+            id="edit-partner-email"
+            name="email"
+            type="email"
+            required
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="edit-partner-commission-rate" className="block text-xs font-medium text-secondary mb-1">
+              Commission Rate (%)
+            </label>
+            <input
+              id="edit-partner-commission-rate"
+              name="commissionRate"
+              type="number"
+              min="0"
+              max="100"
+              step="0.5"
+              value={commissionRate}
+              onChange={e => setCommissionRate(e.target.value)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-partner-status" className="block text-xs font-medium text-secondary mb-1">
+              Status
+            </label>
+            <select
+              id="edit-partner-status"
+              name="status"
+              value={status}
+              onChange={e => setStatus(e.target.value as PartnerStatus)}
+              className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+            >
+              <option value="ACTIVE">Active</option>
+              <option value="INVITED">Invited</option>
+              <option value="SUSPENDED">Suspended</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor="edit-partner-website" className="block text-xs font-medium text-secondary mb-1">
+            Website URL
+          </label>
+          <input
+            id="edit-partner-website"
+            name="website"
+            type="url"
+            value={website}
+            onChange={e => setWebsite(e.target.value)}
+            placeholder="https://example.com"
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="edit-partner-notes" className="block text-xs font-medium text-secondary mb-1">
+            Notes
+          </label>
+          <textarea
+            id="edit-partner-notes"
+            name="notes"
+            rows={2}
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Internal partner notes..."
+            className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
+          />
+        </div>
+
+        <div className="pt-3 border-t border-divider-soft flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" disabled={submitting}>
+            {submitting ? "Saving..." : "Save Changes"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+});
