@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { db } from "@/lib/db/mockDb";
-import { Site, Partner } from "@/lib/db/schema";
+import React, { useEffect, useState, Suspense } from "react";
+import { Site } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Globe, Copy, Check, Building, ExternalLink, Loader2 } from "lucide-react";
-import { getAllSites, getAllPartners } from "@/lib/supabase/data-store";
+import { Globe, Copy, Check, Building, ExternalLink } from "lucide-react";
+import { LoadingState, ErrorBanner } from "@/components/ui";
+import { useSearchParams } from "next/navigation";
 
 const CORE_PROPERTIES = [
   { id: "38d9159e-a35d-405e-826e-7381ad3c3197", name: "Uptown St. Augustine", location: "St. Augustine, FL" },
@@ -16,36 +16,46 @@ const CORE_PROPERTIES = [
   { id: "55791a54-b1a3-459e-bbd5-9073a418b774", name: "Beech Mountain, NC", location: "Beech Mountain, NC" }
 ];
 
-export default function PartnerSites() {
+function PartnerSitesContent() {
+  const searchParams = useSearchParams();
+  const previewPartnerId = searchParams.get("previewPartnerId");
+
   const [sites, setSites] = useState<Site[]>([]);
-  const [partner, setPartner] = useState<Partner | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadPartnerSites() {
-      setLoading(true);
-      try {
-        const user = db.currentUser;
-        const allPartners = await getAllPartners();
-        const activePartner = allPartners.find(p => (user?.partnerId && p.id === user.partnerId) || p.status === "ACTIVE") || allPartners[0] || null;
-        setPartner(activePartner);
+    let isSubscribed = true;
 
-        const allSites = await getAllSites();
-        if (activePartner) {
-          setSites(allSites.filter(s => s.partnerId === activePartner.id));
+    async function loadPartnerSites() {
+      try {
+        // The server decides which partner's sites to return from the logged-in session.
+        const url = previewPartnerId
+          ? `/api/partner/sites?previewPartnerId=${encodeURIComponent(previewPartnerId)}`
+          : "/api/partner/sites";
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!isSubscribed) return;
+
+        if (res.ok && data.success && Array.isArray(data.sites)) {
+          setSites(data.sites);
         } else {
-          setSites(allSites);
+          setError(data?.error || "Unable to load your websites.");
         }
       } catch (err) {
         console.error("Error loading partner sites:", err);
+        if (isSubscribed) setError("Unable to load your websites. Please refresh the page.");
       } finally {
-        setLoading(false);
+        if (isSubscribed) setLoading(false);
       }
     }
 
     loadPartnerSites();
-  }, []);
+    return () => {
+      isSubscribed = false;
+    };
+  }, [previewPartnerId]);
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -61,9 +71,9 @@ export default function PartnerSites() {
       />
 
       {loading ? (
-        <div className="flex py-16 justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" />
-        </div>
+        <LoadingState message="Loading your websites..." />
+      ) : error ? (
+        <ErrorBanner message={error} />
       ) : sites.length === 0 ? (
         <Card className="p-8 text-center space-y-3">
           <Building className="w-10 h-10 text-[#6E6E73] mx-auto" />
@@ -153,4 +163,10 @@ export default function PartnerSites() {
   );
 }
 
-
+export default function PartnerSites() {
+  return (
+    <Suspense fallback={<LoadingState message="Loading your websites..." />}>
+      <PartnerSitesContent />
+    </Suspense>
+  );
+}

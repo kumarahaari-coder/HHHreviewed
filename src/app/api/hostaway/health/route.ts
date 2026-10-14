@@ -7,9 +7,18 @@
 import { NextResponse } from "next/server";
 import { checkHostawayHealth } from "@/lib/hostaway/client";
 import { getPmsSystemStatus } from "@/lib/config/pms-mode";
+import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    // /api/hostaway/* is publicly routable (webhook-style), so this handler must check for itself.
+    const session = await getCurrentSession();
+    if (!session || !canPerformAdminReview(session)) {
+      return NextResponse.json({ success: false, error: "Forbidden. Admin access required." }, { status: 403 });
+    }
+
     const health = await checkHostawayHealth();
     const pmsStatus = getPmsSystemStatus();
 
