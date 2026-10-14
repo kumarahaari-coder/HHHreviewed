@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadBucketCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadBucketCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { appConfig } from "../config";
 
 export interface ValidationResult {
@@ -175,6 +175,26 @@ export async function putObjectToR2(
       httpStatusCode: err?.$metadata?.httpStatusCode
     });
     throw new Error(`Cloudflare R2 Upload Failed [${err?.name || "R2Error"}]: ${err?.message || "Storage error"}`);
+  }
+}
+
+/**
+ * Reads an object back from the private R2 bucket (used to serve tax document previews/downloads
+ * through an authenticated API route; the bucket itself is never exposed publicly).
+ */
+export async function getObjectFromR2(r2Key: string): Promise<{ body: Buffer; contentType: string }> {
+  const bucket = appConfig.r2.bucket || "hhh-private-tax-documents";
+  try {
+    const client = getR2Client();
+    const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: r2Key }));
+    if (!response.Body) {
+      throw new Error("Empty object body.");
+    }
+    const bytes = await response.Body.transformToByteArray();
+    return { body: Buffer.from(bytes), contentType: response.ContentType || "application/pdf" };
+  } catch (err: any) {
+    console.error("[R2 Get Error]", { r2Key, bucket, errorName: err?.name, errorMessage: err?.message });
+    throw new Error(`Cloudflare R2 Read Failed [${err?.name || "R2Error"}]: ${err?.message || "Storage error"}`);
   }
 }
 

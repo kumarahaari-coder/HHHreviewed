@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
+import { getTaxAuditLogs } from "@/lib/supabase/tax-documents";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,13 +15,7 @@ export async function GET(req: NextRequest) {
     const documentId = searchParams.get("documentId");
     const partnerId = searchParams.get("partnerId");
 
-    let logs = db.taxAuditLogs;
-    if (documentId) {
-      logs = logs.filter((l: any) => l.documentId === documentId);
-    }
-    if (partnerId) {
-      logs = logs.filter((l: any) => l.partnerId === partnerId);
-    }
+    const logs = await getTaxAuditLogs({ documentId, partnerId });
 
     return NextResponse.json({
       success: true,

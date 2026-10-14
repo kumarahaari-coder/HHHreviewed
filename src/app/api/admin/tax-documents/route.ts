@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
+import { getAllPartners } from "@/lib/supabase/data-store";
+import { getAllTaxDocumentsByPartner } from "@/lib/supabase/tax-documents";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,9 +16,9 @@ export async function GET(req: NextRequest) {
     const statusFilter = searchParams.get("status");
     const docTypeFilter = searchParams.get("docType");
 
-    const partners = db.partners;
+    const [partners, docsByPartner] = await Promise.all([getAllPartners(), getAllTaxDocumentsByPartner()]);
     const allTaxDocs = partners.map(partner => {
-      const docData = db.getTaxDocumentByPartner(partner.id);
+      const docData = docsByPartner.get(partner.id);
       return {
         partnerId: partner.id,
         businessName: partner.businessName,

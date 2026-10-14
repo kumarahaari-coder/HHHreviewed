@@ -1,54 +1,39 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
+import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/authorization";
-import { generateSignedDownloadUrl } from "@/lib/storage/s3";
+import { getTaxDocumentByPartner } from "@/lib/supabase/tax-documents";
 
-export async function GET(req: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET() {
   try {
     const session = await getCurrentSession();
     if (!session || !session.partnerId) {
       return NextResponse.json({ success: false, error: "Unauthorized. Creator session required." }, { status: 401 });
     }
 
-    // Resolve ownership server-side from session. Never trust partnerId passed from client.
-    const partnerId = session.partnerId;
-    const docData = db.getTaxDocumentByPartner(partnerId);
-
-    if (!docData || !docData.currentVersion) {
+    // Ownership is resolved from the session. Never trust a partnerId passed from the client.
+    const doc = await getTaxDocumentByPartner(session.partnerId);
+    if (!doc || !doc.currentVersion) {
       return NextResponse.json({ success: false, error: "No tax document found for your account." }, { status: 404 });
     }
 
-    const currentVer = docData.currentVersion;
-
-    // Log Creator Download Audit Entry
-    db.logTaxAudit({
-      documentId: docData.id,
-      versionId: currentVer.id,
-      partnerId,
-      action: "DOWNLOAD",
-      performedByUserId: session.userId,
-      performedByUserRole: session.role || "CREATOR",
-      details: `Creator requested 15-minute signed URL for current version ${currentVer.versionNumber}.`
-    });
-
-    const signedUrl = await generateSignedDownloadUrl(currentVer.s3StorageKey, 900);
-
+    const ver = doc.currentVersion;
+    const base = `/api/tax-documents/file?documentId=${encodeURIComponent(doc.id)}&versionId=${encodeURIComponent(ver.id)}`;
     return NextResponse.json({
       success: true,
-      signedUrl,
-      expiresInSeconds: 900,
+      signedUrl: `${base}&download=1`,
+      previewUrl: base,
       document: {
-        documentId: docData.id,
-        versionNumber: currentVer.versionNumber,
-        documentType: currentVer.documentType,
-        w8Subtype: currentVer.w8Subtype,
-        originalFilename: currentVer.originalFilename,
-        submissionDate: currentVer.submissionDate,
-        status: docData.status
-      }
+        documentId: doc.id,
+        versionNumber: ver.versionNumber,
+        documentType: ver.documentType,
+        w8Subtype: ver.w8Subtype,
+        originalFilename: ver.originalFilename,
+        submissionDate: ver.submissionDate,
+        status: doc.status,
+      },
     });
-
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error?.message || "Internal server error" }, { status: 500 });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err?.message || "Internal server error" }, { status: 500 });
   }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
+import { getAllPartners } from "@/lib/supabase/data-store";
+import { updateTaxReviewStatus, logTaxAudit } from "@/lib/supabase/tax-documents";
 import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { sendTransactionalEmail } from "@/lib/email/brevo";
 
@@ -22,8 +23,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Invalid review status." }, { status: 400 });
     }
 
-    const updatedDoc = db.updateTaxReviewStatus(documentId, status, adminNote, internalNote);
-    const partner = db.partners.find(p => p.id === updatedDoc.partnerId);
+    const updatedDoc = await updateTaxReviewStatus(documentId, status, session.userId, adminNote, internalNote);
+    const partner = (await getAllPartners()).find(p => p.id === updatedDoc.partnerId);
+
+    await logTaxAudit({
+      documentId,
+      versionId: updatedDoc.currentVersionId,
+      partnerId: updatedDoc.partnerId,
+      action: "REVIEW_UPDATE",
+      performedByUserId: session.userId,
+      performedByUserRole: session.role,
+      details: `Status set to ${status}. Note: ${adminNote || "None"}`
+    });
 
     // Send corresponding Brevo email notification
     let eventType: "TAX_DOC_APPROVED" | "TAX_DOC_REJECTED" | "TAX_DOC_REPLACEMENT_REQUESTED" | null = null;
@@ -32,15 +43,19 @@ export async function POST(req: NextRequest) {
     if (status === "REPLACEMENT_REQUIRED") eventType = "TAX_DOC_REPLACEMENT_REQUESTED";
 
     if (eventType && partner) {
-      await sendTransactionalEmail({
-        eventType,
-        recipientEmail: partner.email,
-        recipientName: partner.contactName,
-        params: {
-          adminNote: adminNote || "No note provided.",
-          partnerId: partner.id
-        }
-      });
+      try {
+        await sendTransactionalEmail({
+          eventType,
+          recipientEmail: partner.email,
+          recipientName: partner.contactName,
+          params: {
+            adminNote: adminNote || "No note provided.",
+            partnerId: partner.id
+          }
+        });
+      } catch (emailErr: any) {
+        console.error("[Tax Review] Notification email failed (review was saved):", emailErr?.message);
+      }
     }
 
     return NextResponse.json({

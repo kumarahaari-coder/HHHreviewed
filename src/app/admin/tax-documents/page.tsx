@@ -363,6 +363,26 @@ export default function AdminTaxDocumentsPage() {
               <div><strong className="text-[var(--primary)]">Submitted File:</strong> {selectedCreator.taxDocument.currentVersion?.originalFilename}</div>
             </div>
 
+            {selectedCreator.taxDocument.id && selectedCreator.taxDocument.currentVersion?.id && (() => {
+              const fileUrl = `/api/tax-documents/file?documentId=${encodeURIComponent(selectedCreator.taxDocument.id)}&versionId=${encodeURIComponent(selectedCreator.taxDocument.currentVersion.id)}`;
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <strong className="text-[var(--primary)]">Document Preview</strong>
+                    <div className="flex items-center gap-3">
+                      <a href={fileUrl} target="_blank" rel="noreferrer" className="underline text-[var(--secondary)] hover:text-[var(--primary)]">Open in new tab</a>
+                      <a href={`${fileUrl}&download=1`} className="underline text-[var(--secondary)] hover:text-[var(--primary)]">Download</a>
+                    </div>
+                  </div>
+                  <iframe
+                    src={fileUrl}
+                    title="Tax document preview"
+                    className="w-full h-[420px] rounded-md border border-[var(--border)] bg-white"
+                  />
+                </div>
+              );
+            })()}
+
             <div>
               <label className="block font-semibold text-[var(--primary)] mb-1">Set Review Status</label>
               <select

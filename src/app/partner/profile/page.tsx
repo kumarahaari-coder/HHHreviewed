@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { db } from "@/lib/db/mockDb";
 import { Partner, User as UserType, TaxDocumentStatus, TaxDocumentType, W8Subtype } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
@@ -33,17 +32,34 @@ export default function PartnerProfile() {
   const [confirmationChecked, setConfirmationChecked] = useState(false);
   const [taxDocStatus, setTaxDocStatus] = useState<TaxDocumentStatus>("NOT_SUBMITTED");
   const [taxDetails, setTaxDetails] = useState<any>(null);
+  const [showTaxPreview, setShowTaxPreview] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const fetchTaxStatus = (partnerId: string) => {
-    const data = db.getTaxDocumentByPartner(partnerId);
-    if (data) {
-      setTaxDocStatus(data.status);
-      setTaxDetails(data);
-    } else {
-      setTaxDocStatus("NOT_SUBMITTED");
-      setTaxDetails(null);
+  // Reload the saved tax document from the server (never from browser-side mock data).
+  const fetchTaxStatus = async (partnerId: string) => {
+    try {
+      const res = await fetch(`/api/tax-documents/status?partnerId=${encodeURIComponent(partnerId)}`);
+      const data = await res.json();
+      if (data.success && data.document) {
+        setTaxDocStatus(data.status);
+        setTaxDetails({
+          ...data.document,
+          currentVersion: {
+            id: data.document.versionId,
+            versionNumber: data.document.versionNumber,
+            documentType: data.document.documentType,
+            w8Subtype: data.document.w8Subtype,
+            originalFilename: data.document.originalFilename,
+            submissionDate: data.document.submissionDate
+          }
+        });
+      } else {
+        setTaxDocStatus("NOT_SUBMITTED");
+        setTaxDetails(null);
+      }
+    } catch (err) {
+      console.error("[Partner Profile] Failed to refresh tax status", err);
     }
   };
 
@@ -137,7 +153,7 @@ export default function PartnerProfile() {
         setMessage({ type: "success", text: data.message });
         setSelectedFile(null);
         setConfirmationChecked(false);
-        fetchTaxStatus(partner.id);
+        await fetchTaxStatus(partner.id);
       } else {
         setMessage({ type: "error", text: data.error || "Upload failed." });
       }
@@ -269,6 +285,36 @@ export default function PartnerProfile() {
               <span className="text-[#6E6E73] font-semibold uppercase">Submission Date:</span>
               <span className="text-[#6E6E73]">{new Date(taxDetails.currentVersion.submissionDate).toLocaleString()}</span>
             </div>
+
+            {taxDetails.id && taxDetails.currentVersion.id && (() => {
+              const fileUrl = `/api/tax-documents/file?documentId=${encodeURIComponent(taxDetails.id)}&versionId=${encodeURIComponent(taxDetails.currentVersion.id)}`;
+              return (
+                <div className="pt-2 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTaxPreview(v => !v)}
+                      className="px-3 py-1.5 rounded-md border border-[#D2D2D7] bg-white text-xs font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
+                    >
+                      {showTaxPreview ? "Hide preview" : "View uploaded form"}
+                    </button>
+                    <a
+                      href={`${fileUrl}&download=1`}
+                      className="px-3 py-1.5 rounded-md border border-[#D2D2D7] bg-white text-xs font-semibold text-[#1D1D1F] hover:bg-[#F5F5F7]"
+                    >
+                      Download
+                    </a>
+                  </div>
+                  {showTaxPreview && (
+                    <iframe
+                      src={fileUrl}
+                      title="Uploaded tax form preview"
+                      className="w-full h-[480px] rounded-lg border border-[#D2D2D7] bg-white"
+                    />
+                  )}
+                </div>
+              );
+            })()}
 
             {taxDetails.adminNote && (
               <div className="mt-3 p-3 bg-[#F5F5F7] border border-[#D2D2D7] rounded-lg text-xs text-[#1D1D1F]">

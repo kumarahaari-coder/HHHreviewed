@@ -1,4 +1,5 @@
 import { createAdminClient } from "./admin";
+import { getTaxDocumentByPartner } from "./tax-documents";
 import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation, SiteReadinessStage, Property } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
@@ -741,7 +742,12 @@ export async function getPartnerDashboardData(partnerId: string) {
   const { data: reservations } = await supabase.from("reservations").select("*").eq("partner_id", partnerId);
   const { data: payouts } = await supabase.from("payouts").select("*").eq("partner_id", partnerId);
   const { data: statements } = await supabase.from("payouts").select("*").eq("partner_id", partnerId).eq("payout_status", "PAID");
-  const { data: taxDoc } = await supabase.from("creator_tax_documents").select("*").eq("partner_id", partnerId).maybeSingle();
+  let taxDoc: Awaited<ReturnType<typeof getTaxDocumentByPartner>> = null;
+  try {
+    taxDoc = await getTaxDocumentByPartner(partnerId);
+  } catch (err: any) {
+    console.error("[Partner Dashboard] Failed to load tax document:", err?.message);
+  }
 
   // Authoritatively source commissions from commission_ledger_events
   const { data: ledgerEvents } = await supabase
@@ -836,15 +842,25 @@ export async function getPartnerDashboardData(partnerId: string) {
       transactionReference: p.transaction_reference,
       status: p.payout_status || p.status
     })),
+    // Partner-facing: the internal admin note is deliberately NOT included.
     taxDocument: taxDoc ? {
       id: taxDoc.id,
-      partnerId: taxDoc.partner_id,
-      currentVersionId: taxDoc.current_version_id,
+      partnerId: taxDoc.partnerId,
+      currentVersionId: taxDoc.currentVersionId,
       status: taxDoc.status,
-      adminNote: taxDoc.admin_note,
-      internalNote: taxDoc.internal_note,
-      createdAt: taxDoc.created_at,
-      updatedAt: taxDoc.updated_at
+      adminNote: taxDoc.adminNote,
+      createdAt: taxDoc.createdAt,
+      updatedAt: taxDoc.updatedAt,
+      currentVersion: taxDoc.currentVersion
+        ? {
+            id: taxDoc.currentVersion.id,
+            versionNumber: taxDoc.currentVersion.versionNumber,
+            documentType: taxDoc.currentVersion.documentType,
+            w8Subtype: taxDoc.currentVersion.w8Subtype,
+            originalFilename: taxDoc.currentVersion.originalFilename,
+            submissionDate: taxDoc.currentVersion.submissionDate
+          }
+        : undefined
     } : null
   };
 }

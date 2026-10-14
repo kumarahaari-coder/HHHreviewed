@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
+import { getTaxDocumentByPartner } from "@/lib/supabase/tax-documents";
 import { getCurrentSession, canAccessCreatorData } from "@/lib/authorization";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,7 +18,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
-    const doc = db.getTaxDocumentByPartner(partnerId);
+    const doc = await getTaxDocumentByPartner(partnerId);
     if (!doc) {
       return NextResponse.json({
         success: true,
@@ -39,6 +41,7 @@ export async function GET(req: NextRequest) {
         w8Subtype: doc.currentVersion?.w8Subtype,
         originalFilename: doc.currentVersion?.originalFilename,
         versionNumber: doc.currentVersion?.versionNumber,
+        versionId: doc.currentVersion?.id,
         totalVersions: doc.versions?.length || 0
       }
     });

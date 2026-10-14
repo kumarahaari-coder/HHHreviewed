@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/mockDb";
 import { getCurrentSession, canAccessCreatorData } from "@/lib/authorization";
 import { validatePdfFileSecurity, generateOpaqueR2Key, putObjectToR2, deleteR2Object } from "@/lib/storage/r2";
 import { sendTransactionalEmail } from "@/lib/email/brevo";
+import { getTaxDocumentByPartner, saveTaxSubmission, logTaxAudit } from "@/lib/supabase/tax-documents";
 
 export async function POST(req: NextRequest) {
   let uploadedR2Key: string | null = null;
@@ -16,7 +16,10 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const partnerId = formData.get("partnerId") as string || session.partnerId;
     const documentType = formData.get("documentType") as "W_9" | "W_8";
-    const w8Subtype = formData.get("w8Subtype") as "W_8BEN" | "W_8BEN_E" | "OTHER" | undefined;
+    const w8SubtypeRaw = formData.get("w8Subtype") as string | null;
+    const w8Subtype = documentType === "W_8" && ["W_8BEN", "W_8BEN_E", "OTHER"].includes(w8SubtypeRaw || "")
+      ? (w8SubtypeRaw as "W_8BEN" | "W_8BEN_E" | "OTHER")
+      : undefined;
     const confirmationChecked = formData.get("confirmationChecked") === "true";
     const file = formData.get("file") as File | null;
 
@@ -47,17 +50,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Generate Opaque Storage Key (Zero PII in path)
-    const existingDoc = db.getTaxDocumentByPartner(partnerId);
+    const existingDoc = await getTaxDocumentByPartner(partnerId);
     const opaqueKeys = generateOpaqueR2Key(existingDoc?.id);
     const r2Key = opaqueKeys.r2Key;
 
     // STEP 1: Execute PutObjectCommand to Cloudflare R2 Bucket
     console.log(`[Tax Doc Upload] Streaming file ${file.name} (${file.size} bytes) to Cloudflare R2 key: ${r2Key}`);
-    const r2UploadResult = await putObjectToR2(buffer, r2Key, file.type || "application/pdf");
+    await putObjectToR2(buffer, r2Key, file.type || "application/pdf");
     uploadedR2Key = r2Key;
 
     // STEP 2: Save to Database with Versioning
-    const { doc, version } = db.saveTaxSubmission({
+    const { doc, version, isReplacement } = await saveTaxSubmission({
       partnerId,
       documentType,
       w8Subtype,
@@ -67,22 +70,40 @@ export async function POST(req: NextRequest) {
       fileSize: file.size,
       mimeType: file.type || "application/pdf",
       confirmationChecked: true,
-      quarantineStatus: "PASSED"
+      quarantineStatus: "PASSED",
+      uploadedByUserId: session.userId
     });
 
     console.log(`[Tax Doc Upload] Saved tax submission to DB. DocumentId: ${doc.id}, VersionId: ${version.id}, Version: ${version.versionNumber}`);
 
-    // STEP 3: Send email notification to creator and admin
-    await sendTransactionalEmail({
-      eventType: "TAX_DOC_SUBMITTED",
-      recipientEmail: session.email,
-      recipientName: session.userId,
-      params: {
-        partnerId,
-        documentType,
-        versionNumber: version.versionNumber
-      }
+    // The record is now committed: from here on a failure must NOT delete the R2 object.
+    uploadedR2Key = null;
+
+    await logTaxAudit({
+      documentId: doc.id,
+      versionId: version.id,
+      partnerId,
+      action: isReplacement ? "REPLACE" : "UPLOAD",
+      performedByUserId: session.userId,
+      performedByUserRole: session.role,
+      details: `Tax form ${documentType} (v${version.versionNumber}) submitted.`
     });
+
+    // STEP 3: Email notification (best effort; the submission is already saved)
+    try {
+      await sendTransactionalEmail({
+        eventType: "TAX_DOC_SUBMITTED",
+        recipientEmail: session.email,
+        recipientName: session.name || session.email,
+        params: {
+          partnerId,
+          documentType,
+          versionNumber: version.versionNumber
+        }
+      });
+    } catch (emailErr: any) {
+      console.error("[Tax Doc Upload] Notification email failed (submission was saved):", emailErr?.message);
+    }
 
     // STEP 4: Return success only after BOTH R2 upload AND DB persistence succeed
     return NextResponse.json({
@@ -90,8 +111,6 @@ export async function POST(req: NextRequest) {
       message: `Tax document ${documentType} (v${version.versionNumber}) submitted successfully.`,
       documentId: doc.id,
       versionId: version.id,
-      r2Key,
-      eTag: r2UploadResult.eTag,
       status: doc.status,
       submissionDate: version.submissionDate
     });
