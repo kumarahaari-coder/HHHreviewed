@@ -1008,6 +1008,26 @@ export const CANONICAL_PROPERTY_UUIDS = new Set([
   "55791a54-b1a3-459e-bbd5-9073a418b774"  // Beech Mountain, NC
 ]);
 
+/**
+ * site_properties.property_id is a FK to properties(id). If the core properties are missing
+ * (fresh or wiped database) the insert fails with an opaque FK violation, so check up front.
+ */
+async function assertCorePropertiesExist(supabase: any, propertyIds: string[]): Promise<void> {
+  if (propertyIds.length === 0) return;
+  const { data, error } = await supabase.from("properties").select("id").in("id", propertyIds);
+  if (error) {
+    throw new Error(`Failed to verify properties: ${error.message}`);
+  }
+  const found = new Set((data || []).map((r: { id: string }) => r.id));
+  const missing = propertyIds.filter(id => !found.has(id));
+  if (missing.length > 0) {
+    throw new Error(
+      `Property record(s) missing from the database: ${missing.join(", ")}. ` +
+      `Apply supabase/migrations/20261014_seed_core_properties.sql to seed the core properties.`
+    );
+  }
+}
+
 export async function createReferralSite(params: CreateReferralSiteParams): Promise<Site> {
   const partner = await findPartnerById(params.partnerId);
   if (!partner) {
@@ -1101,6 +1121,8 @@ export async function createReferralSite(params: CreateReferralSiteParams): Prom
   if (existingCode) {
     throw new Error(`Tracking code "${cleanCode}" is already registered.`);
   }
+
+  await assertCorePropertiesExist(supabase, validatedMappings.map(m => m.propertyId));
 
   const siteCode = `SITE_${cleanCode}`;
   const { data: siteRow, error: siteInsertErr } = await supabase
@@ -1233,8 +1255,9 @@ export async function updateSitePropertyMappings(
     throw new Error(`Site with ID "${siteId}" not found.`);
   }
 
-  await supabase.from("site_properties").delete().eq("site_id", siteId);
+  await assertCorePropertiesExist(supabase, mappings.map(m => m.propertyId));
 
+  // Upsert first, then prune: a failed write must never leave the site with its mappings wiped.
   if (mappings.length > 0) {
     const rows = mappings.map(m => ({
       site_id: siteId,
@@ -1243,10 +1266,22 @@ export async function updateSitePropertyMappings(
       custom_booking_url: m.customBookingUrl,
       status: "active" as any
     }));
-    const { error: insertErr } = await supabase.from("site_properties").insert(rows);
-    if (insertErr) {
-      throw new Error(`Failed to update site properties: ${insertErr.message}`);
+    const { error: upsertErr } = await supabase
+      .from("site_properties")
+      .upsert(rows, { onConflict: "site_id,property_id" });
+    if (upsertErr) {
+      throw new Error(`Failed to update site properties: ${upsertErr.message}`);
     }
+  }
+
+  const keepIds = mappings.map(m => m.propertyId);
+  let pruneQuery = supabase.from("site_properties").delete().eq("site_id", siteId);
+  if (keepIds.length > 0) {
+    pruneQuery = pruneQuery.not("property_id", "in", `(${keepIds.join(",")})`);
+  }
+  const { error: pruneErr } = await pruneQuery;
+  if (pruneErr) {
+    throw new Error(`Failed to remove unselected site properties: ${pruneErr.message}`);
   }
 
   const allSites = await getAllSites();

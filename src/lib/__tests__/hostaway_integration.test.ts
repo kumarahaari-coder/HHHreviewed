@@ -232,7 +232,7 @@ async function runTestSuite() {
   console.log("\n[Test 7] Reservation Normalization...");
   const mockBooking: HostawayReservation = {
     id: 5001,
-    listingMapId: 101001,
+    listingMapId: 595515,
     reservationId: "HM12345678",
     channelName: "airbnb",
     status: "new",
@@ -390,7 +390,7 @@ async function runTestSuite() {
   // [Test 14] Shadow Reconciliation Reporting
   // ---------------------------------------------------------------------------
   console.log("\n[Test 14] Shadow Reconciliation Report Generation...");
-  const propMap = new Map<number, string>([[101001, "55791a54-b1a3-459e-bbd5-9073a418b774"]]);
+  const propMap = new Map<number, string>([[595515, "55791a54-b1a3-459e-bbd5-9073a418b774"]]);
   const reconReport = performShadowReconciliation([norm, newNorm], propMap, [exactLegacyReservation]);
   assertEqual(reconReport.sameBookingConfirmed, 1, "Should have 1 confirmed match");
   assertEqual(reconReport.hostawayOnly, 1, "Should have 1 Hostaway-only booking");

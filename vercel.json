@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/sync-ownerrez",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/sync-hostaway",
+      "schedule": "30 3 * * *"
     }
   ]
 }
