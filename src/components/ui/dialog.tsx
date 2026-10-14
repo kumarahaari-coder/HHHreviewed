@@ -112,7 +112,7 @@ export function Dialog({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className={`relative w-full ${sizeStyles[size]} max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:max-h-[90vh] bg-surface border border-divider sm:rounded-xl shadow-xl z-10 overflow-hidden outline-none animate-scale-up flex flex-col`}
+        className={`relative w-full ${sizeStyles[size]} max-sm:rounded-t-2xl max-sm:rounded-b-none max-h-[90vh] bg-surface border border-divider sm:rounded-xl shadow-xl z-10 overflow-hidden outline-none animate-scale-up flex flex-col`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

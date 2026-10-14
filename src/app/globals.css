@@ -84,6 +84,14 @@
 :root {
   --background: #f5f5f7;
   --foreground: #1d1d1f;
+
+  /* Short aliases used across admin/partner pages as var(--primary) etc.
+     They were never defined, so backgrounds/borders silently resolved to nothing. */
+  --primary: var(--color-primary);
+  --secondary: var(--color-secondary);
+  --surface: var(--color-surface);
+  --canvas: var(--color-canvas);
+  --border: var(--color-divider);
 }
 
 body {

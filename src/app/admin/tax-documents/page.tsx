@@ -354,6 +354,7 @@ export default function AdminTaxDocumentsPage() {
         isOpen={!!selectedCreator}
         onClose={() => setSelectedCreator(null)}
         title={`Review Tax Submission — ${selectedCreator?.businessName || ""}`}
+        size="lg"
       >
         {selectedCreator && (
           <form onSubmit={handleReviewSubmit} className="space-y-4 font-sans text-xs">
@@ -377,7 +378,7 @@ export default function AdminTaxDocumentsPage() {
                   <iframe
                     src={fileUrl}
                     title="Tax document preview"
-                    className="w-full h-[420px] rounded-md border border-[var(--border)] bg-white"
+                    className="w-full h-[45vh] min-h-[260px] rounded-md border border-[var(--border)] bg-white"
                   />
                 </div>
               );

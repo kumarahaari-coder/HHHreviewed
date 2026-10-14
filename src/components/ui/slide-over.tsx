@@ -124,7 +124,7 @@ export function SlideOver({
         <div
           ref={panelRef}
           tabIndex={-1}
-          className={`w-full ${sizeStyles[size]} bg-surface border-${position === "right" ? "l" : "r"} border-divider shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out outline-none ${translateStyles}`}
+          className={`w-full ${sizeStyles[size]} bg-surface ${position === "right" ? "border-l" : "border-r"} border-divider shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out outline-none ${translateStyles}`}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
