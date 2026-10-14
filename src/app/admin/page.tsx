@@ -17,7 +17,6 @@ import {
   PieChartIcon,
   ShieldCheck
 } from "lucide-react";
-import { db } from "@/lib/db/mockDb";
 import { Reservation, Partner, Site } from "@/lib/db/schema";
 import {
   Card,
@@ -45,16 +44,16 @@ export default function AdminOverview() {
   const router = useRouter();
 
   // Data States
-  const [reservations, setReservations] = useState<Reservation[]>(db.reservations || []);
-  const [partners, setPartners] = useState<Partner[]>(db.partners || []);
-  const [sites, setSites] = useState<Site[]>(db.sites || []);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [ledgerEvents, setLedgerEvents] = useState<any[]>([]);
   const [projection, setProjection] = useState<any>(null);
 
   // UI & Filter States
   const [timeframe, setTimeframe] = useState<"30" | "90" | "ALL">("ALL");
   const [selectedProperty, setSelectedProperty] = useState<string>("ALL");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,22 +83,14 @@ export default function AdminOverview() {
         const pData = await partnersRes.json();
         if (pData.success && Array.isArray(pData.partners)) {
           setPartners(pData.partners);
-        } else {
-          setPartners(db.partners);
         }
-      } else {
-        setPartners(db.partners);
       }
 
       if (sitesRes && sitesRes.ok) {
         const sData = await sitesRes.json();
         if (sData.success && Array.isArray(sData.sites)) {
           setSites(sData.sites);
-        } else {
-          setSites(db.sites);
         }
-      } else {
-        setSites(db.sites);
       }
 
       if (ledgerRes && ledgerRes.ok) {
@@ -113,14 +104,11 @@ export default function AdminOverview() {
       }
 
       if (!resDataLoaded) {
-        setReservations(db.reservations);
+        setError("Unable to load reservations. Please refresh the page.");
       }
     } catch (err: any) {
       console.error("[Admin Overview Data Load Error]:", err);
-      setReservations(db.reservations);
-      setPartners(db.partners);
-      setSites(db.sites);
-      setError("Unable to connect to live datastore. Showing local active operational dataset.");
+      setError("Unable to load live data. Please refresh the page.");
     } finally {
       setLoading(false);
     }
@@ -178,7 +166,7 @@ export default function AdminOverview() {
   // Reconciles directly with INITIAL_ACCRUAL ledger events for attributed reservations in period
   const calculatedCommission = attributedReservations.reduce((acc, r) => {
     const accrualEvent = ledgerEvents.find(
-      e => (e.reservation_id === r.id || e.provider_booking_id === String(r.ownerrezBookingId) || e.provider_booking_id === r.confirmationCode) &&
+      e => (e.reservation_id === r.id || e.provider_booking_id === String(r.hostawayReservationId ?? r.ownerrezBookingId) || e.provider_booking_id === r.confirmationCode) &&
            e.event_type === "INITIAL_ACCRUAL"
     );
 
@@ -197,7 +185,7 @@ export default function AdminOverview() {
     .filter(e => {
       const isRealizedType = ["PAYMENT_REALIZED", "REFUND_CLAWBACK", "MANUAL_ADJUSTMENT"].includes(e.event_type);
       if (!isRealizedType) return false;
-      const matchingRes = reservations.find(r => r.id === e.reservation_id || String(r.ownerrezBookingId) === e.provider_booking_id);
+      const matchingRes = reservations.find(r => r.id === e.reservation_id || String(r.hostawayReservationId ?? r.ownerrezBookingId) === e.provider_booking_id);
       if (matchingRes && selectedProperty !== "ALL" && matchingRes.propertyId !== selectedProperty) return false;
       return isWithinTimeframe(e.created_at);
     })
@@ -259,7 +247,7 @@ export default function AdminOverview() {
     
     // Check if initial accrual event exists
     const accrualEvent = ledgerEvents.find(
-      e => (e.reservation_id === res.id || e.provider_booking_id === String(res.ownerrezBookingId)) &&
+      e => (e.reservation_id === res.id || e.provider_booking_id === String(res.hostawayReservationId ?? res.ownerrezBookingId)) &&
            e.event_type === "INITIAL_ACCRUAL"
     );
     const commVal = accrualEvent

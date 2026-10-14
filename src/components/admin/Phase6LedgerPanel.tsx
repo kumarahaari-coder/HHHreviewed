@@ -503,7 +503,7 @@ export function Phase6LedgerPanel() {
                     PAYOUT_SETTLEMENT: { label: "Payout Settled", style: "bg-accent-subtle text-accent-hover border-accent/20" },
                   };
                   const eventConfig = eventLabels[ev.event_type] || { label: ev.event_type, style: "bg-surface-muted text-secondary border-divider-soft" };
-                  const providerName = ev.source_provider === "ownerrez" ? "OwnerRez" : (ev.source_provider === "hospitable" ? "Hospitable" : ev.source_provider);
+                  const providerName = ev.source_provider === "hostaway" ? "Hostaway" : ev.source_provider === "ownerrez" ? "OwnerRez" : (ev.source_provider === "hospitable" ? "Hospitable" : ev.source_provider);
                   const channelName = ev.booking_channel?.toUpperCase() === "DIRECT" ? "Direct" : (ev.booking_channel || "Direct");
 
                   return (

@@ -42,12 +42,47 @@ export function LoadingState({
     );
   }
 
-  // Page level loader (default)
+  // Page level loader (default): skeleton placeholder shaped like a typical admin page
   return (
-    <div className={`flex min-h-[50vh] flex-col items-center justify-center p-8 font-sans ${className}`}>
-      <div className="flex flex-col items-center space-y-3 p-6 bg-surface border border-divider rounded-xl shadow-xs">
-        <Loader2 size={28} className="animate-spin text-primary" />
-        <span className="text-xs font-medium text-secondary">{message}</span>
+    <div
+      className={`space-y-6 font-sans pb-8 animate-pulse ${className}`}
+      role="status"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <span className="sr-only">{message}</span>
+
+      {/* Header */}
+      <div className="space-y-2">
+        <div className="h-7 bg-surface-muted rounded w-48" />
+        <div className="h-4 bg-surface-muted rounded w-80 max-w-full" />
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="p-4 bg-surface border border-divider rounded-lg space-y-3">
+            <div className="h-3 bg-surface-muted rounded w-1/2" />
+            <div className="h-7 bg-surface-muted rounded w-2/3" />
+          </div>
+        ))}
+      </div>
+
+      {/* Toolbar + table rows */}
+      <div className="bg-surface border border-divider rounded-lg overflow-hidden">
+        <div className="p-4 border-b border-divider-soft">
+          <div className="h-9 bg-surface-muted rounded w-full max-w-md" />
+        </div>
+        <div className="divide-y divide-divider-soft">
+          {[0, 1, 2, 3, 4].map(i => (
+            <div key={i} className="p-4 flex items-center gap-4">
+              <div className="h-4 bg-surface-muted rounded w-1/4" />
+              <div className="h-4 bg-surface-muted rounded w-1/4" />
+              <div className="h-4 bg-surface-muted rounded w-1/6" />
+              <div className="h-4 bg-surface-muted rounded w-1/6 ml-auto" />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

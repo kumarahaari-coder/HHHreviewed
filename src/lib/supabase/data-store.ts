@@ -1,5 +1,5 @@
 import { createAdminClient } from "./admin";
-import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation, SiteReadinessStage } from "@/lib/db/schema";
+import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation, SiteReadinessStage, Property } from "@/lib/db/schema";
 import { db as mockDb } from "@/lib/db/mockDb";
 
 /**
@@ -1763,3 +1763,33 @@ export async function getAdminReservations(): Promise<Reservation[]> {
   })) as Reservation[];
 }
 
+
+
+export async function getAdminProperties(): Promise<Property[]> {
+  if (!isSupabaseEnabled()) {
+    return mockDb.properties;
+  }
+
+  const supabase = assertSupabaseClient();
+  const { data, error } = await supabase
+    .from("properties")
+    .select("*")
+    .order("property_name", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to fetch properties: ${error.message}`);
+  }
+
+  return (data || []).map((r: any) => ({
+    id: r.id,
+    hospitablePropertyId: r.hospitable_property_id || "",
+    name: r.property_name,
+    location: r.location || "",
+    timezone: r.timezone || "",
+    imageUrl: r.image_url || undefined,
+    status: String(r.status).toLowerCase() === "active" ? "ACTIVE" : "INACTIVE",
+    websiteUrl: r.website_url || undefined,
+    bookingUrl: r.booking_url || undefined,
+    summary: r.summary || undefined,
+  })) as Property[];
+}

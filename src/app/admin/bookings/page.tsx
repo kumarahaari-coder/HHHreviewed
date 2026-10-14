@@ -1,5 +1,6 @@
 "use client";
 
+import { getReservationProvider, getReservationProviderLabel } from "@/lib/reservation-provider";
 import React, { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
@@ -52,15 +53,15 @@ function BookingsContent() {
   const router = useRouter();
 
   // Data States
-  const [reservations, setReservations] = useState<Reservation[]>(db.reservations || []);
-  const [partners, setPartners] = useState<Partner[]>(db.partners || []);
-  const [sites, setSites] = useState<Site[]>(db.sites || []);
-  const [attributions, setAttributions] = useState<ReservationAttribution[]>(db.reservationAttributions || []);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [attributions, setAttributions] = useState<ReservationAttribution[]>([]);
   const [commissionPreviews, setCommissionPreviews] = useState<any[]>([]);
   const [ledgerEvents, setLedgerEvents] = useState<any[]>([]);
 
   // UI & Loading States
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,43 +104,31 @@ function BookingsContent() {
         if (rData.success && Array.isArray(rData.reservations)) {
           setReservations(rData.reservations);
         } else {
-          setReservations(db.reservations);
+          setError("Unable to load reservations. Please refresh the page.");
         }
       } else {
-        setReservations(db.reservations);
+        setError("Unable to load reservations. Please refresh the page.");
       }
 
       if (attrRes && attrRes.ok) {
         const aData = await attrRes.json();
         if (aData.success && Array.isArray(aData.attributions)) {
           setAttributions(aData.attributions);
-        } else {
-          setAttributions(db.reservationAttributions);
         }
-      } else {
-        setAttributions(db.reservationAttributions);
       }
 
       if (sitesRes && sitesRes.ok) {
         const sData = await sitesRes.json();
         if (sData.success && Array.isArray(sData.sites)) {
           setSites(sData.sites);
-        } else {
-          setSites(db.sites);
         }
-      } else {
-        setSites(db.sites);
       }
 
       if (partnersRes && partnersRes.ok) {
         const pData = await partnersRes.json();
         if (pData.success && Array.isArray(pData.partners)) {
           setPartners(pData.partners);
-        } else {
-          setPartners(db.partners);
         }
-      } else {
-        setPartners(db.partners);
       }
 
       if (commRes && commRes.ok) {
@@ -157,11 +146,7 @@ function BookingsContent() {
       }
     } catch (err: any) {
       console.error("[Admin Bookings Data Load Error]:", err);
-      setReservations(db.reservations);
-      setPartners(db.partners);
-      setSites(db.sites);
-      setAttributions(db.reservationAttributions);
-      setError("Unable to connect to live datastore. Showing local operational dataset.");
+      setError("Unable to load live data. Please refresh the page.");
     } finally {
       setLoading(false);
     }
@@ -196,23 +181,24 @@ function BookingsContent() {
   const handleManualSync = async () => {
     setIsRefreshing(true);
     try {
-      const res = await fetch("/api/ownerrez/sync", {
+      const res = await fetch("/api/hostaway/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ all: true })
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        const s = data.summary || {};
         db.addNotification(
           "SUCCESS",
-          `OwnerRez sync complete: ${data.result?.bookingsProcessed ?? 0} bookings processed.`
+          `Hostaway sync complete: ${s.fetched ?? 0} fetched, ${s.inserted ?? 0} new, ${s.updated ?? 0} updated.`
         );
       } else {
-        db.addNotification("ALERT", `OwnerRez refresh failed: ${data.error || "Unknown error"}`);
+        db.addNotification("ALERT", `Hostaway refresh failed: ${data.error || "Unknown error"}`);
       }
       await refreshData();
     } catch (err: any) {
-      db.addNotification("ALERT", `OwnerRez refresh failed: ${err?.message || "Network error"}`);
+      db.addNotification("ALERT", `Hostaway refresh failed: ${err?.message || "Network error"}`);
       await refreshData();
     } finally {
       setIsRefreshing(false);
@@ -357,7 +343,8 @@ function BookingsContent() {
       const q = searchQuery.toLowerCase();
       const codeMatch = res.confirmationCode?.toLowerCase().includes(q);
       const idMatch = res.id?.toLowerCase().includes(q);
-      const ownerrezMatch = String(res.ownerrezBookingId || "").includes(q);
+      const ownerrezMatch =
+        String(res.ownerrezBookingId || "").includes(q) || String(res.hostawayReservationId || "").includes(q);
       const propMatch = getPropertyName(res.propertyId).toLowerCase().includes(q);
       const partnerObj = partners.find(p => p.id === res.partnerId);
       const partnerMatch = partnerObj?.contactName?.toLowerCase().includes(q) || partnerObj?.businessName?.toLowerCase().includes(q);
@@ -396,9 +383,7 @@ function BookingsContent() {
 
     // Provider Filter (Technical ingestion source)
     if (selectedProvider !== "ALL") {
-      const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
-      if (selectedProvider === "OWNERREZ" && !isOwnerRez) return false;
-      if (selectedProvider === "HOSPITABLE" && isOwnerRez) return false;
+      if (getReservationProvider(res) !== selectedProvider) return false;
     }
 
     // Channel Filter (Booking channel)
@@ -413,9 +398,9 @@ function BookingsContent() {
   // Export CSV Handler
   const exportCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Confirmation Code,OwnerRez ID,Property,Check In,Check Out,Gross Value,Amount Received,Payment Status,Attribution,Payout Status\n";
+    csvContent += "Confirmation Code,Provider,Provider Booking ID,Property,Check In,Check Out,Gross Value,Amount Received,Payment Status,Attribution,Payout Status\n";
     filteredReservations.forEach(r => {
-      csvContent += `${r.confirmationCode},${r.ownerrezBookingId || ""},"${getPropertyName(r.propertyId)}",${r.checkInDate || ""},${r.checkOutDate || ""},${r.grossAmount || r.bookingAmount || 0},${r.amountReceived || 0},${r.paymentStatus || "UNPAID"},${r.attributionStatus || "UNATTRIBUTED"},${r.payoutStatus || "ESTIMATED"}\n`;
+      csvContent += `${r.confirmationCode},${getReservationProviderLabel(r)},${r.hostawayReservationId || r.ownerrezBookingId || ""},"${getPropertyName(r.propertyId)}",${r.checkInDate || ""},${r.checkOutDate || ""},${r.grossAmount || r.bookingAmount || 0},${r.amountReceived || 0},${r.paymentStatus || "UNPAID"},${r.attributionStatus || "UNATTRIBUTED"},${r.payoutStatus || "ESTIMATED"}\n`;
     });
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -446,7 +431,7 @@ function BookingsContent() {
               disabled={isRefreshing}
               onClick={handleManualSync}
             >
-              {isRefreshing ? "Syncing..." : "Sync OwnerRez"}
+              {isRefreshing ? "Syncing..." : "Sync Hostaway"}
             </Button>
             <Button
               variant="tertiary"
@@ -652,7 +637,7 @@ function BookingsContent() {
                 filteredReservations.map(res => {
                   const site = sites.find(s => s.id === res.siteId);
                   const partner = partners.find(p => p.id === res.partnerId);
-                  const isOwnerRez = Boolean(res.ownerrezBookingId || res.paymentConfirmationSource === "OWNERREZ");
+                  const providerLabel = getReservationProviderLabel(res);
 
                   // Attribution State Resolver
                   const attrObj = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
@@ -660,7 +645,7 @@ function BookingsContent() {
 
                   // Commission Accrual Snapshot Resolver
                   const accrualEvent = ledgerEvents.find(
-                    e => (e.reservation_id === res.id || e.provider_booking_id === String(res.ownerrezBookingId) || e.provider_booking_id === res.confirmationCode) &&
+                    e => (e.reservation_id === res.id || e.provider_booking_id === String(res.hostawayReservationId ?? res.ownerrezBookingId) || e.provider_booking_id === res.confirmationCode) &&
                          e.event_type === "INITIAL_ACCRUAL"
                   );
                   const preview = commissionPreviews.find(cp => cp.reservationId === res.id || cp.ownerrezBookingId === res.ownerrezBookingId);
@@ -687,16 +672,20 @@ function BookingsContent() {
                         <div className="space-y-0.5">
                           <div className="font-semibold text-primary flex items-center gap-1.5">
                             <span>{res.confirmationCode}</span>
-                            {res.ownerrezBookingId && (
+                            {res.hostawayReservationId ? (
+                              <span className="text-[10px] text-tertiary font-mono">
+                                (HA #{res.hostawayReservationId})
+                              </span>
+                            ) : res.ownerrezBookingId ? (
                               <span className="text-[10px] text-tertiary font-mono">
                                 (OR #{res.ownerrezBookingId})
                               </span>
-                            )}
+                            ) : null}
                           </div>
                           <div className="text-[11px] text-secondary flex items-center gap-1">
                             <span className="uppercase font-medium">{res.platform || "Direct"}</span>
                             <span>•</span>
-                            <span>{isOwnerRez ? "OwnerRez" : "Hospitable"}</span>
+                            <span>{providerLabel}</span>
                           </div>
                         </div>
                       </TableCell>
@@ -962,12 +951,12 @@ function BookingsContent() {
         {selectedRes && (() => {
           const site = sites.find(s => s.id === selectedRes.siteId);
           const partner = partners.find(p => p.id === selectedRes.partnerId);
-          const isOwnerRez = Boolean(selectedRes.ownerrezBookingId || selectedRes.paymentConfirmationSource === "OWNERREZ");
+          const providerLabel = getReservationProviderLabel(selectedRes);
           const attrObj = attributions.find(a => a.reservationId === selectedRes.id || a.reservationId === selectedRes.hospitableReservationId);
           const attrStatus = attrObj?.status || selectedRes.attributionStatus || "UNATTRIBUTED";
 
           const accrualEvent = ledgerEvents.find(
-            e => (e.reservation_id === selectedRes.id || e.provider_booking_id === String(selectedRes.ownerrezBookingId) || e.provider_booking_id === selectedRes.confirmationCode) &&
+            e => (e.reservation_id === selectedRes.id || e.provider_booking_id === String(selectedRes.hostawayReservationId ?? selectedRes.ownerrezBookingId) || e.provider_booking_id === selectedRes.confirmationCode) &&
                  e.event_type === "INITIAL_ACCRUAL"
           );
           const preview = commissionPreviews.find(cp => cp.reservationId === selectedRes.id || cp.ownerrezBookingId === selectedRes.ownerrezBookingId);
@@ -1054,7 +1043,7 @@ function BookingsContent() {
                   </div>
                   <div className="flex items-center justify-between text-tertiary text-[11px] pt-1 border-t border-divider-soft">
                     <span>Source Provider / Channel:</span>
-                    <span className="font-mono">{isOwnerRez ? "OwnerRez" : "Hospitable"} • {selectedRes.platform || "Direct"}</span>
+                    <span className="font-mono">{providerLabel} • {selectedRes.platform || "Direct"}</span>
                   </div>
                 </div>
               </div>

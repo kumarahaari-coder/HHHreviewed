@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { db } from "@/lib/db/mockDb";
 import { Property } from "@/lib/db/schema";
 import {
   Card,
@@ -16,10 +15,30 @@ import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 
 export default function PropertiesListing() {
   const [properties, setProperties] = useState<Property[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setProperties(db.properties || []);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/properties");
+        const data = await res.json();
+        if (cancelled) return;
+        if (res.ok && data.success && Array.isArray(data.properties)) {
+          setProperties(data.properties);
+        } else {
+          setError(data?.error || "Unable to load properties.");
+        }
+      } catch {
+        if (!cancelled) setError("Unable to load properties. Please refresh the page.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {
@@ -33,6 +52,8 @@ export default function PropertiesListing() {
         title="Properties"
         description="Canonical HHH retreat properties and provider ingestion mappings."
       />
+
+      {error && <ErrorBanner message={error} />}
 
       {/* 2. Operational Property Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -88,7 +109,7 @@ export default function PropertiesListing() {
                     <span>Provider Synced</span>
                   </span>
                   <span className="text-xs text-tertiary font-sans">
-                    Hospitable & OwnerRez Mapped
+                    Hostaway Mapped
                   </span>
                 </div>
               </div>

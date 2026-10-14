@@ -17,7 +17,6 @@ import {
   Settings,
   RefreshCw
 } from "lucide-react";
-import { db } from "@/lib/db/mockDb";
 import { Site, Partner, SiteReadinessStage } from "@/lib/db/schema";
 import {
   Card,
@@ -88,9 +87,9 @@ function getReadinessDescription(stage?: SiteReadinessStage): string {
 }
 
 export default function WebsiteManagement() {
-  const [sites, setSites] = useState<Site[]>(db.sites || []);
-  const [partners, setPartners] = useState<Partner[]>(db.partners || []);
-  const [loading, setLoading] = useState(false);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Filter & Search states
@@ -115,10 +114,8 @@ export default function WebsiteManagement() {
         const sData = await sitesRes.json();
         if (sData.success && Array.isArray(sData.sites)) {
           setSites(sData.sites);
-          if (selectedSite) {
-            const updated = sData.sites.find((s: Site) => s.id === selectedSite.id);
-            if (updated) setSelectedSite(updated);
-          }
+          // Functional update: never reopen a drawer the user closed while this request was in flight.
+          setSelectedSite(prev => (prev ? sData.sites.find((s: Site) => s.id === prev.id) ?? prev : prev));
         }
       }
 
@@ -130,10 +127,11 @@ export default function WebsiteManagement() {
       }
     } catch (err: any) {
       console.error("[Sites Page] Refresh error:", err);
+      setError("Unable to load referral websites. Please refresh the page.");
     } finally {
       setLoading(false);
     }
-  }, [selectedSite]);
+  }, []);
 
   useEffect(() => {
     refreshData();
@@ -174,7 +172,7 @@ export default function WebsiteManagement() {
       {/* 1. Page Header */}
       <PageHeader
         title="Sites"
-        description="Referral websites, tracking links, and OwnerRez listing source mappings."
+        description="Referral websites, tracking links, and Hostaway booking destinations."
         action={
           <Button
             variant="primary"

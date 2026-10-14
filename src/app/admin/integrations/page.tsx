@@ -11,7 +11,6 @@ import {
   AlertTriangle,
   ArrowRightLeft,
 } from "lucide-react";
-import { db } from "@/lib/db/mockDb";
 import { Property, Site, Partner } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
@@ -216,7 +215,6 @@ export default function IntegrationsPage() {
   };
 
   const refreshData = async () => {
-    setProperties(db.properties);
     try {
       const [sitesRes, partnersRes] = await Promise.all([
         fetch("/api/admin/sites"),
@@ -227,8 +225,6 @@ export default function IntegrationsPage() {
         const sData = await sitesRes.json();
         if (sData.success && Array.isArray(sData.sites)) {
           setSites(sData.sites);
-        } else {
-          setSites(db.sites);
         }
       }
 
@@ -236,13 +232,9 @@ export default function IntegrationsPage() {
         const pData = await partnersRes.json();
         if (pData.success && Array.isArray(pData.partners)) {
           setPartners(pData.partners);
-        } else {
-          setPartners(db.partners);
         }
       }
     } catch {
-      setSites(db.sites);
-      setPartners(db.partners);
     }
   };
 
