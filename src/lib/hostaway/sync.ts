@@ -204,8 +204,15 @@ export async function syncSingleHostawayReservation(
     };
   }
 
+  // A row that already carries this Hostaway reservation id is a Hostaway-origin row, not a legacy one:
+  // it must go through CASE B (full update) so status, payment and cancellation changes apply.
+  const matchedExisting = existingReservations.find(r => r.id === matchResult.matchedReservationId);
+  const isDirectHostawayRow =
+    matchedExisting?.hostawayReservationId != null &&
+    Number(matchedExisting.hostawayReservationId) === Number(normalized.hostawayReservationId);
+
   // CASE A2: Matches existing legacy booking -> LINK ONLY (NO duplicate initial accrual)
-  if (matchResult.status === "SAME_BOOKING_CONFIRMED" && matchResult.matchedReservationId) {
+  if (matchResult.status === "SAME_BOOKING_CONFIRMED" && matchResult.matchedReservationId && !isDirectHostawayRow) {
     const existingId = matchResult.matchedReservationId;
 
     // Safely update Hostaway metadata on existing reservation without overwriting legacy provider ID
@@ -230,15 +237,22 @@ export async function syncSingleHostawayReservation(
   // CASE B: Already exists by hostaway_reservation_id
   const { data: existingHostawayRow } = await supabase
     .from("reservations")
-    .select("id, hostaway_reservation_id, gross_amount, amount_received, reservation_status, payment_status")
+    .select("id, hostaway_reservation_id, gross_amount, amount_received, reservation_status, payment_status, site_id, partner_id")
     .eq("hostaway_reservation_id", normalized.hostawayReservationId)
     .maybeSingle();
 
   if (existingHostawayRow) {
+    // Backfill attribution only when the row has none yet; never overwrite an existing attribution.
+    const attributionBackfill =
+      !existingHostawayRow.site_id && attrRes.attributionTier === "ATTRIBUTED" && attrRes.siteId
+        ? { site_id: attrRes.siteId, partner_id: attrRes.partnerId || null, attribution_status: dbAttributionStatus }
+        : {};
+
     // Update existing Hostaway row
     await supabase
       .from("reservations")
       .update({
+        ...attributionBackfill,
         reservation_status: normalized.reservationStatus,
         payment_status: normalized.paymentStatus,
         gross_amount: normalized.grossAmount,
@@ -256,7 +270,9 @@ export async function syncSingleHostawayReservation(
 
     // Reconcile payment realization if CANCELLED or PAID
     let reconciliationStatus: string | undefined;
-    if (normalized.reservationStatus === "CANCELLED") {
+    if (!isHostawayCommissionAttributionEnabled()) {
+      reconciliationStatus = "COMMISSION_ATTRIBUTION_DISABLED_PENDING_LIVE_PROOF";
+    } else if (normalized.reservationStatus === "CANCELLED") {
       try {
         const recon = await reconcileReservationPaymentRealization({
           reservationId: existingHostawayRow.id,

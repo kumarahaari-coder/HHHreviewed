@@ -86,6 +86,77 @@ export function verifySignedAttributionToken(
 }
 
 /**
+ * Booking-engine source attribution (fallback when HHH_REFERRAL_SITE_ID is empty).
+ *
+ * Hostaway records which booking engine a guest booked through in `source` (e.g. "210263-002",
+ * channelName "bookingengine"). A site is credited only when its website hostname's first label is
+ * EXACTLY that source (210263-002.holidayfuture.com), there is exactly one such active site, and
+ * the partner is active. Zero matches stays UNATTRIBUTED; several matches go to REVIEW_REQUIRED.
+ */
+async function resolveAttributionFromBookingEngineSource(
+  booking: HostawayReservation,
+  supabaseClient?: any
+): Promise<HostawayAttributionResult | null> {
+  const source = String((booking as any).source ?? "").trim().toLowerCase();
+  const channelName = String((booking as any).channelName ?? "").trim().toLowerCase();
+  if (!source || channelName !== "bookingengine") return null;
+
+  try {
+    const supabase = supabaseClient || createAdminClient();
+    const { data: sites, error } = await supabase
+      .from("sites")
+      .select("id, partner_id, status, website_url")
+      .ilike("website_url", `%${source}%`);
+    if (error || !Array.isArray(sites)) return null;
+
+    const matches = sites.filter((site: any) => {
+      try {
+        const host = new URL(site.website_url).hostname.toLowerCase();
+        return host.split(".")[0] === source && String(site.status).toLowerCase() === "active";
+      } catch {
+        return false;
+      }
+    });
+
+    if (matches.length === 0) return null;
+    if (matches.length > 1) {
+      return {
+        attributionTier: "REVIEW_REQUIRED",
+        confidenceScore: 0,
+        matchedSignals: [`HOSTAWAY_BOOKING_ENGINE_SOURCE_AMBIGUOUS:${source}`],
+        referralSiteId: undefined,
+        classification: "REQUIRES_HHH_ATTRIBUTION_BRIDGE",
+      };
+    }
+
+    const site = matches[0];
+    const { data: partner } = await supabase
+      .from("partners")
+      .select("id, status")
+      .eq("id", site.partner_id)
+      .maybeSingle();
+    if (!partner || String(partner.status).toLowerCase() !== "active") return null;
+
+    return {
+      siteId: site.id,
+      partnerId: site.partner_id,
+      attributionTier: "ATTRIBUTED",
+      confidenceScore: 100,
+      matchedSignals: [
+        `HOSTAWAY_BOOKING_ENGINE_SOURCE:${source}`,
+        `EXACT_SITE_ID:${site.id}`,
+        `EXACT_PARTNER_ID:${site.partner_id}`,
+      ],
+      referralSiteId: site.id,
+      classification: "PROVEN_DETERMINISTIC",
+    };
+  } catch (err: any) {
+    console.error("[Hostaway Attribution] Booking engine source lookup failed:", err?.message);
+    return null;
+  }
+}
+
+/**
  * Resolves deterministic partner and site attribution from a Hostaway reservation.
  * Refuses attribution if HHH_REFERRAL_SITE_ID is missing, ambiguous, or inactive.
  */
@@ -96,8 +167,10 @@ export async function resolveHostawayAttribution(
 ): Promise<HostawayAttributionResult> {
   const extracted = extractReferralSiteId(booking, options);
 
-  // Guard 1: Missing referral identifier -> Fail-closed UNATTRIBUTED
+  // Guard 1: Missing referral identifier -> try the exact booking-engine source, else UNATTRIBUTED
   if (!extracted) {
+    const engineMatch = await resolveAttributionFromBookingEngineSource(booking, supabaseClient);
+    if (engineMatch) return engineMatch;
     return {
       attributionTier: "UNATTRIBUTED",
       confidenceScore: 0,
