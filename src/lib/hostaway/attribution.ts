@@ -89,8 +89,9 @@ export function verifySignedAttributionToken(
  * Booking-engine source attribution (fallback when HHH_REFERRAL_SITE_ID is empty).
  *
  * Hostaway records which booking engine a guest booked through in `source` (e.g. "210263-002",
- * channelName "bookingengine"). A site is credited only when its website hostname's first label is
- * EXACTLY that source (210263-002.holidayfuture.com), there is exactly one such active site, and
+ * channelName "bookingengine"). A site is credited only when the first hostname label of its website URL
+ * or of one of its active property booking URLs is EXACTLY that source (210263-002.holidayfuture.com),
+ * there is exactly one such active site, and
  * the partner is active. Zero matches stays UNATTRIBUTED; several matches go to REVIEW_REQUIRED.
  */
 async function resolveAttributionFromBookingEngineSource(
@@ -103,20 +104,49 @@ async function resolveAttributionFromBookingEngineSource(
 
   try {
     const supabase = supabaseClient || createAdminClient();
+    const hostLabel = (url: unknown): string | null => {
+      try {
+        return new URL(String(url)).hostname.toLowerCase().split(".")[0];
+      } catch {
+        return null;
+      }
+    };
+
+    // A site's booking engine host can appear either as its own website URL, or as the per-property
+    // booking URLs partners are redirected to (site_properties.custom_booking_url, e.g.
+    // https://210263-003.holidayfuture.com/listings/595516 for a site whose public website is elsewhere).
+    const candidateSiteIds = new Set<string>();
+
     const { data: sites, error } = await supabase
       .from("sites")
       .select("id, partner_id, status, website_url")
       .ilike("website_url", `%${source}%`);
     if (error || !Array.isArray(sites)) return null;
+    for (const site of sites) {
+      if (hostLabel(site.website_url) === source) candidateSiteIds.add(site.id);
+    }
 
-    const matches = sites.filter((site: any) => {
-      try {
-        const host = new URL(site.website_url).hostname.toLowerCase();
-        return host.split(".")[0] === source && String(site.status).toLowerCase() === "active";
-      } catch {
-        return false;
+    const { data: siteProps } = await supabase
+      .from("site_properties")
+      .select("site_id, custom_booking_url, status")
+      .ilike("custom_booking_url", `%${source}%`);
+    for (const sp of Array.isArray(siteProps) ? siteProps : []) {
+      if (String(sp.status).toLowerCase() === "active" && hostLabel(sp.custom_booking_url) === source) {
+        candidateSiteIds.add(sp.site_id);
       }
-    });
+    }
+
+    if (candidateSiteIds.size === 0) return null;
+
+    let matches = sites.filter((site: any) => candidateSiteIds.has(site.id) && String(site.status).toLowerCase() === "active");
+    const missing = [...candidateSiteIds].filter((id) => !matches.some((m: any) => m.id === id));
+    if (missing.length > 0) {
+      const { data: extra } = await supabase
+        .from("sites")
+        .select("id, partner_id, status, website_url")
+        .in("id", missing);
+      matches = matches.concat((Array.isArray(extra) ? extra : []).filter((site: any) => String(site.status).toLowerCase() === "active"));
+    }
 
     if (matches.length === 0) return null;
     if (matches.length > 1) {
