@@ -321,9 +321,9 @@ export async function processCompletedStaysEligibility(options?: {
     .select("id, confirmation_code, reservation_status, payment_status")
     .neq("reservation_status", "CANCELLED");
 
-  if (options?.partnerId) {
-    query = query.eq("partner_id", options.partnerId);
-  }
+  // Only partner-attributed stays can carry commission. Without this the oldest 200 reservations of any kind
+  // fill the scan limit and newer partner bookings are never reached.
+  query = options?.partnerId ? query.eq("partner_id", options.partnerId) : query.not("partner_id", "is", null);
 
   const { data: candidates, error: cErr } = await query
     .order("check_out_date", { ascending: true })

@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { syncHostawayReservationsBatch } from "@/lib/hostaway/sync";
+import { processCompletedStaysEligibility } from "@/lib/commissions/eligibility";
 import { reconcileStripePayments } from "@/lib/stripe/reconcile-payments";
 import { isHostawayPrimary } from "@/lib/config/pms-mode";
 
@@ -34,11 +35,21 @@ export async function POST(req: NextRequest) {
       stripePayments = { error: err?.message || "Stripe payment reconciliation failed." };
     }
 
+    // Release commission for paid stays that have checked out (the OwnerRez cron stops doing this once
+    // Hostaway is primary).
+    let eligibility: Awaited<ReturnType<typeof processCompletedStaysEligibility>> | { error: string };
+    try {
+      eligibility = await processCompletedStaysEligibility();
+    } catch (err: any) {
+      eligibility = { error: err?.message || "Eligibility release scan failed." };
+    }
+
     return NextResponse.json({
       success: true,
       role: isPrimary ? "PRIMARY_SYNC" : "SHADOW_SYNC",
       summary,
       stripePayments,
+      eligibility,
     });
   } catch (error: any) {
     console.error("[Hostaway Cron Error]:", error?.message);
