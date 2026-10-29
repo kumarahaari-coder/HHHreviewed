@@ -8,12 +8,12 @@ import {
   DollarSign,
   Globe,
   Clock,
-  CheckCircle,
-  Loader2
+  CheckCircle
 } from "lucide-react";
 import { Reservation, Partner, Site, Payout } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableMobileCard } from "@/components/ui/table";
 import {
   ResponsiveContainer,
@@ -34,6 +34,7 @@ function PartnerOverviewContent() {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
+  const [phase6, setPhase6] = useState<{ active: boolean; availableNow: number; paidOut: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -55,6 +56,7 @@ function PartnerOverviewContent() {
           setSites(data.sites || []);
           setReservations((data.reservations || []).filter((r: Reservation) => r.reservationStatus !== "CANCELLED"));
           setPayouts(data.payouts || []);
+          setPhase6(data.phase6 || null);
         }
       } catch (err) {
         console.error("[Partner Overview Error]", err);
@@ -72,34 +74,39 @@ function PartnerOverviewContent() {
     };
   }, [previewPartnerId]);
 
-  if (loading) {
-    return (
-      <div className="flex py-16 justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message="Loading your overview..." />;
 
   if (!partner) return null;
 
   const totalBookings = reservations.length;
   const totalRevenue = reservations.reduce((acc, r) => acc + r.bookingAmount, 0);
 
-  const eligiblePayout = payouts
-    .filter(p => p.status === "ELIGIBLE" || p.status === "APPROVED")
-    .reduce((acc, p) => acc + p.finalPayout, 0);
+  // When the commission ledger is live for this partner it is the source of truth for balances.
+  const eligiblePayout = phase6?.active
+    ? phase6.availableNow
+    : payouts
+        .filter(p => p.status === "ELIGIBLE" || p.status === "APPROVED")
+        .reduce((acc, p) => acc + p.finalPayout, 0);
 
-  const totalPaidOut = payouts
-    .filter(p => p.status === "PAID")
-    .reduce((acc, p) => acc + p.finalPayout, 0);
+  const totalPaidOut = phase6?.active
+    ? phase6.paidOut
+    : payouts
+        .filter(p => p.status === "PAID")
+        .reduce((acc, p) => acc + p.finalPayout, 0);
 
-  const monthlyData = [
-    { month: "Jan", revenue: Math.round(totalRevenue * 0.1), bookings: Math.max(1, Math.floor(totalBookings * 0.1)) },
-    { month: "Feb", revenue: Math.round(totalRevenue * 0.15), bookings: Math.max(1, Math.floor(totalBookings * 0.15)) },
-    { month: "Mar", revenue: Math.round(totalRevenue * 0.2), bookings: Math.max(1, Math.floor(totalBookings * 0.2)) },
-    { month: "Apr", revenue: Math.round(totalRevenue * 0.25), bookings: Math.max(1, Math.floor(totalBookings * 0.25)) },
-    { month: "May", revenue: Math.round(totalRevenue * 0.3), bookings: Math.max(1, Math.floor(totalBookings * 0.3)) }
-  ];
+  // Last 6 calendar months, from real bookings (by booking date).
+  const monthlyData = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - (5 - i));
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const inMonth = reservations.filter(r => (r.bookingDate || "").startsWith(key));
+    return {
+      month: d.toLocaleString("en-US", { month: "short" }),
+      revenue: Math.round(inMonth.reduce((acc, r) => acc + r.bookingAmount, 0)),
+      bookings: inMonth.length,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -282,7 +289,7 @@ function PartnerOverviewContent() {
 
 export default function PartnerOverview() {
   return (
-    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-[var(--primary)]" /></div>}>
+    <Suspense fallback={<LoadingState message="Loading your overview..." />}>
       <PartnerOverviewContent />
     </Suspense>
   );

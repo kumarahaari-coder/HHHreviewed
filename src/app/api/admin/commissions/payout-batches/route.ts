@@ -3,6 +3,8 @@ import { getCurrentSession, canPerformAdminReview } from "@/lib/authorization";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { generateDraftPayoutBatch, checkPartnerTaxClearance } from "@/lib/commissions/payout-generator";
 import { PayoutRail } from "@/lib/commissions/types";
+import { getWiseConfig } from "@/lib/wise/client";
+import { getActivePayoutAccount } from "@/lib/wise/payout-account";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +35,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, batches: batches || [] });
+    // Attach the latest Wise attempt so the admin can see funding errors and the transfer id.
+    const ids = (batches || []).map((b: any) => b.id);
+    const attemptByBatch = new Map<string, any>();
+    if (ids.length > 0) {
+      const { data: attempts } = await supabase
+        .from("payout_payment_attempts")
+        .select("payout_batch_id, status, provider_transfer_id, last_error, created_at")
+        .in("payout_batch_id", ids)
+        .eq("payment_provider", "WISE")
+        .order("created_at", { ascending: true });
+      for (const a of attempts || []) attemptByBatch.set(a.payout_batch_id, a); // last one wins
+    }
+    const withAttempts = (batches || []).map((b: any) => ({ ...b, wise_attempt: attemptByBatch.get(b.id) || null }));
+
+    return NextResponse.json({ success: true, batches: withAttempts });
   } catch (err: any) {
     console.error("[API Error] /api/admin/commissions/payout-batches GET:", err);
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -57,7 +73,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const validRails: PayoutRail[] = ["MANUAL_ACH", "BANK_WIRE", "CHECK", "STRIPE_CONNECT"];
+    const validRails: PayoutRail[] = ["MANUAL_ACH", "BANK_WIRE", "CHECK", "STRIPE_CONNECT", "WISE"];
     if (!validRails.includes(payoutRail)) {
       return NextResponse.json(
         { success: false, error: `Invalid payoutRail. Must be one of: ${validRails.join(", ")}` },
@@ -65,8 +81,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Fail-closed tax compliance pre-flight check
     const supabase = createAdminClient();
+
+    // Fail early for Wise so the admin does not approve a batch that can never be paid.
+    if (payoutRail === "WISE") {
+      if (!getWiseConfig().isConfigured) {
+        return NextResponse.json({ success: false, error: "Wise is not configured on the server." }, { status: 422 });
+      }
+      const account = await getActivePayoutAccount(partnerId, supabase);
+      if (!account) {
+        return NextResponse.json({ success: false, error: "This partner has no payout account. Ask them to add one on their Profile page." }, { status: 422 });
+      }
+      if (!account.verified_at) {
+        return NextResponse.json({ success: false, error: "Verify the partner's payout account before drafting a Wise batch." }, { status: 422 });
+      }
+    }
+
+    // Fail-closed tax compliance pre-flight check
     const clearance = await checkPartnerTaxClearance(partnerId, supabase);
     if (!clearance.cleared) {
       return NextResponse.json(

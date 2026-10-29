@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { syncHostawayReservationsBatch } from "@/lib/hostaway/sync";
+import { reconcileStripePayments } from "@/lib/stripe/reconcile-payments";
 import { isHostawayPrimary } from "@/lib/config/pms-mode";
 
 export async function POST(req: NextRequest) {
@@ -25,10 +26,19 @@ export async function POST(req: NextRequest) {
       limitPerPage: 50,
     });
 
+    // Hostaway may not touch a booking when the guest pays, so also pull payments straight from Stripe.
+    let stripePayments: Awaited<ReturnType<typeof reconcileStripePayments>> | { error: string };
+    try {
+      stripePayments = await reconcileStripePayments();
+    } catch (err: any) {
+      stripePayments = { error: err?.message || "Stripe payment reconciliation failed." };
+    }
+
     return NextResponse.json({
       success: true,
       role: isPrimary ? "PRIMARY_SYNC" : "SHADOW_SYNC",
       summary,
+      stripePayments,
     });
   } catch (error: any) {
     console.error("[Hostaway Cron Error]:", error?.message);

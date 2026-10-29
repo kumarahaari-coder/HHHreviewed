@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/ui/loading-state";
 import React, { useEffect, useState, Suspense } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { signOut } from "@/lib/auth/client";
@@ -11,7 +12,6 @@ import {
   FileSpreadsheet,
   User as UserIcon,
   ArrowLeft,
-  Loader2,
   Eye,
   ShieldAlert
 } from "lucide-react";
@@ -129,12 +129,7 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-canvas">
-        <div className="flex flex-col items-center space-y-3 font-sans">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="text-xs text-secondary font-medium">Loading Partner Portal...</span>
-        </div>
-      </div>
+      <div className="min-h-screen bg-canvas p-6 sm:p-10"><LoadingState message="Loading Partner Portal..." /></div>
     );
   }
 
@@ -235,7 +230,7 @@ function PartnerLayoutContent({ children }: { children: React.ReactNode }) {
 
 export default function PartnerLayout({ children }: { children: React.ReactNode }) {
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-canvas"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>}>
+    <Suspense fallback={<div className="min-h-screen bg-canvas p-6 sm:p-10"><LoadingState message="Loading Partner Portal..." /></div>}>
       <PartnerLayoutContent>{children}</PartnerLayoutContent>
     </Suspense>
   );

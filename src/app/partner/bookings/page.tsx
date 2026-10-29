@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Reservation, Site } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { SlideOver } from "@/components/ui/slide-over";
 import {
   Table,
@@ -15,7 +16,7 @@ import {
   TableCell,
   TableMobileCard,
 } from "@/components/ui/table";
-import { Eye, Loader2, Calendar, ShieldCheck } from "lucide-react";
+import { Eye, Calendar, ShieldCheck } from "lucide-react";
 
 function PartnerBookingsContent() {
   const searchParams = useSearchParams();
@@ -60,13 +61,7 @@ function PartnerBookingsContent() {
     };
   }, [previewPartnerId]);
 
-  if (loading) {
-    return (
-      <div className="flex py-16 justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message="Loading your bookings..." />;
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
@@ -235,7 +230,7 @@ function PartnerBookingsContent() {
 
 export default function PartnerBookings() {
   return (
-    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" /></div>}>
+    <Suspense fallback={<LoadingState message="Loading your bookings..." />}>
       <PartnerBookingsContent />
     </Suspense>
   );

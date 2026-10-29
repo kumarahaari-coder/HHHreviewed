@@ -96,6 +96,10 @@ async function runTestSuite() {
         return builder;
       },
       select: (cols: string) => builder,
+      ilike: (col: string, pattern: string) => builder,
+      not: (col: string, op: string, val: any) => builder,
+      order: (col: string, opts?: any) => builder,
+      limit: (n: number) => builder,
       insert: (payload: any) => ({
         select: (cols: string) => ({
           single: async () => ({

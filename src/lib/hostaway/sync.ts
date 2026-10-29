@@ -20,11 +20,14 @@ import { HostawayReservation, HostawaySyncSummary } from "./types";
 import { normalizeHostawayReservation, NormalizedHostawayReservation } from "./normalizers";
 import { resolveHostawayProperty } from "./properties";
 import { resolveHostawayAttribution } from "./attribution";
+import { applyGuestFirstTouchAttribution } from "./guest-attribution";
 import { matchHostawayReservationToExisting } from "./deduplication";
 import { getHostawayReservationsCursor } from "./reservations";
 import { appendCommissionLedgerEvent, reconcileReservationPaymentRealization } from "@/lib/commissions/ledger";
 import { resolveCommissionRule } from "@/lib/ownerrez/commission-preview";
 import { Reservation } from "@/lib/db/schema";
+import { mergeStripePayment, tryFetchStripeTallies } from "@/lib/stripe/reconcile-payments";
+import type { StripeTally } from "@/lib/stripe/payment-verification";
 import { isHostawayIngestionEnabled, isHostawayCommissionAttributionEnabled } from "@/lib/config/pms-mode";
 
 export interface SingleHostawaySyncResult {
@@ -48,6 +51,7 @@ async function executeHostawayInitialAccrual(params: {
   resolvedPartnerId: string;
   resolvedSiteId: string;
   bookingChannel: string;
+  attributionSignals?: string[];
   supabaseClient?: any;
 }): Promise<{ status: string; calculatedCommission: number }> {
   const supabase = params.supabaseClient || createAdminClient();
@@ -121,6 +125,7 @@ async function executeHostawayInitialAccrual(params: {
       service_fee: params.normalized.serviceFee,
       taxes_amount: params.normalized.taxesAmount,
       ingestion_source: "hostaway_sync",
+      attribution_signals: params.attributionSignals ?? [],
     },
     supabaseClient: supabase,
   });
@@ -134,10 +139,22 @@ async function executeHostawayInitialAccrual(params: {
 export async function syncSingleHostawayReservation(
   booking: HostawayReservation,
   supabaseClient?: any,
-  cachedReservations?: Reservation[]
+  cachedReservations?: Reservation[],
+  stripeTallies?: Map<string, StripeTally>
 ): Promise<SingleHostawaySyncResult> {
   const supabase = supabaseClient || createAdminClient();
   const normalized = normalizeHostawayReservation(booking);
+
+  // Hostaway reports Stripe-collected guest payments as unpaid; Stripe is the source of truth for money received.
+  const tallies = stripeTallies ?? (await tryFetchStripeTallies());
+  const merged = mergeStripePayment(tallies?.get(String(normalized.hostawayReservationId)), normalized.grossAmount, {
+    amountReceived: normalized.amountReceived,
+    paymentStatus: normalized.paymentStatus,
+  });
+  if (merged) {
+    normalized.amountReceived = merged.amountReceived;
+    normalized.paymentStatus = merged.paymentStatus;
+  }
 
   // 1. Resolve Property
   const propRes = await resolveHostawayProperty(normalized.listingMapId, supabase);
@@ -153,7 +170,12 @@ export async function syncSingleHostawayReservation(
   const hhhPropertyId = propRes.propertyId;
 
   // 2. Resolve Attribution
-  const attrRes = await resolveHostawayAttribution(booking, supabase);
+  // The guest's first partner-attributed booking decides every later booking by the same email.
+  const attrRes = await applyGuestFirstTouchAttribution(
+    await resolveHostawayAttribution(booking, supabase),
+    normalized.guestEmail,
+    supabase
+  );
 
   // 3. Fetch existing reservations if not provided in batch
   let existingReservations = cachedReservations;
@@ -363,6 +385,7 @@ export async function syncSingleHostawayReservation(
       resolvedPartnerId: attrRes.partnerId,
       resolvedSiteId: attrRes.siteId,
       bookingChannel: normalized.platform,
+      attributionSignals: attrRes.matchedSignals,
       supabaseClient: supabase,
     });
     accrualStatus = accrualRes.status;
@@ -458,6 +481,9 @@ export async function syncHostawayReservationsBatch(
 
   const supabase = supabaseClient || createAdminClient();
 
+  // Stripe holds the real guest payments; fetch once per run and share across every reservation.
+  const stripeTallies = await tryFetchStripeTallies();
+
   // Step 2: Capture sync-start timestamp for deterministic tracking
   const syncStartTime = new Date().toISOString();
 
@@ -481,7 +507,7 @@ export async function syncHostawayReservationsBatch(
         const stateMarker = String(booking.updatedOn || booking.insertedOn || "");
         processedReservationStates.set(booking.id, stateMarker);
 
-        const res = await syncSingleHostawayReservation(booking, supabase);
+        const res = await syncSingleHostawayReservation(booking, supabase, undefined, stripeTallies);
         if (res.status === "INSERTED") {
           summary.inserted += 1;
           summary.hostawayOnlyInserted += 1;
@@ -563,7 +589,7 @@ export async function syncHostawayReservationsBatch(
             passHasChanges = true;
             processedReservationStates.set(booking.id, currentUpdatedOn);
             try {
-              const res = await syncSingleHostawayReservation(booking, supabase);
+              const res = await syncSingleHostawayReservation(booking, supabase, undefined, stripeTallies);
               if (res.status === "INSERTED") {
                 summary.inserted += 1;
                 summary.hostawayOnlyInserted += 1;

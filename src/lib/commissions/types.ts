@@ -26,7 +26,7 @@ export type PayoutBatchStatus =
   | "CANCELLED"
   | "REQUIRES_RECONCILIATION";
 
-export type PayoutRail = "MANUAL_ACH" | "BANK_WIRE" | "CHECK" | "STRIPE_CONNECT";
+export type PayoutRail = "MANUAL_ACH" | "BANK_WIRE" | "CHECK" | "STRIPE_CONNECT" | "WISE";
 
 export type PayoutItemStatus = "PENDING" | "SETTLED" | "FAILED" | "CANCELLED";
 
@@ -74,6 +74,12 @@ export interface PayoutBatchRecord {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /** Latest Wise payment attempt, attached by the admin batch list API. */
+  wise_attempt?: {
+    status: string;
+    provider_transfer_id: string | null;
+    last_error: string | null;
+  } | null;
 }
 
 export interface PayoutItemRecord {

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Payout, Reservation } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Card } from "@/components/ui/card";
 import {
   Table,
@@ -15,7 +16,7 @@ import {
   TableCell,
   TableMobileCard,
 } from "@/components/ui/table";
-import { Clock, Landmark, CheckCircle, Loader2, Info } from "lucide-react";
+import { Clock, Landmark, CheckCircle, Info } from "lucide-react";
 
 function PartnerPayoutsContent() {
   const searchParams = useSearchParams();
@@ -23,6 +24,13 @@ function PartnerPayoutsContent() {
 
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [phase6, setPhase6] = useState<{
+    active: boolean;
+    availableNow: number;
+    paidOut: number;
+    inFlight: number;
+    history: { reference: string; amount: number; status: string; date: string | null; transactionReference: string | null }[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -42,6 +50,7 @@ function PartnerPayoutsContent() {
         if (data.success) {
           setPayouts(data.payouts || []);
           setReservations(data.reservations || []);
+          setPhase6(data.phase6 || null);
         }
       } catch (err) {
         console.error("[Partner Payouts Error]", err);
@@ -59,28 +68,37 @@ function PartnerPayoutsContent() {
     };
   }, [previewPartnerId]);
 
-  if (loading) {
-    return (
-      <div className="flex py-16 justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message="Loading your payouts..." />;
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 
-  const calculatedCommission = payouts
+  // When the commission ledger is live for this partner, show its balances and real payout batches.
+  const legacyCalculated = payouts
     .filter(p => p.status === "ON_HOLD" || p.status === "ELIGIBLE" || p.status === "APPROVED")
     .reduce((acc, p) => acc + p.finalPayout, 0);
-
-  const eligiblePayout = payouts
+  const legacyEligible = payouts
     .filter(p => p.status === "ELIGIBLE" || p.status === "APPROVED")
     .reduce((acc, p) => acc + p.finalPayout, 0);
-
-  const totalPaidOut = payouts
+  const legacyPaid = payouts
     .filter(p => p.status === "PAID")
     .reduce((acc, p) => acc + p.finalPayout, 0);
+
+  const calculatedCommission = phase6?.active ? phase6.availableNow + phase6.inFlight : legacyCalculated;
+  const eligiblePayout = phase6?.active ? phase6.availableNow : legacyEligible;
+  const totalPaidOut = phase6?.active ? phase6.paidOut : legacyPaid;
+
+  const rows: Payout[] = phase6?.active
+    ? phase6.history.map(h => ({
+        id: h.reference,
+        reservationId: "—",
+        payoutBaseAmount: h.amount,
+        finalPayout: h.amount,
+        approvalDate: h.date ? new Date(h.date).toLocaleDateString("en-US") : "",
+        transactionReference: h.transactionReference || "",
+        status: h.status,
+      })) as unknown as Payout[]
+    : payouts;
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -164,14 +182,14 @@ function PartnerPayoutsContent() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {payouts.length === 0 ? (
+              {rows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="py-12 text-center text-[#6E6E73] text-sm">
                     No payout records found.
                   </TableCell>
                 </TableRow>
               ) : (
-                payouts.map(p => (
+                rows.map(p => (
                   <TableRow key={p.id}>
                     <TableCell className="font-mono font-medium text-[#1D1D1F]">{p.id}</TableCell>
                     <TableCell className="font-mono text-[#6E6E73]">{p.reservationId}</TableCell>
@@ -195,12 +213,12 @@ function PartnerPayoutsContent() {
 
         {/* Mobile View */}
         <div className="md:hidden divide-y divide-[#E8E8ED]">
-          {payouts.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="py-12 text-center text-[#6E6E73] text-sm">
               No payout records found.
             </div>
           ) : (
-            payouts.map((p) => (
+            rows.map((p) => (
               <TableMobileCard
                 key={p.id}
                 title={p.id}
@@ -221,7 +239,7 @@ function PartnerPayoutsContent() {
 
 export default function PartnerPayouts() {
   return (
-    <Suspense fallback={<div className="flex py-16 justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1D1D1F]" /></div>}>
+    <Suspense fallback={<LoadingState message="Loading your payouts..." />}>
       <PartnerPayoutsContent />
     </Suspense>
   );

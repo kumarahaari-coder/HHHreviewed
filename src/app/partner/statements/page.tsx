@@ -1,28 +1,76 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { db } from "@/lib/db/mockDb";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Reservation, Partner, Payout } from "@/lib/db/schema";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Printer, CheckCircle2 } from "lucide-react";
 
-export default function PartnerStatements() {
-  const [partner] = useState<Partner | null>(() => {
-    const user = db.currentUser;
-    return user?.partnerId ? db.partners.find(p => p.id === user.partnerId) || null : null;
-  });
-  const [reservations] = useState<Reservation[]>(() => {
-    const user = db.currentUser;
-    return user?.partnerId ? db.reservations.filter(r => r.partnerId === user.partnerId && r.reservationStatus !== "CANCELLED") : [];
-  });
-  const [payouts] = useState<Payout[]>(() => {
-    const user = db.currentUser;
-    return user?.partnerId ? db.payouts.filter(p => p.partnerId === user.partnerId) : [];
-  });
-  const [selectedMonth, setSelectedMonth] = useState("2026-07");
+const monthLabel = (value: string) => {
+  const [y, m] = value.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+};
 
+function PartnerStatementsContent() {
+  const searchParams = useSearchParams();
+  const previewPartnerId = searchParams.get("previewPartnerId");
+
+  const [partner, setPartner] = useState<Partner | null>(null);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [payouts, setPayouts] = useState<Payout[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isSubscribed = true;
+    async function load() {
+      try {
+        const url = previewPartnerId
+          ? `/api/partner/dashboard?previewPartnerId=${encodeURIComponent(previewPartnerId)}`
+          : "/api/partner/dashboard";
+        const data = await (await fetch(url)).json();
+        if (!isSubscribed || !data.success || !data.partner) return;
+        setPartner(data.partner);
+        setReservations((data.reservations || []).filter((r: Reservation) => r.reservationStatus !== "CANCELLED"));
+        setPayouts(data.payouts || []);
+      } catch (err) {
+        console.error("[Partner Statements Error]", err);
+      } finally {
+        if (isSubscribed) setLoading(false);
+      }
+    }
+    load();
+    return () => { isSubscribed = false; };
+  }, [previewPartnerId]);
+
+  // Only months that actually have bookings, newest first.
+  const months = useMemo(
+    () =>
+      [...new Set(reservations.map(r => (r.bookingDate || "").slice(0, 7)).filter(Boolean))]
+        .sort()
+        .reverse()
+        .map(value => ({ value, label: monthLabel(value) })),
+    [reservations]
+  );
+
+  useEffect(() => {
+    if (!selectedMonth && months.length > 0) setSelectedMonth(months[0].value);
+  }, [months, selectedMonth]);
+
+  if (loading) return <LoadingState message="Loading statements..." />;
   if (!partner) return null;
+  if (months.length === 0) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Statements" description="Generate and print monthly commission statements." />
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-8 text-center text-sm text-[var(--secondary)]">
+          No statements yet. They appear once you have referred bookings.
+        </div>
+      </div>
+    );
+  }
 
   // Filter items by month
   const statementReservations = reservations.filter(r => r.bookingDate.startsWith(selectedMonth));
@@ -44,12 +92,6 @@ export default function PartnerStatements() {
   const handlePrint = () => {
     window.print();
   };
-
-  const months = [
-    { value: "2026-07", label: "July 2026" },
-    { value: "2026-06", label: "June 2026" },
-    { value: "2026-05", label: "May 2026" }
-  ];
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
@@ -113,7 +155,7 @@ export default function PartnerStatements() {
           </div>
           <div>
             <span className="text-[#6E6E73] block font-semibold mb-0.5">TRANSFER METHOD</span>
-            <span className="font-semibold text-[#1D1D1F]">{partner.paymentMethod.replace("_", " ")}</span>
+            <span className="font-semibold text-[#1D1D1F]">{(partner.paymentMethod || "Not set").replace("_", " ")}</span>
           </div>
           <div>
             <span className="text-[#6E6E73] block font-semibold mb-0.5">PAYMENT STATUS</span>
@@ -219,3 +261,10 @@ export default function PartnerStatements() {
   );
 }
 
+export default function PartnerStatements() {
+  return (
+    <Suspense fallback={<LoadingState message="Loading statements..." />}>
+      <PartnerStatementsContent />
+    </Suspense>
+  );
+}

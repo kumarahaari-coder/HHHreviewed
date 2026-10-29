@@ -44,7 +44,6 @@ import {
   TableMobileCard
 } from "@/components/ui";
 import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
-import { runSystemPayoutRecalculation } from "@/lib/payouts";
 
 type ViewShortcut = "ALL" | "NEEDS_REVIEW" | "UNATTRIBUTED" | "AWAITING_PAYMENT" | "HOLDS";
 
@@ -203,51 +202,6 @@ function BookingsContent() {
     } finally {
       setIsRefreshing(false);
     }
-  };
-
-  // Toggle Payout Hold State
-  const handleToggleHold = (resId: string) => {
-    const res = reservations.find(r => r.id === resId);
-    if (!res) return;
-    const newStatus = res.payoutStatus === "ON_HOLD" ? "ELIGIBLE" : "ON_HOLD";
-    db.updateReservation(resId, { payoutStatus: newStatus });
-    refreshData();
-    const updated = db.reservations.find(r => r.id === resId);
-    if (updated) setSelectedRes(updated);
-  };
-
-  // Save Internal Admin Note
-  const handleSaveNote = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRes) return;
-    db.updateReservation(selectedRes.id, { adminNotes: adminNoteInput });
-    refreshData();
-    setSelectedRes({ ...selectedRes, adminNotes: adminNoteInput });
-    setAdminNoteInput("");
-  };
-
-  // Reassignment / Manual Attribution Submit
-  const handleReassignSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRes || !reassignPartnerId || !reassignSiteId) return;
-
-    db.updateReservation(selectedRes.id, {
-      partnerId: reassignPartnerId,
-      siteId: reassignSiteId,
-      attributionStatus: "RECONCILED",
-      attributionSource: "Manual Reconciliation"
-    });
-
-    runSystemPayoutRecalculation();
-    refreshData();
-
-    const updated = db.reservations.find(r => r.id === selectedRes.id);
-    if (updated) setSelectedRes(updated);
-
-    setShowReassignPanel(false);
-    setReassignPartnerId("");
-    setReassignSiteId("");
-    db.addNotification("SUCCESS", `Booking ${selectedRes.confirmationCode} manually reconciled.`);
   };
 
   // Quick Filter Shortcut Trigger

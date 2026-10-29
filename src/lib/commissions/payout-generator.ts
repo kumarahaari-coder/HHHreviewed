@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPartnerFinancialProjection } from "./projections";
+import { isStripePaymentGateEnabled, verifyHostawayPayments, StripePaymentVerification } from "@/lib/stripe/payment-verification";
 import {
   PayoutBatchRecord,
   PayoutBatchStatus,
@@ -13,6 +14,44 @@ export interface GenerateDraftBatchParams {
   createdBy: string;
   pgClient?: any;
   supabaseClient?: any;
+}
+
+/**
+ * Stripe payment gate: a Hostaway reservation is only batchable once Stripe shows its full booking total
+ * received (succeeded charges minus refunds, no dispute). Reservations from other sources pass through.
+ * Fails closed: if Stripe cannot be queried, Hostaway reservations are excluded.
+ */
+async function applyStripePaymentGate<T extends { reservation_id: string }>(
+  eligible: T[],
+  loadMeta: (ids: string[]) => Promise<any[]>
+): Promise<{ kept: T[]; verification: Record<string, StripePaymentVerification> }> {
+  if (!isStripePaymentGateEnabled() || eligible.length === 0) return { kept: eligible, verification: {} };
+
+  const rows = await loadMeta(eligible.map((r) => r.reservation_id));
+  const hostawayRows = new Map<string, any>();
+  for (const r of rows) if (r.hostaway_reservation_id) hostawayRows.set(r.id, r);
+  if (hostawayRows.size === 0) return { kept: eligible, verification: {} };
+
+  const bookedAt = [...hostawayRows.values()].map((r) => Date.parse(r.booking_date || ""));
+  const since = bookedAt.every((t) => Number.isFinite(t)) ? Math.floor(Math.min(...bookedAt) / 1000) - 2 * 86400 : undefined;
+
+  const results = await verifyHostawayPayments(
+    [...hostawayRows.values()].map((r) => ({
+      hostawayReservationId: String(r.hostaway_reservation_id),
+      expectedTotal: Number(r.gross_amount) || 0,
+    })),
+    since
+  );
+
+  const verification: Record<string, StripePaymentVerification> = {};
+  const kept = eligible.filter((r) => {
+    const meta = hostawayRows.get(r.reservation_id);
+    if (!meta) return true;
+    const v = results.get(String(meta.hostaway_reservation_id));
+    if (v) verification[r.reservation_id] = v;
+    return v?.verdict === "FULLY_RECEIVED";
+  });
+  return { kept, verification };
 }
 
 /**
@@ -154,7 +193,7 @@ export async function generateDraftPayoutBatch(
       throw new Error(`No payout available for partner (Payout Available: $${partnerPayoutAvailable.toFixed(2)}, Negative Carry-Forward: $${negativeCarryForward.toFixed(2)}).`);
     }
 
-    const eligibleReservations = summaries
+    const candidateReservations = summaries
       .filter((r) => r.outstanding_amount > 0 && r.is_stay_eligible)
       .sort((a, b) => {
         const dateCmp = a.check_in_date.localeCompare(b.check_in_date);
@@ -162,8 +201,16 @@ export async function generateDraftPayoutBatch(
         return a.reservation_id.localeCompare(b.reservation_id);
       });
 
+    const gated = await applyStripePaymentGate(candidateReservations, async (ids) =>
+      (await client.query(
+        "SELECT id, hostaway_reservation_id, gross_amount, booking_date FROM public.reservations WHERE id = ANY($1);",
+        [ids]
+      )).rows
+    );
+    const eligibleReservations = gated.kept;
+
     if (eligibleReservations.length === 0) {
-      throw new Error("No completed, dispute-free stays found for payout batch inclusion.");
+      throw new Error("No completed, dispute-free, payment-verified stays found for payout batch inclusion.");
     }
 
     let remainingDeduction = negativeCarryForward;
@@ -213,7 +260,7 @@ export async function generateDraftPayoutBatch(
         totalDeduction,
         totalDisbursed,
         params.createdBy,
-        JSON.stringify({ partnerAccountingOutstanding, negativeCarryForward, eligiblePositive }),
+        JSON.stringify({ partnerAccountingOutstanding, negativeCarryForward, eligiblePositive, stripeVerification: gated.verification }),
       ]
     );
     const createdBatch = batchRes.rows[0];
@@ -289,7 +336,7 @@ export async function generateDraftPayoutBatch(
 
   // 4. Filter positive eligible reservations and apply deterministic FIFO tie-breaker:
   //    check_in_date ASC, reservation_id ASC
-  const eligibleReservations = projection.reservations
+  const candidateReservations = projection.reservations
     .filter((r) => r.outstanding_amount > 0 && r.is_stay_eligible)
     .sort((a, b) => {
       const dateCmp = a.check_in_date.localeCompare(b.check_in_date);
@@ -297,8 +344,18 @@ export async function generateDraftPayoutBatch(
       return a.reservation_id.localeCompare(b.reservation_id);
     });
 
+  const gated = await applyStripePaymentGate(candidateReservations, async (ids) => {
+    const { data, error } = await supabase
+      .from("reservations")
+      .select("id, hostaway_reservation_id, gross_amount, booking_date")
+      .in("id", ids);
+    if (error) throw new Error(`Failed to load reservations for payment verification: ${error.message}`);
+    return data || [];
+  });
+  const eligibleReservations = gated.kept;
+
   if (eligibleReservations.length === 0) {
-    throw new Error("No completed, dispute-free stays found for payout batch inclusion.");
+    throw new Error("No completed, dispute-free, payment-verified stays found for payout batch inclusion.");
   }
 
   // 5. FIFO Netting Deduction Allocation
@@ -369,6 +426,7 @@ export async function generateDraftPayoutBatch(
         partnerAccountingOutstanding: projection.partnerAccountingOutstanding,
         negativeCarryForward: projection.negativeCarryForward,
         eligiblePositive: projection.eligiblePositive,
+        stripeVerification: gated.verification,
       },
     })
     .select("*")
@@ -564,12 +622,18 @@ export async function approvePayoutBatch(params: {
     throw new Error(`Only PENDING_APPROVAL batches can be approved (current: ${batch.status}).`);
   }
 
-  // Maker-checker validation
-  if (params.approvedBy === batch.created_by) {
+  // Maker-checker validation. Dev/sandbox only: PHASE6_DEV_ALLOW_SELF_APPROVAL=true lets a single
+  // admin test the whole flow. It is ignored in production and whenever Wise runs in production mode.
+  const allowSelfApproval =
+    process.env.PHASE6_DEV_ALLOW_SELF_APPROVAL === "true" &&
+    process.env.NODE_ENV !== "production" &&
+    process.env.WISE_ENV !== "production";
+
+  if (!allowSelfApproval && params.approvedBy === batch.created_by) {
     throw new Error("Maker-checker violation: The creator of a batch cannot approve it.");
   }
 
-  if (batch.submitted_by && params.approvedBy === batch.submitted_by) {
+  if (!allowSelfApproval && batch.submitted_by && params.approvedBy === batch.submitted_by) {
     throw new Error("Maker-checker violation: The submitter of a batch cannot approve it.");
   }
 
@@ -889,7 +953,7 @@ export async function markPayoutBatchSettled(params: {
   const resIds = typedItems.map((i: PayoutItemRecord) => i.reservation_id);
   const { data: reservations, error: resErr } = await supabase
     .from("reservations")
-    .select("id, source_provider, platform, confirmation_code, ownerrez_booking_id, site_id")
+    .select("id, platform, confirmation_code, ownerrez_booking_id, hostaway_reservation_id, site_id")
     .in("id", resIds);
 
   if (resErr) {
@@ -918,7 +982,12 @@ export async function markPayoutBatchSettled(params: {
   // 4. Insert PAYOUT_SETTLEMENT ledger event for each settled item
   const ledgerInserts = typedItems.map((item: PayoutItemRecord) => {
     const res = resMap.get(item.reservation_id);
-    const provider = (res?.source_provider as "ownerrez" | "hospitable") || "ownerrez";
+    // reservations has no source_provider column; derive it from which external id is set.
+    const provider: "ownerrez" | "hospitable" | "hostaway" = res?.ownerrez_booking_id
+      ? "ownerrez"
+      : res?.hostaway_reservation_id
+        ? "hostaway"
+        : "hospitable";
     const channel = res?.platform || "direct";
 
     return {
@@ -950,6 +1019,13 @@ export async function markPayoutBatchSettled(params: {
     .insert(ledgerInserts);
 
   if (ledgerErr) {
+    // 23505 = the settlement events already exist: a concurrent caller (webhook vs manual refresh) settled
+    // this batch first. Rolling items back to PENDING here would un-settle money that has really been paid.
+    if ((ledgerErr as any).code === "23505") {
+      const { data: current } = await supabase.from("payout_batches").select("*").eq("id", params.batchId).single();
+      if (current?.status === "SETTLED") return { batch: current as PayoutBatchRecord, settledItemsCount: typedItems.length };
+      throw new Error("Settlement is already in progress for this batch. Refresh in a moment.");
+    }
     // Rollback items status
     await supabase.from("payout_items").update({ status: "PENDING" }).in("id", itemIds);
     throw new Error(`Failed to insert PAYOUT_SETTLEMENT ledger events: ${ledgerErr.message}`);

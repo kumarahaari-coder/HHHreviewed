@@ -12,6 +12,7 @@ import {
   abortPreBankDisbursementIntent,
   submitPayoutBatchForApproval,
 } from "@/lib/commissions/payout-generator";
+import { abandonWisePayout, initiateWisePayout, refreshWisePayoutStatus, retryWiseFunding } from "@/lib/wise/payout";
 
 export const dynamic = "force-dynamic";
 
@@ -119,6 +120,36 @@ export async function PATCH(
       return NextResponse.json({ success: true, ...result });
     }
 
+    if (action === "pay-via-wise") {
+      if (session.role !== "SUPER_ADMIN" && session.role !== "FINANCE_ADMIN") {
+        return NextResponse.json(
+          { success: false, error: "Unauthorized. Super Admin or Finance Admin role required to send Wise payouts." },
+          { status: 403 }
+        );
+      }
+      const result = await initiateWisePayout({ batchId: id, adminUserId: session.userId });
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    if (action === "retry-wise-funding" || action === "abandon-wise-payout") {
+      if (session.role !== "SUPER_ADMIN" && session.role !== "FINANCE_ADMIN") {
+        return NextResponse.json(
+          { success: false, error: "Unauthorized. Super Admin or Finance Admin role required for Wise payout actions." },
+          { status: 403 }
+        );
+      }
+      const result =
+        action === "retry-wise-funding"
+          ? await retryWiseFunding({ batchId: id, adminUserId: session.userId })
+          : await abandonWisePayout({ batchId: id, adminUserId: session.userId, reason });
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    if (action === "refresh-wise-status") {
+      const result = await refreshWisePayoutStatus(id);
+      return NextResponse.json({ success: true, ...result });
+    }
+
     if (action === "record-bank-trace") {
       const { bankTraceReference } = body;
       if (!bankTraceReference?.trim()) {
@@ -205,7 +236,7 @@ export async function PATCH(
     }
 
     return NextResponse.json(
-      { success: false, error: `Unsupported action '${action}'. Must be one of: submit, approve, cancel, settle.` },
+      { success: false, error: `Unsupported action '${action}'. Unknown batch action.` },
       { status: 400 }
     );
   } catch (err: any) {

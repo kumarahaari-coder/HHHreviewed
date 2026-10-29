@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/ui/loading-state";
 import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { signOut } from "@/lib/auth/client";
@@ -13,7 +14,6 @@ import {
   Blocks,
   FileText,
   Settings,
-  Loader2
 } from "lucide-react";
 import { AppShell, NavItem } from "@/components/shell";
 import { db } from "@/lib/db/mockDb";
@@ -97,12 +97,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (loading || !currentUser) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-canvas">
-        <div className="flex flex-col items-center space-y-3 font-sans">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="text-xs text-secondary font-medium">Loading Admin Portal...</span>
-        </div>
-      </div>
+      <div className="min-h-screen bg-canvas p-6 sm:p-10"><LoadingState message="Loading Admin Portal..." /></div>
     );
   }
 

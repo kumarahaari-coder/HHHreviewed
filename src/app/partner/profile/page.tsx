@@ -5,6 +5,7 @@ import { Partner, User as UserType, TaxDocumentStatus, TaxDocumentType, W8Subtyp
 import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { PayoutAccountCard } from "@/components/partner/PayoutAccountCard";
 import {
   Building,
   CreditCard,
@@ -239,24 +240,8 @@ export default function PartnerProfile() {
         </div>
       </Card>
 
-      {/* PAYOUT CONNECTION STATUS */}
-      <Card className="space-y-4 p-6">
-        <div className="flex justify-between items-center border-b border-[#E8E8ED] pb-3">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6E6E73] flex items-center gap-2">
-            <CreditCard size={16} />
-            Payout Account Status
-          </h3>
-          <StatusBadge variant="success">ACTIVE</StatusBadge>
-        </div>
-        <div className="flex justify-between items-center bg-[#F5F5F7] p-4 rounded-xl border border-[#E8E8ED]">
-          <div>
-            <p className="text-xs font-semibold text-[#1D1D1F]">Direct Commission Transfer</p>
-            <p className="text-[11px] text-[#6E6E73] mt-0.5">
-              Account configured for direct ACH/bank commission payouts.
-            </p>
-          </div>
-        </div>
-      </Card>
+      {/* PAYOUT ACCOUNT */}
+      <PayoutAccountCard />
 
       {/* TAX INFORMATION SECTION */}
       <Card className="space-y-6 p-6">
