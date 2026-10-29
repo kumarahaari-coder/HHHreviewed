@@ -13,12 +13,24 @@ export async function POST(req: NextRequest) {
   const raw = await req.text();
 
   if (!verifyWiseSignature(raw, req.headers.get("x-signature-sha256"))) {
+    // Reason only, never the key or payload, so a rejected delivery can be diagnosed from the host logs.
+    console.warn("[Wise Webhook] rejected:", {
+      keyConfigured: Boolean(process.env.WISE_WEBHOOK_PUBLIC_KEY?.trim()),
+      signatureHeaderPresent: Boolean(req.headers.get("x-signature-sha256")),
+      isTestNotification: req.headers.get("x-test-notification") === "true",
+      bodyBytes: raw.length,
+    });
     return NextResponse.json({ success: false, error: "Invalid signature" }, { status: 401 });
   }
 
   try {
     const event = JSON.parse(raw);
     const isTest = req.headers.get("x-test-notification") === "true";
+    // Wise's URL check and "Test webhook" send a signed sample with placeholder data: acknowledge it before
+    // looking for a real transfer.
+    if (isTest) {
+      return NextResponse.json({ success: true, test: true });
+    }
     if (event?.event_type !== "transfers#state-change") {
       return NextResponse.json({ success: true, ignored: event?.event_type });
     }
@@ -36,10 +48,6 @@ export async function POST(req: NextRequest) {
     const ours = getWiseConfig().profileId;
     if (profileId && ours && String(profileId) !== String(ours)) {
       return NextResponse.json({ success: true, ignored: "other profile" });
-    }
-
-    if (isTest) {
-      return NextResponse.json({ success: true, test: true });
     }
 
     const result = await applyWiseTransferState(String(transferId), String(state));
