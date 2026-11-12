@@ -9,6 +9,7 @@
  * - Identity is the normalized guest email (trimmed, lowercased). No email, a malformed email, or a
  *   relay/placeholder address means no lock: the booking keeps its own attribution.
  * - The owner is the earliest-booked reservation, across every provider, that already carries a site.
+ *   Cancelled reservations never count: a stay that did not happen cannot lock the guest to a partner.
  *   A guest whose earlier bookings had no partner stays open until a partner-attributed booking arrives;
  *   that booking becomes the lock.
  * - Dynamic: nothing is hardcoded to a website or partner. The lock is derived from reservations at sync
@@ -76,6 +77,8 @@ export async function findGuestAttributionOwner(
     .ilike("guest_email", escapeLike(guestEmail))
     .not("site_id", "is", null)
     .not("partner_id", "is", null)
+    // A cancelled stay earned its partner nothing, so it must not claim the guest.
+    .neq("reservation_status", "CANCELLED")
     .order("booking_date", { ascending: true, nullsFirst: false })
     .limit(50);
   if (error) throw new Error(error.message);

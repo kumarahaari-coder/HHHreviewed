@@ -165,6 +165,7 @@ export interface Reservation {
   partnerId?: string; // Nullable if unattributed
   siteId?: string; // Nullable if unattributed
   propertyId: string;
+  propertyName?: string;
   guestName?: string;
   partnerPayoutAmount?: number;
   bookingDate: string;

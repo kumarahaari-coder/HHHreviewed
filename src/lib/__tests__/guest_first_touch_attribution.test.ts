@@ -42,6 +42,7 @@ function makeSupabase(reservations: Row[], partners: Row[], failReservations = f
         rows = rows.filter((r) => typeof r[col] === "string" && re.test(r[col]));
         return b;
       },
+      neq: (col: string, val: any) => { rows = rows.filter((r) => r[col] !== val); return b; },
       not: (col: string, op: string, val: any) => {
         if (op === "is" && val === null) rows = rows.filter((r) => r[col] !== null && r[col] !== undefined);
         return b;
@@ -130,6 +131,19 @@ async function run() {
   assertEqual(r.siteId, RECLAIM.siteId, "earliest booking wins");
   assert(r.matchedSignals.includes("LOCKED_FROM_RESERVATION:res-early"), "points at the first booking");
   console.log("  ✔ Test 7 Passed.");
+
+  console.log("\n[Test 7b] A CANCELLED earlier booking does not lock the guest...");
+  db = makeSupabase([{ id: "res-cancelled", guest_email: "user4@real.org", site_id: RECLAIM.siteId, partner_id: RECLAIM.partnerId, booking_date: "2026-01-05", reservation_status: "CANCELLED" }], activePartners);
+  r = await applyGuestFirstTouchAttribution(own(DMOON), "user4@real.org", db);
+  assertEqual(r.siteId, DMOON.siteId, "cancelled stay must not claim the guest");
+  assert(!r.matchedSignals.includes("GUEST_FIRST_TOUCH_LOCK"), "no lock from a cancelled booking");
+  db = makeSupabase([
+    { id: "res-cancelled", guest_email: "user4@real.org", site_id: RECLAIM.siteId, partner_id: RECLAIM.partnerId, booking_date: "2026-01-05", reservation_status: "CANCELLED" },
+    { id: "res-live", guest_email: "user4@real.org", site_id: DMOON.siteId, partner_id: DMOON.partnerId, booking_date: "2026-02-05", reservation_status: "CONFIRMED" },
+  ], activePartners);
+  r = await applyGuestFirstTouchAttribution(own(), "user4@real.org", db);
+  assertEqual(r.siteId, DMOON.siteId, "earliest NON-cancelled booking decides");
+  console.log("  ✔ Test 7b Passed.");
 
   console.log("\n[Test 8] First partner no longer active: a person decides, nobody else is paid...");
   db = makeSupabase([firstViaReclaim], [{ id: RECLAIM.partnerId, status: "suspended" }, { id: DMOON.partnerId, status: "active" }]);

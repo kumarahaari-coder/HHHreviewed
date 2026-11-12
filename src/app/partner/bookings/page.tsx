@@ -66,6 +66,14 @@ function PartnerBookingsContent() {
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 
+  // Hostaway returns full timestamps (2027-03-16T00:00:00+00:00); stays are calendar dates, so format the date part only.
+  const formatDate = (value?: string) => {
+    const m = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return value || "—";
+    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  };
+  const formatStay = (r: Reservation) => `${formatDate(r.checkInDate)} – ${formatDate(r.checkOutDate)}`;
+
   const getStatusVariant = (status: string) => {
     switch (status) {
       case "CHECKED_OUT":
@@ -88,18 +96,18 @@ function PartnerBookingsContent() {
 
       <div className="bg-[#FFFFFF] border border-[#D2D2D7] rounded-xl overflow-hidden shadow-2xs">
         {/* Desktop Table View */}
-        <div className="hidden md:block overflow-x-auto">
+        <div className="hidden md:block">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Booking Code</TableHead>
-                <TableHead>Guest</TableHead>
-                <TableHead>Stay Dates</TableHead>
-                <TableHead>Property</TableHead>
-                <TableHead className="text-right">Booking Value</TableHead>
-                <TableHead className="text-right">Estimated Commission</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead className="whitespace-nowrap">Booking Code</TableHead>
+                <TableHead className="whitespace-nowrap">Guest</TableHead>
+                <TableHead className="whitespace-nowrap">Stay Dates</TableHead>
+                <TableHead className="whitespace-nowrap">Property</TableHead>
+                <TableHead className="text-right whitespace-nowrap">Booking Value</TableHead>
+                <TableHead className="text-right whitespace-nowrap">Est. Commission</TableHead>
+                <TableHead className="whitespace-nowrap">Status</TableHead>
+                <TableHead className="text-right whitespace-nowrap">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -112,32 +120,34 @@ function PartnerBookingsContent() {
               ) : (
                 reservations.map((res) => (
                   <TableRow key={res.id}>
-                    <TableCell className="font-mono font-medium text-[#1D1D1F]">
+                    <TableCell className="font-mono font-medium text-[#1D1D1F] whitespace-nowrap">
                       {res.confirmationCode || res.id}
                     </TableCell>
-                    <TableCell className="font-medium text-[#1D1D1F]">
+                    <TableCell className="font-medium text-[#1D1D1F] whitespace-nowrap">
                       {res.guestName || "Referral Guest"}
                     </TableCell>
                     <TableCell className="text-[#6E6E73] whitespace-nowrap">
-                      {res.checkInDate} to {res.checkOutDate}
+                      {formatStay(res)}
                     </TableCell>
-                    <TableCell className="text-[#6E6E73]">
-                      {res.propertyId}
+                    <TableCell className="text-[#6E6E73] max-w-[220px]">
+                      <span className="block truncate" title={res.propertyName || res.propertyId}>
+                        {res.propertyName || res.propertyId}
+                      </span>
                     </TableCell>
-                    <TableCell className="text-right font-mono font-medium text-[#1D1D1F] tabular-nums">
+                    <TableCell className="text-right font-mono font-medium text-[#1D1D1F] tabular-nums whitespace-nowrap">
                       {formatCurrency(res.bookingAmount)}
                     </TableCell>
-                    <TableCell className="text-right font-mono font-semibold text-[#1D1D1F] tabular-nums">
+                    <TableCell className="text-right font-mono font-semibold text-[#1D1D1F] tabular-nums whitespace-nowrap">
                       {res.partnerPayoutAmount != null ? (
                         formatCurrency(res.partnerPayoutAmount)
                       ) : (
                         <span className="text-xs text-[#6E6E73] font-normal">Pending</span>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <StatusBadge variant={getStatusVariant(res.reservationStatus)}>{res.reservationStatus}</StatusBadge>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right whitespace-nowrap">
                       <button
                         onClick={() => setSelectedRes(res)}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-[#1D1D1F] bg-[#F5F5F7] hover:bg-[#E8E8ED] transition-colors"
@@ -168,7 +178,7 @@ function PartnerBookingsContent() {
                 subtitle={res.guestName || "Referral Guest"}
                 badge={<StatusBadge variant={getStatusVariant(res.reservationStatus)}>{res.reservationStatus}</StatusBadge>}
                 details={[
-                  { label: "Dates", value: `${res.checkInDate} – ${res.checkOutDate}` },
+                  { label: "Dates", value: formatStay(res) },
                   { label: "Commission", value: res.partnerPayoutAmount != null ? formatCurrency(res.partnerPayoutAmount) : "Pending", numeric: res.partnerPayoutAmount != null }
                 ]}
               />
@@ -193,7 +203,7 @@ function PartnerBookingsContent() {
               </div>
               <div className="flex items-center gap-2 text-[#6E6E73] text-xs">
                 <Calendar size={14} className="shrink-0 text-[#6E6E73]" />
-                <span>{selectedRes.checkInDate} to {selectedRes.checkOutDate}</span>
+                <span>{formatStay(selectedRes)}</span>
               </div>
             </div>
 

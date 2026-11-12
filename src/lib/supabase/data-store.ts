@@ -741,6 +741,12 @@ export async function getPartnerDashboardData(partnerId: string) {
   const { data: sites } = await supabase.from("sites").select("*").eq("partner_id", partnerId);
   const { data: reservations } = await supabase.from("reservations").select("*").eq("partner_id", partnerId);
   const { data: payouts } = await supabase.from("payouts").select("*").eq("partner_id", partnerId);
+  const reservationPropertyIds = [...new Set((reservations || []).map(r => r.property_id).filter(Boolean))];
+  const propertyNames = new Map<string, string>();
+  if (reservationPropertyIds.length > 0) {
+    const { data: props } = await supabase.from("properties").select("id, property_name").in("id", reservationPropertyIds);
+    for (const p of props || []) propertyNames.set(p.id, p.property_name);
+  }
   const { data: statements } = await supabase.from("payouts").select("*").eq("partner_id", partnerId).eq("payout_status", "PAID");
   let taxDoc: Awaited<ReturnType<typeof getTaxDocumentByPartner>> = null;
   try {
@@ -809,6 +815,7 @@ export async function getPartnerDashboardData(partnerId: string) {
         partnerId: r.partner_id,
         siteId: r.site_id,
         propertyId: r.property_id,
+        propertyName: propertyNames.get(r.property_id) || undefined,
         guestName: r.guest_name,
         bookingDate: r.booking_date,
         checkInDate: r.check_in_date,
