@@ -298,7 +298,7 @@ export async function syncSingleHostawayReservation(
   // CASE B: Already exists by hostaway_reservation_id
   const { data: existingHostawayRow } = await supabase
     .from("reservations")
-    .select("id, hostaway_reservation_id, gross_amount, amount_received, reservation_status, payment_status, site_id, partner_id")
+    .select("id, hostaway_reservation_id, gross_amount, amount_received, reservation_status, payment_status, site_id, partner_id, attribution_status")
     .eq("hostaway_reservation_id", normalized.hostawayReservationId)
     .maybeSingle();
 
@@ -348,6 +348,33 @@ export async function syncSingleHostawayReservation(
       await recordOfflinePayments({ supabase, reservationId: existingHostawayRow.id, hostawayReservationId: normalized.hostawayReservationId, charges: offlineCharges });
     }
 
+    // Catch-up accrual. INITIAL_ACCRUAL used to be created only when a booking was first inserted, so a booking that
+    // already existed before its partner had an active commission rule (or before commission attribution was
+    // switched on) could never be realized or paid. Create it now if it is missing; the helper skips bookings that
+    // already have one and reports NO_ACTIVE_RULE when the partner still has no rule.
+    let accrualStatus: string | undefined;
+    const accrualPartnerId = existingHostawayRow.partner_id || attrRes.partnerId;
+    const accrualSiteId = existingHostawayRow.site_id || attrRes.siteId;
+    const isDeterministicallyAttributed = existingHostawayRow.attribution_status === "automatic" || attrRes.attributionTier === "ATTRIBUTED";
+    if (isHostawayCommissionAttributionEnabled() && normalized.reservationStatus !== "CANCELLED" && accrualPartnerId && accrualSiteId && isDeterministicallyAttributed) {
+      try {
+        const accrual = await executeHostawayInitialAccrual({
+          reservationId: existingHostawayRow.id,
+          hostawayBookingId: normalized.hostawayReservationId,
+          booking,
+          normalized,
+          resolvedPartnerId: accrualPartnerId,
+          resolvedSiteId: accrualSiteId,
+          bookingChannel: normalized.platform,
+          attributionSignals: ["sync_catch_up"],
+          supabaseClient: supabase,
+        });
+        accrualStatus = accrual.status;
+      } catch (err: any) {
+        accrualStatus = `ERROR: ${err?.message}`;
+      }
+    }
+
     // Reconcile payment realization if CANCELLED or PAID
     let reconciliationStatus: string | undefined;
     if (!isHostawayCommissionAttributionEnabled()) {
@@ -381,6 +408,7 @@ export async function syncSingleHostawayReservation(
       reservationId: existingHostawayRow.id,
       status: "UPDATED",
       attributionTier: attrRes.attributionTier,
+      accrualStatus,
       reconciliationStatus,
     };
   }

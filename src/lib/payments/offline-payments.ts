@@ -73,11 +73,16 @@ export async function getApprovedOfflineTotal(supabase: any, reservationId: stri
   }
 }
 
-/** Extra wait before an approved offline payment can be paid out (nothing can reverse it automatically). 7 days. */
-export const DEFAULT_OFFLINE_HOLD_HOURS = 168;
+/**
+ * Optional extra wait before an approved offline payment can be paid out. Default 0: once an offline payment is
+ * approved and counted as received it follows the same rules as any other paid booking. Set
+ * OFFLINE_PAYMENT_HOLD_HOURS (e.g. 168 for 7 days) to add a longer hold again.
+ */
+export const DEFAULT_OFFLINE_HOLD_HOURS = 0;
 export function getOfflineHoldHours(): number {
-  const n = Number(process.env.OFFLINE_PAYMENT_HOLD_HOURS);
-  return Number.isFinite(n) && n >= 0 && process.env.OFFLINE_PAYMENT_HOLD_HOURS?.trim() ? n : DEFAULT_OFFLINE_HOLD_HOURS;
+  const raw = process.env.OFFLINE_PAYMENT_HOLD_HOURS?.trim();
+  const n = Number(raw);
+  return raw && Number.isFinite(n) && n >= 0 ? n : DEFAULT_OFFLINE_HOLD_HOURS;
 }
 
 export interface ApprovedOfflineSummary {

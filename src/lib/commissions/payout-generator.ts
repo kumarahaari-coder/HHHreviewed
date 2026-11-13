@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getPartnerFinancialProjection } from "./projections";
 import { isStripePaymentGateEnabled, verifyHostawayPayments, StripePaymentVerification } from "@/lib/stripe/payment-verification";
 import { loadApprovedOfflineSummaries } from "@/lib/payments/offline-payments";
+import { explainPayoutBlockers } from "./payout-blockers";
 import {
   PayoutBatchRecord,
   PayoutBatchStatus,
@@ -78,6 +79,16 @@ export async function applyStripePaymentGate<T extends { reservation_id: string 
     return false;
   });
   return { kept, verification, offlinePaid };
+}
+
+/** Appends a per-booking explanation to a "nothing to pay" error so the admin can see what is missing. */
+async function withBlockers(message: string, partnerId: string, supabase?: any): Promise<string> {
+  try {
+    const lines = await explainPayoutBlockers(partnerId, supabase);
+    return lines.length ? `${message}\nWhy:\n${lines.map((l) => `• ${l}`).join("\n")}` : message;
+  } catch {
+    return message;
+  }
 }
 
 /**
@@ -216,7 +227,7 @@ export async function generateDraftPayoutBatch(
     const partnerPayoutAvailable = Math.round(Math.max(0, eligiblePositive - negativeCarryForward) * 100) / 100;
 
     if (partnerPayoutAvailable <= 0) {
-      throw new Error(`No payout available for partner (Payout Available: $${partnerPayoutAvailable.toFixed(2)}, Negative Carry-Forward: $${negativeCarryForward.toFixed(2)}).`);
+      throw new Error(await withBlockers(`No payout available for partner (Payout Available: $${partnerPayoutAvailable.toFixed(2)}, Negative Carry-Forward: $${negativeCarryForward.toFixed(2)}).`, params.partnerId, params.supabaseClient));
     }
 
     const candidateReservations = summaries
@@ -236,7 +247,7 @@ export async function generateDraftPayoutBatch(
     const eligibleReservations = gated.kept;
 
     if (eligibleReservations.length === 0) {
-      throw new Error("No completed, dispute-free, payment-verified stays found for payout batch inclusion.");
+      throw new Error(await withBlockers("No completed, dispute-free, payment-verified stays found for payout batch inclusion.", params.partnerId, params.supabaseClient));
     }
 
     let remainingDeduction = negativeCarryForward;
@@ -354,9 +365,13 @@ export async function generateDraftPayoutBatch(
 
   if (projection.partnerPayoutAvailable <= 0) {
     throw new Error(
-      `No payout available for partner (Payout Available: $${projection.partnerPayoutAvailable.toFixed(
-        2
-      )}, Negative Carry-Forward: $${projection.negativeCarryForward.toFixed(2)}).`
+      await withBlockers(
+        `No payout available for partner (Payout Available: $${projection.partnerPayoutAvailable.toFixed(
+          2
+        )}, Negative Carry-Forward: $${projection.negativeCarryForward.toFixed(2)}).`,
+        params.partnerId,
+        supabase
+      )
     );
   }
 
@@ -381,7 +396,7 @@ export async function generateDraftPayoutBatch(
   const eligibleReservations = gated.kept;
 
   if (eligibleReservations.length === 0) {
-    throw new Error("No completed, dispute-free, payment-verified stays found for payout batch inclusion.");
+    throw new Error(await withBlockers("No completed, dispute-free, payment-verified stays found for payout batch inclusion.", params.partnerId, supabase));
   }
 
   // 5. FIFO Netting Deduction Allocation

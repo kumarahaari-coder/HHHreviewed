@@ -104,9 +104,16 @@ export async function approveOfflinePayment(params: { id: string; adminUserId: s
     throw new OfflinePaymentError(`Could not update the booking: ${upErr.message}`, 500);
   }
 
+  const whyNot = !reservation.partner_id || !reservation.site_id
+    ? "the booking is not attributed to a partner site"
+    : paymentStatus !== "PAID"
+    ? `the booking is not fully paid yet ($${received.toFixed(2)} of $${gross.toFixed(2)} received, $${(gross - received).toFixed(2)} still owed)`
+    : !isHostawayCommissionAttributionEnabled()
+    ? "commission attribution is switched off on the server (HOSTAWAY_COMMISSION_ATTRIBUTION_ENABLED)"
+    : "unknown";
   let realization: { status: string; reason: string } | { status: "NOT_ATTEMPTED"; reason: string } = {
     status: "NOT_ATTEMPTED",
-    reason: "Booking has no partner/site attribution, is not fully paid, or commission attribution is disabled.",
+    reason: `Commission not realised: ${whyNot}.`,
   };
   if (paymentStatus === "PAID" && reservation.site_id && reservation.partner_id && isHostawayCommissionAttributionEnabled()) {
     try {

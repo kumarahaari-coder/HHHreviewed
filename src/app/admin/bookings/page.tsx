@@ -613,7 +613,7 @@ function BookingsContent() {
                     ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
                     : preview
                     ? Number(preview.commissionCalculations?.calculatedCommission || 0)
-                    : (res.grossAmount || res.bookingAmount || 0) * 0.10;
+                    : null; // no accrual and no rule-based preview: the commission is genuinely not set (never guess a rate)
 
                   const isHighAttnAttr = attrStatus === "UNATTRIBUTED" || attrStatus === "REVIEW_REQUIRED";
                   const isHighAttnPayout = res.payoutStatus === "ON_HOLD" || res.payoutStatus === "ELIGIBLE";
@@ -695,16 +695,22 @@ function BookingsContent() {
                       {/* Column 5: Commission Snapshot & Lifecycle */}
                       <TableCell align="right" numeric>
                         <div className="space-y-0.5">
-                          <div className="font-semibold text-primary">
-                            ${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
+                          {calculatedVal === null ? (
+                            <div className="font-semibold text-tertiary" title={res.partnerId ? "This partner has no commission rate set. Add one under Partners." : "Not attributed to a partner, so no commission applies."}>
+                              {res.partnerId ? "No rate set" : "—"}
+                            </div>
+                          ) : (
+                            <div className="font-semibold text-primary">
+                              ${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
                           {isHighAttnPayout ? (
                             <StatusBadge variant={getStatusTypeForState(res.payoutStatus)}>
                               {formatStatusLabel(res.payoutStatus)}
                             </StatusBadge>
                           ) : (
                             <div className="text-[11px] text-secondary font-medium">
-                              {formatStatusLabel(res.payoutStatus || "ESTIMATED")}
+                              {calculatedVal === null ? "Not calculated" : formatStatusLabel(res.payoutStatus || "ESTIMATED")}
                             </div>
                           )}
                         </div>
@@ -934,7 +940,7 @@ function BookingsContent() {
             ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
             : preview
             ? Number(preview.commissionCalculations?.calculatedCommission || 0)
-            : (selectedRes.grossAmount || selectedRes.bookingAmount || 0) * 0.10;
+            : null; // see above
 
           return (
             <div className="space-y-6 font-sans py-1">
@@ -1027,7 +1033,9 @@ function BookingsContent() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium text-secondary">Calculated Potential:</span>
                     <span className="text-sm font-extrabold text-primary tabular-nums">
-                      ${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {calculatedVal === null
+                        ? (selectedRes.partnerId ? "No rate set" : "—")
+                        : `$${calculatedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">

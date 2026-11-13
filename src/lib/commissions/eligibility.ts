@@ -224,8 +224,9 @@ export async function reconcileReservationEligibilityRelease(params: {
     let holdAnchor = checkOutStr;
     try {
       const offline = (await loadApprovedOfflineSummaries(supabase, [reservation.id])).get(reservation.id);
-      if (offline && offline.total > 0) {
-        effectiveHoldHours = Math.max(holdHours, getOfflineHoldHours());
+      // Only when an extra offline hold is configured; by default offline payments follow the normal rules.
+      if (offline && offline.total > 0 && getOfflineHoldHours() > holdHours) {
+        effectiveHoldHours = getOfflineHoldHours();
         holdAnchor = offlineHoldAnchor(checkOutStr, offline.latestApprovedAt);
       }
     } catch (err: any) {

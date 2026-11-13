@@ -59,6 +59,7 @@ function friendlyError(raw: string): string {
   if (/Super Admin role required/i.test(m)) return "Only a Super Admin can do this.";
   if (/not been verified/i.test(m)) return "The partner's payout account isn't verified yet. Verify it first.";
   if (/disabled in this environment/i.test(m)) return "Payouts are switched off on the server (PHASE6_* flags).";
+  if (/Tax compliance hold/i.test(m)) return `${m}\nAsk the partner to upload a W-9 (Profile page), then approve it under Tax documents.`;
   return m;
 }
 
@@ -224,7 +225,7 @@ export function Phase6LedgerPanel() {
       const data = await res.json();
 
       if (!data.success) {
-        setError(data.error || "Failed to create draft batch.");
+        setError(friendlyError(data.error || "Failed to create draft batch."));
       } else {
         setSuccessMessage(`DRAFT Batch created: ${data.batch.batch_number} for $${data.batch.total_amount.toFixed(2)}`);
         await fetchData();
@@ -393,7 +394,7 @@ export function Phase6LedgerPanel() {
       {error && (
         <div className="p-3 bg-danger-surface border border-danger-border rounded-md text-danger text-xs flex items-center space-x-2">
           <AlertCircle size={16} className="shrink-0" />
-          <span>{error}</span>
+          <span className="whitespace-pre-line">{error}</span>
         </div>
       )}
 

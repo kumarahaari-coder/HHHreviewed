@@ -67,15 +67,17 @@ async function main() {
   assert.ok(!kept.includes("disputed-with-offline"), "a Stripe dispute is never overridden by offline money");
   assert.ok(!kept.includes("no-money"));
 
-  // Hold counts from the later of check-out and approval; default 7 days; env override
+  // Hold anchor (only used when an extra offline hold is configured); default is no extra hold
   assert.strictEqual(offlineHoldAnchor("2026-09-15", "2026-11-10T10:00:00Z"), "2026-11-10");
   assert.strictEqual(offlineHoldAnchor("2026-12-20", "2026-11-10T10:00:00Z"), "2026-12-20");
   assert.strictEqual(offlineHoldAnchor("2026-09-15", null), "2026-09-15");
   delete process.env.OFFLINE_PAYMENT_HOLD_HOURS;
   assert.strictEqual(getOfflineHoldHours(), DEFAULT_OFFLINE_HOLD_HOURS);
-  assert.strictEqual(DEFAULT_OFFLINE_HOLD_HOURS, 168);
-  process.env.OFFLINE_PAYMENT_HOLD_HOURS = "48";
-  assert.strictEqual(getOfflineHoldHours(), 48);
+  assert.strictEqual(DEFAULT_OFFLINE_HOLD_HOURS, 0, "no extra wait for offline payments by default");
+  process.env.OFFLINE_PAYMENT_HOLD_HOURS = "168";
+  assert.strictEqual(getOfflineHoldHours(), 168, "an extra hold can still be configured");
+  process.env.OFFLINE_PAYMENT_HOLD_HOURS = "not-a-number";
+  assert.strictEqual(getOfflineHoldHours(), 0);
   delete process.env.OFFLINE_PAYMENT_HOLD_HOURS;
 
   globalThis.fetch = realFetch;

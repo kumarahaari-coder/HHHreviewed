@@ -127,7 +127,7 @@ export function OfflinePaymentsPanel({ onCountChange }: { onCountChange?: (openC
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Action failed.");
       if (dialog.action === "approve") {
-        setNotice(`Approved. Booking now shows ${formatCurrency(data.amountReceived)} received (${data.paymentStatus}). Commission: ${data.realization?.status}.`);
+        setNotice(`Approved. Booking now shows ${formatCurrency(data.amountReceived)} received (${data.paymentStatus}). ${data.realization?.reason || ""}`);
       } else {
         setNotice(dialog.action === "confirm" ? "Confirmed. A different admin must now approve it." : "Rejected.");
       }

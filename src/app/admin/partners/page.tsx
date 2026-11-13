@@ -89,6 +89,10 @@ function PartnerManagementContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("OPERATIONAL");
 
+  // Real commission rates (active partner-level rules) and real tax-form status, keyed by partner id
+  const [commissionByPartner, setCommissionByPartner] = useState<Record<string, number>>({});
+  const [taxStatusByPartner, setTaxStatusByPartner] = useState<Record<string, string>>({});
+
   // Selection / Detail Drawer State
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
 
@@ -111,10 +115,27 @@ function PartnerManagementContent() {
   const refreshData = useCallback(async () => {
     setLoading(true);
     try {
-      const [partnersRes, sitesRes] = await Promise.all([
+      const [partnersRes, sitesRes, rulesRes, taxRes] = await Promise.all([
         fetch("/api/admin/partners"),
-        fetch("/api/admin/sites")
+        fetch("/api/admin/sites"),
+        fetch("/api/admin/commission-rules").catch(() => null),
+        fetch("/api/admin/tax-documents").catch(() => null)
       ]);
+
+      if (rulesRes && rulesRes.ok) {
+        const rData = await rulesRes.json();
+        const rates: Record<string, number> = {};
+        for (const r of rData.rules || []) {
+          if (!r.siteId && r.ruleType === "percentage" && r.percentage != null) rates[r.partnerId] = r.percentage;
+        }
+        setCommissionByPartner(rates);
+      }
+      if (taxRes && taxRes.ok) {
+        const tData = await taxRes.json();
+        const statuses: Record<string, string> = {};
+        for (const c of tData.creators || []) statuses[c.partnerId] = c.taxDocument?.status || "NOT_SUBMITTED";
+        setTaxStatusByPartner(statuses);
+      }
 
       if (!partnersRes.ok) {
         const errorText = await partnersRes.text();
@@ -442,13 +463,13 @@ function PartnerManagementContent() {
 
                       {/* Column 5: Rate */}
                       <TableCell align="right" numeric>
-                        <span className="font-semibold text-primary">{p.commissionRate || 10}%</span>
+                        <span className={`font-semibold ${commissionByPartner[p.id] === undefined ? "text-tertiary" : "text-primary"}`}>{formatCommission(commissionByPartner[p.id])}</span>
                       </TableCell>
 
                       {/* Column 6: Tax Readiness */}
                       <TableCell align="center">
-                        <StatusBadge variant="success">
-                          W-9 On File
+                        <StatusBadge variant={taxBadge(taxStatusByPartner[p.id]).variant}>
+                          {taxBadge(taxStatusByPartner[p.id]).label}
                         </StatusBadge>
                       </TableCell>
 
@@ -631,8 +652,8 @@ function PartnerManagementContent() {
                         : formatStatusLabel(p.status)
                   },
                   { label: "Linked Sites", value: partnerSites.length, numeric: true },
-                  { label: "Commission", value: `${p.commissionRate || 10}%`, numeric: true },
-                  { label: "Tax Form", value: "W-9 On File" }
+                  { label: "Commission", value: formatCommission(commissionByPartner[p.id]), numeric: commissionByPartner[p.id] !== undefined },
+                  { label: "Tax Form", value: taxBadge(taxStatusByPartner[p.id]).label }
                 ]}
               />
             );
@@ -712,7 +733,7 @@ function PartnerManagementContent() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium text-secondary">Commission Rate:</span>
                     <span className="text-xs font-semibold text-primary tabular-nums">
-                      {selectedPartner.commissionRate || 10}%
+                      {formatCommission(commissionByPartner[selectedPartner.id])}
                     </span>
                   </div>
                   <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
@@ -771,7 +792,7 @@ function PartnerManagementContent() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium text-secondary">Verification Status:</span>
-                    <StatusBadge variant="success">Verified On File</StatusBadge>
+                    <StatusBadge variant={taxBadge(taxStatusByPartner[selectedPartner.id]).variant}>{taxBadge(taxStatusByPartner[selectedPartner.id]).label}</StatusBadge>
                   </div>
                   <p className="text-[11px] text-tertiary">
                     Tax documents and encrypted banking records are retained according to IRS compliance mandates.
@@ -863,6 +884,7 @@ function PartnerManagementContent() {
       <EditPartnerModal
         isOpen={editingPartner !== null}
         partner={editingPartner}
+        currentRate={editingPartner ? commissionByPartner[editingPartner.id] : undefined}
         onClose={() => setEditingPartner(null)}
         onSuccess={async (updated) => {
           setEditingPartner(null);
@@ -978,6 +1000,37 @@ function PartnerManagementContent() {
 // ---------------------------------------------------------------------------
 // Standalone, Memoized AddPartnerModal to ensure 100% stable input identities
 // ---------------------------------------------------------------------------
+/** Commission shown to admins: the real active rule, or "Not set" (never a guessed default). */
+function formatCommission(rate: number | undefined): string {
+  return rate === undefined ? "Not set" : `${rate}%`;
+}
+
+/** Tax-form badge from the real document status (the same source the partner's own Profile page uses). */
+function taxBadge(status: string | undefined): { variant: "success" | "warning" | "danger" | "neutral"; label: string } {
+  switch (status) {
+    case "APPROVED": return { variant: "success", label: "W-9 Approved" };
+    case "SUBMITTED":
+    case "UNDER_REVIEW": return { variant: "warning", label: "Under review" };
+    case "REJECTED":
+    case "REPLACEMENT_REQUIRED": return { variant: "danger", label: "Needs new form" };
+    default: return { variant: "neutral", label: "Not submitted" };
+  }
+}
+
+/** Saves a partner's default commission percentage as a real commission rule. */
+async function saveCommissionRule(partnerId: string, rawRate: string): Promise<string | null> {
+  const rate = Number(rawRate);
+  if (!rawRate.trim()) return null; // left blank: nothing to save
+  if (!Number.isFinite(rate) || rate <= 0 || rate > 100) return "Commission must be a percentage greater than 0 and at most 100.";
+  const res = await fetch("/api/admin/commission-rules", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ partnerId, percentage: rate })
+  });
+  const data = await res.json().catch(() => ({}));
+  return res.ok && data.success ? null : data.error || "Could not save the commission rate.";
+}
+
 interface AddPartnerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -992,7 +1045,7 @@ const AddPartnerModal = memo(function AddPartnerModal({
   const [contactName, setContactName] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [email, setEmail] = useState("");
-  const [commissionRate, setCommissionRate] = useState("10");
+  const [commissionRate, setCommissionRate] = useState("");
   const [status, setStatus] = useState<PartnerStatus>("INVITED");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -1003,7 +1056,7 @@ const AddPartnerModal = memo(function AddPartnerModal({
       setContactName("");
       setBusinessName("");
       setEmail("");
-      setCommissionRate("10");
+      setCommissionRate("");
       setStatus("INVITED");
       setSubmitting(false);
       setFormError("");
@@ -1023,7 +1076,6 @@ const AddPartnerModal = memo(function AddPartnerModal({
           contactName: contactName.trim(),
           businessName: businessName.trim(),
           email: email.trim().toLowerCase(),
-          commissionRate: Number(commissionRate) || 10,
           status
         })
       });
@@ -1031,6 +1083,8 @@ const AddPartnerModal = memo(function AddPartnerModal({
       const data = await res.json();
 
       if (data.success && data.partner) {
+        const ruleError = await saveCommissionRule(data.partner.id, commissionRate);
+        if (ruleError) window.alert(`Partner created, but the commission rate was not saved: ${ruleError}\nSet it from Edit Partner.`);
         onSuccess(data.partner);
       } else {
         setFormError(data.error || "Failed to create partner");
@@ -1100,7 +1154,7 @@ const AddPartnerModal = memo(function AddPartnerModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label htmlFor="add-partner-commission-rate" className="block text-xs font-medium text-secondary mb-1">
-              Commission Rate (%)
+              Commission Rate (%) <span className="text-tertiary font-normal">optional</span>
             </label>
             <input
               id="add-partner-commission-rate"
@@ -1111,7 +1165,7 @@ const AddPartnerModal = memo(function AddPartnerModal({
               step="0.5"
               value={commissionRate}
               onChange={e => setCommissionRate(e.target.value)}
-              placeholder="10"
+              placeholder="Not set"
               className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
             />
           </div>
@@ -1151,6 +1205,8 @@ const AddPartnerModal = memo(function AddPartnerModal({
 interface EditPartnerModalProps {
   isOpen: boolean;
   partner: Partner | null;
+  /** Current active commission percentage, or undefined when no rule is set. */
+  currentRate?: number;
   onClose: () => void;
   onSuccess: (updated: Partner) => void;
 }
@@ -1158,6 +1214,7 @@ interface EditPartnerModalProps {
 const EditPartnerModal = memo(function EditPartnerModal({
   isOpen,
   partner,
+  currentRate,
   onClose,
   onSuccess
 }: EditPartnerModalProps) {
@@ -1166,7 +1223,7 @@ const EditPartnerModal = memo(function EditPartnerModal({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [website, setWebsite] = useState("");
-  const [commissionRate, setCommissionRate] = useState("10");
+  const [commissionRate, setCommissionRate] = useState("");
   const [status, setStatus] = useState<PartnerStatus>("ACTIVE");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1179,12 +1236,12 @@ const EditPartnerModal = memo(function EditPartnerModal({
       setEmail(partner.email || "");
       setPhone(partner.phone || "");
       setWebsite(partner.website || "");
-      setCommissionRate(String(partner.commissionRate ?? 10));
+      setCommissionRate(currentRate === undefined ? "" : String(currentRate));
       setStatus(partner.status || "ACTIVE");
       setNotes(partner.notes || "");
       setFormError("");
     }
-  }, [partner, isOpen]);
+  }, [partner, isOpen, currentRate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1193,6 +1250,15 @@ const EditPartnerModal = memo(function EditPartnerModal({
     setSubmitting(true);
 
     try {
+      if (commissionRate.trim() && Number(commissionRate) !== currentRate) {
+        const ruleError = await saveCommissionRule(partner.id, commissionRate);
+        if (ruleError) {
+          setFormError(ruleError);
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const res = await fetch("/api/admin/partners/actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1205,7 +1271,6 @@ const EditPartnerModal = memo(function EditPartnerModal({
             email: email.trim().toLowerCase(),
             phone: phone.trim(),
             website: website.trim(),
-            commissionRate: Number(commissionRate) || 10,
             status,
             notes: notes.trim()
           }
@@ -1221,7 +1286,6 @@ const EditPartnerModal = memo(function EditPartnerModal({
           email: email.trim().toLowerCase(),
           phone: phone.trim(),
           website: website.trim(),
-          commissionRate: Number(commissionRate) || 10,
           status,
           notes: notes.trim()
         });
@@ -1298,6 +1362,7 @@ const EditPartnerModal = memo(function EditPartnerModal({
               step="0.5"
               value={commissionRate}
               onChange={e => setCommissionRate(e.target.value)}
+              placeholder="Not set"
               className="w-full bg-surface-subtle border border-divider-soft text-primary text-xs rounded-lg p-2.5 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary focus:bg-surface"
             />
           </div>
