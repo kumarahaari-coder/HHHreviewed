@@ -15,3 +15,4 @@ export * from "./filter-toolbar";
 export * from "./loading-state";
 export * from "./empty-state";
 export * from "./error-banner";
+export * from "./pagination";

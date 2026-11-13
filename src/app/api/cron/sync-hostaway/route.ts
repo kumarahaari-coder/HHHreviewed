@@ -9,6 +9,7 @@ import { syncHostawayReservationsBatch } from "@/lib/hostaway/sync";
 import { processCompletedStaysEligibility } from "@/lib/commissions/eligibility";
 import { reconcileStripePayments } from "@/lib/stripe/reconcile-payments";
 import { isHostawayPrimary } from "@/lib/config/pms-mode";
+import { getPaymentMatchMode } from "@/lib/stripe/charge-id-payments";
 
 export async function POST(req: NextRequest) {
   // Verify cron authorization secret if configured
@@ -27,12 +28,18 @@ export async function POST(req: NextRequest) {
       limitPerPage: 50,
     });
 
-    // Hostaway may not touch a booking when the guest pays, so also pull payments straight from Stripe.
-    let stripePayments: Awaited<ReturnType<typeof reconcileStripePayments>> | { error: string };
-    try {
-      stripePayments = await reconcileStripePayments();
-    } catch (err: any) {
-      stripePayments = { error: err?.message || "Stripe payment reconciliation failed." };
+    // LEGACY (PAYMENT_MATCH_MODE=description): pull payments straight from Stripe, matched by the "Reservation Id: N"
+    // text. In the default charge_id mode the sync above already confirms every booking's Hostaway charges against
+    // Stripe by charge id, and this older matcher could count Stripe charges Hostaway does not list, so it is skipped.
+    let stripePayments: Awaited<ReturnType<typeof reconcileStripePayments>> | { error: string } | { skipped: string };
+    if (getPaymentMatchMode() === "description") {
+      try {
+        stripePayments = await reconcileStripePayments();
+      } catch (err: any) {
+        stripePayments = { error: err?.message || "Stripe payment reconciliation failed." };
+      }
+    } else {
+      stripePayments = { skipped: "charge_id mode: payments are confirmed per booking during the sync." };
     }
 
     // Release commission for paid stays that have checked out (the OwnerRez cron stops doing this once

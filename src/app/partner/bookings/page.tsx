@@ -17,12 +17,15 @@ import {
   TableMobileCard,
 } from "@/components/ui/table";
 import { Eye, Calendar, ShieldCheck } from "lucide-react";
+import { Pagination, usePagination } from "@/components/ui/pagination";
+import { formatDateRange } from "@/lib/format-date";
 
 function PartnerBookingsContent() {
   const searchParams = useSearchParams();
   const previewPartnerId = searchParams.get("previewPartnerId");
 
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const pagination = usePagination(reservations);
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedRes, setSelectedRes] = useState<Reservation | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,13 +69,7 @@ function PartnerBookingsContent() {
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
 
-  // Hostaway returns full timestamps (2027-03-16T00:00:00+00:00); stays are calendar dates, so format the date part only.
-  const formatDate = (value?: string) => {
-    const m = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!m) return value || "—";
-    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-  };
-  const formatStay = (r: Reservation) => `${formatDate(r.checkInDate)} – ${formatDate(r.checkOutDate)}`;
+  const formatStay = (r: Reservation) => formatDateRange(r.checkInDate, r.checkOutDate);
 
   const getStatusVariant = (status: string) => {
     switch (status) {
@@ -118,7 +115,7 @@ function PartnerBookingsContent() {
                   </TableCell>
                 </TableRow>
               ) : (
-                reservations.map((res) => (
+                pagination.pageItems.map((res) => (
                   <TableRow key={res.id}>
                     <TableCell className="font-mono font-medium text-[#1D1D1F] whitespace-nowrap">
                       {res.confirmationCode || res.id}
@@ -171,7 +168,7 @@ function PartnerBookingsContent() {
               No referred stays recorded yet.
             </div>
           ) : (
-            reservations.map((res) => (
+            pagination.pageItems.map((res) => (
               <TableMobileCard
                 key={res.id}
                 title={res.confirmationCode || res.id}
@@ -185,6 +182,16 @@ function PartnerBookingsContent() {
             ))
           )}
         </div>
+
+        <Pagination
+          page={pagination.page}
+          pageSize={pagination.pageSize}
+          total={pagination.total}
+          totalPages={pagination.totalPages}
+          onPageChange={pagination.setPage}
+          onPageSizeChange={pagination.setPageSize}
+          className="border-t border-[#E8E8ED]"
+        />
       </div>
 
       {/* READ-ONLY DETAIL SLIDEOVER */}

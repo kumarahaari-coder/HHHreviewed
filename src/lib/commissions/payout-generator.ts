@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPartnerFinancialProjection } from "./projections";
 import { isStripePaymentGateEnabled, verifyHostawayPayments, StripePaymentVerification } from "@/lib/stripe/payment-verification";
+import { loadApprovedOfflineSummaries } from "@/lib/payments/offline-payments";
 import {
   PayoutBatchRecord,
   PayoutBatchStatus,
@@ -21,16 +22,17 @@ export interface GenerateDraftBatchParams {
  * received (succeeded charges minus refunds, no dispute). Reservations from other sources pass through.
  * Fails closed: if Stripe cannot be queried, Hostaway reservations are excluded.
  */
-async function applyStripePaymentGate<T extends { reservation_id: string }>(
+export async function applyStripePaymentGate<T extends { reservation_id: string }>(
   eligible: T[],
-  loadMeta: (ids: string[]) => Promise<any[]>
-): Promise<{ kept: T[]; verification: Record<string, StripePaymentVerification> }> {
-  if (!isStripePaymentGateEnabled() || eligible.length === 0) return { kept: eligible, verification: {} };
+  loadMeta: (ids: string[]) => Promise<any[]>,
+  supabaseClient?: any
+): Promise<{ kept: T[]; verification: Record<string, StripePaymentVerification>; offlinePaid: string[] }> {
+  if (!isStripePaymentGateEnabled() || eligible.length === 0) return { kept: eligible, verification: {}, offlinePaid: [] };
 
   const rows = await loadMeta(eligible.map((r) => r.reservation_id));
   const hostawayRows = new Map<string, any>();
   for (const r of rows) if (r.hostaway_reservation_id) hostawayRows.set(r.id, r);
-  if (hostawayRows.size === 0) return { kept: eligible, verification: {} };
+  if (hostawayRows.size === 0) return { kept: eligible, verification: {}, offlinePaid: [] };
 
   const bookedAt = [...hostawayRows.values()].map((r) => Date.parse(r.booking_date || ""));
   const since = bookedAt.every((t) => Number.isFinite(t)) ? Math.floor(Math.min(...bookedAt) / 1000) - 2 * 86400 : undefined;
@@ -43,15 +45,39 @@ async function applyStripePaymentGate<T extends { reservation_id: string }>(
     since
   );
 
+  // Offline payments (cash/bank, marked paid in Hostaway) that two admins confirmed and approved. They top up the
+  // Stripe-verified amount; they never override a dispute or an unverifiable lookup.
+  const offline = await loadApprovedOfflineSummaries(supabaseClient || createAdminClient(), [...hostawayRows.keys()]);
+
   const verification: Record<string, StripePaymentVerification> = {};
+  const offlinePaid: string[] = [];
   const kept = eligible.filter((r) => {
     const meta = hostawayRows.get(r.reservation_id);
     if (!meta) return true;
     const v = results.get(String(meta.hostaway_reservation_id));
-    if (v) verification[r.reservation_id] = v;
-    return v?.verdict === "FULLY_RECEIVED";
+    if (!v) return false;
+    if (v.verdict === "FULLY_RECEIVED") {
+      verification[r.reservation_id] = v;
+      return true;
+    }
+    const approved = offline.get(r.reservation_id);
+    if ((v.verdict === "PARTIAL" || v.verdict === "NO_STRIPE_PAYMENT") && approved && approved.total > 0) {
+      const covered = Math.round((v.netReceived + approved.total) * 100) / 100;
+      if (v.expectedTotal > 0 && covered + 0.01 >= v.expectedTotal) {
+        verification[r.reservation_id] = {
+          ...v,
+          verdict: "FULLY_RECEIVED_INCL_OFFLINE",
+          netReceived: covered,
+          reason: `Stripe-verified $${v.netReceived.toFixed(2)} + admin-approved offline $${approved.total.toFixed(2)}.`,
+        };
+        offlinePaid.push(r.reservation_id);
+        return true;
+      }
+    }
+    verification[r.reservation_id] = v;
+    return false;
   });
-  return { kept, verification };
+  return { kept, verification, offlinePaid };
 }
 
 /**
@@ -206,7 +232,7 @@ export async function generateDraftPayoutBatch(
         "SELECT id, hostaway_reservation_id, gross_amount, booking_date FROM public.reservations WHERE id = ANY($1);",
         [ids]
       )).rows
-    );
+    , params.supabaseClient);
     const eligibleReservations = gated.kept;
 
     if (eligibleReservations.length === 0) {
@@ -260,7 +286,7 @@ export async function generateDraftPayoutBatch(
         totalDeduction,
         totalDisbursed,
         params.createdBy,
-        JSON.stringify({ partnerAccountingOutstanding, negativeCarryForward, eligiblePositive, stripeVerification: gated.verification }),
+        JSON.stringify({ partnerAccountingOutstanding, negativeCarryForward, eligiblePositive, stripeVerification: gated.verification, offlinePaidReservations: gated.offlinePaid }),
       ]
     );
     const createdBatch = batchRes.rows[0];
@@ -351,7 +377,7 @@ export async function generateDraftPayoutBatch(
       .in("id", ids);
     if (error) throw new Error(`Failed to load reservations for payment verification: ${error.message}`);
     return data || [];
-  });
+  }, supabase);
   const eligibleReservations = gated.kept;
 
   if (eligibleReservations.length === 0) {
@@ -427,6 +453,7 @@ export async function generateDraftPayoutBatch(
         negativeCarryForward: projection.negativeCarryForward,
         eligiblePositive: projection.eligiblePositive,
         stripeVerification: gated.verification,
+        offlinePaidReservations: gated.offlinePaid,
       },
     })
     .select("*")

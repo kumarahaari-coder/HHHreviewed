@@ -17,6 +17,7 @@ import {
   TableMobileCard,
 } from "@/components/ui/table";
 import { Clock, Landmark, CheckCircle, Info } from "lucide-react";
+import { formatDate } from "@/lib/format-date";
 
 function PartnerPayoutsContent() {
   const searchParams = useSearchParams();
@@ -94,7 +95,7 @@ function PartnerPayoutsContent() {
         reservationId: "—",
         payoutBaseAmount: h.amount,
         finalPayout: h.amount,
-        approvalDate: h.date ? new Date(h.date).toLocaleDateString("en-US") : "",
+        approvalDate: h.date ? formatDate(h.date) : "",
         transactionReference: h.transactionReference || "",
         status: h.status,
       })) as unknown as Payout[]

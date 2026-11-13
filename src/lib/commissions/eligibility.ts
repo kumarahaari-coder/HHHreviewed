@@ -1,3 +1,4 @@
+import { getOfflineHoldHours, loadApprovedOfflineSummaries, offlineHoldAnchor } from "@/lib/payments/offline-payments";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   computeEligibilityReleaseTimestamp,
@@ -217,16 +218,31 @@ export async function reconcileReservationEligibilityRelease(params: {
       };
     }
 
+    // Offline (cash/bank) payments have no processor to reverse them, so they wait longer, counted from the later
+    // of check-out and the approval date. Stripe-only bookings keep the normal hold.
+    let effectiveHoldHours = holdHours;
+    let holdAnchor = checkOutStr;
+    try {
+      const offline = (await loadApprovedOfflineSummaries(supabase, [reservation.id])).get(reservation.id);
+      if (offline && offline.total > 0) {
+        effectiveHoldHours = Math.max(holdHours, getOfflineHoldHours());
+        holdAnchor = offlineHoldAnchor(checkOutStr, offline.latestApprovedAt);
+      }
+    } catch (err: any) {
+      // Fail closed: if we cannot tell whether an offline payment is involved, do not release.
+      throw new Error(`Could not check offline payments for the hold: ${err?.message}`);
+    }
+
     const releaseTimestamp = computeEligibilityReleaseTimestamp(
-      checkOutStr,
+      holdAnchor,
       propertyTimezone,
-      holdHours
+      effectiveHoldHours
     );
 
     const isEligibleNow = isStayEligibleForRelease(
-      checkOutStr,
+      holdAnchor,
       propertyTimezone,
-      holdHours,
+      effectiveHoldHours,
       now
     );
 
@@ -235,7 +251,7 @@ export async function reconcileReservationEligibilityRelease(params: {
         reconciled: true,
         status: "STAY_NOT_COMPLETED",
         rowsCreated: 0,
-        reason: `Stay checkout + ${holdHours}h hold buffer has not elapsed. Release scheduled for ${releaseTimestamp.toISOString()} (current evaluation: ${now.toISOString()}).`,
+        reason: `Stay checkout + ${effectiveHoldHours}h hold buffer has not elapsed. Release scheduled for ${releaseTimestamp.toISOString()} (current evaluation: ${now.toISOString()}).`,
         releaseTimeUtc: releaseTimestamp.toISOString(),
         event: null,
       };
@@ -262,7 +278,8 @@ export async function reconcileReservationEligibilityRelease(params: {
         reconciledAt: now.toISOString(),
         releaseTimeUtc: releaseTimestamp.toISOString(),
         propertyTimezone,
-        holdHours,
+        holdHours: effectiveHoldHours,
+        offlinePaymentHold: effectiveHoldHours !== holdHours,
         checkOutDate: checkOutStr,
         netRealizedCommission: netRealized,
       },
@@ -284,7 +301,7 @@ export async function reconcileReservationEligibilityRelease(params: {
       reconciled: true,
       status: "ELIGIBLE_RELEASED",
       rowsCreated: 1,
-      reason: `Stay completed and ${holdHours}h hold elapsed. Created ELIGIBILITY_RELEASE event.`,
+      reason: `Stay completed and ${effectiveHoldHours}h hold elapsed. Created ELIGIBILITY_RELEASE event.`,
       releaseTimeUtc: releaseTimestamp.toISOString(),
       event: createdEvent,
     };

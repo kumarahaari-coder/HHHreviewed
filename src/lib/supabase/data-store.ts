@@ -1728,6 +1728,16 @@ export async function updateReservationAttributionStatus(
   };
 }
 
+/** DB stores lowercase values (automatic/pending/unattributed); the UI uses uppercase tiers. */
+function normalizeAttributionStatus(raw: unknown): any {
+  const v = String(raw || "").trim().toLowerCase();
+  if (v === "automatic" || v === "manual" || v === "attributed") return "ATTRIBUTED";
+  if (v === "pending" || v === "review_required") return "REVIEW_REQUIRED";
+  if (v === "reconciled") return "RECONCILED";
+  if (v === "system_error") return "SYSTEM_ERROR";
+  return "UNATTRIBUTED";
+}
+
 export async function getAdminReservations(): Promise<Reservation[]> {
   if (!isSupabaseEnabled()) {
     return mockDb.reservations;
@@ -1737,7 +1747,8 @@ export async function getAdminReservations(): Promise<Reservation[]> {
   const { data, error } = await supabase
     .from("reservations")
     .select("*")
-    .order("check_in_date", { ascending: false });
+    .order("booking_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false });
 
   if (error) {
     console.error("[DataStore Error] getAdminReservations failed:", error);
@@ -1778,7 +1789,7 @@ export async function getAdminReservations(): Promise<Reservation[]> {
     platform: (r.platform && r.platform !== "ownerrez" && r.platform !== "hostaway") ? r.platform : (r.ownerrez_booking_id || r.hostaway_reservation_id ? "direct" : (r.platform || undefined)),
     sourceProvider: (r.payment_confirmation_source && r.payment_confirmation_source.trim() !== "") ? r.payment_confirmation_source.toLowerCase() : (r.hostaway_reservation_id ? "hostaway" : (r.ownerrez_booking_id ? "ownerrez" : "unknown")),
     paymentConfirmationSource: r.payment_confirmation_source || undefined,
-    attributionStatus: r.attribution_status,
+    attributionStatus: normalizeAttributionStatus(r.attribution_status),
     financialDataAvailable: Boolean(r.financial_data_available),
     lastSyncedAt: r.last_synced_at || undefined,
     createdAt: r.created_at,

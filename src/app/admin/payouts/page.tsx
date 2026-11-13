@@ -1,11 +1,15 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Lock } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Phase6LedgerPanel } from "@/components/admin/Phase6LedgerPanel";
+import { OfflinePaymentsPanel } from "@/components/admin/OfflinePaymentsPanel";
+import { Tabs } from "@/components/ui/tabs";
 
 export default function PayoutProcessing() {
+  const [tab, setTab] = useState("ledger");
+  const [offlineOpen, setOfflineOpen] = useState(0);
   return (
     <div className="space-y-6 font-sans">
       <PageHeader
@@ -26,7 +30,16 @@ export default function PayoutProcessing() {
         </div>
       </div>
 
-      <Phase6LedgerPanel />
+      <Tabs
+        tabs={[
+          { id: "ledger", label: "Ledger & Batches" },
+          { id: "offline", label: "Offline Payments", count: offlineOpen },
+        ]}
+        activeTab={tab}
+        onChange={setTab}
+      />
+
+      {tab === "ledger" ? <Phase6LedgerPanel /> : <OfflinePaymentsPanel onCountChange={setOfflineOpen} />}
     </div>
   );
 }

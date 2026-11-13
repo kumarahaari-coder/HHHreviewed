@@ -25,6 +25,7 @@ import {
   BarChart,
   Bar
 } from "recharts";
+import { formatDateRange } from "@/lib/format-date";
 
 function PartnerOverviewContent() {
   const searchParams = useSearchParams();
@@ -239,7 +240,7 @@ function PartnerOverviewContent() {
               reservations.slice(0, 5).map(res => (
                 <TableRow key={res.id}>
                   <TableCell className="font-mono font-medium text-[var(--primary)]">{res.confirmationCode || res.id}</TableCell>
-                  <TableCell className="text-xs text-[var(--secondary)]">{res.checkInDate} to {res.checkOutDate}</TableCell>
+                  <TableCell className="text-xs text-[var(--secondary)]">{formatDateRange(res.checkInDate, res.checkOutDate)}</TableCell>
                   <TableCell className="tabular-nums font-mono font-semibold">${res.bookingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                   <TableCell className="tabular-nums font-mono font-bold text-emerald-700">
                     {res.partnerPayoutAmount != null ? (
@@ -264,7 +265,7 @@ function PartnerOverviewContent() {
             <TableMobileCard
               key={res.id}
               title={res.confirmationCode || res.id}
-              subtitle={`${res.checkInDate} - ${res.checkOutDate}`}
+              subtitle={formatDateRange(res.checkInDate, res.checkOutDate)}
               badge={
                 <StatusBadge variant={res.reservationStatus === "CHECKED_OUT" ? "success" : "info"}>
                   {res.reservationStatus}

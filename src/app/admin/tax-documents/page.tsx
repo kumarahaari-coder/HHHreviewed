@@ -19,6 +19,7 @@ import {
   History,
   Lock
 } from "lucide-react";
+import { formatDate, formatDateTime } from "@/lib/format-date";
 
 export default function AdminTaxDocumentsPage() {
   const [creators, setCreators] = useState<any[]>([]);
@@ -271,7 +272,7 @@ export default function AdminTaxDocumentsPage() {
                     </TableCell>
 
                     <TableCell className="text-xs text-[var(--secondary)]">
-                      {curVer ? new Date(curVer.submissionDate).toLocaleDateString() : "—"}
+                      {curVer ? formatDate(curVer.submissionDate) : "—"}
                     </TableCell>
 
                     <TableCell>
@@ -457,7 +458,7 @@ export default function AdminTaxDocumentsPage() {
                 <div key={log.id} className="p-3 bg-[var(--canvas)] border border-[var(--border)] rounded-md space-y-1">
                   <div className="flex justify-between items-center text-[10px] font-bold text-[var(--primary)]">
                     <span>{log.action} BY {log.performedByUserRole}</span>
-                    <span className="font-mono text-[var(--secondary)]">{new Date(log.timestamp).toLocaleString()}</span>
+                    <span className="font-mono text-[var(--secondary)]">{formatDateTime(log.timestamp)}</span>
                   </div>
                   <p className="text-[var(--secondary)] leading-snug">{log.details}</p>
                 </div>

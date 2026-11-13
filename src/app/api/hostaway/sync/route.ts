@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       maxPages: body.maxPages || 10,
       limitPerPage: body.limit || 50,
       startingAfterId: body.afterId || 0,
+      forcePaymentRefresh: body.forcePaymentRefresh === true,
     });
 
     return NextResponse.json({

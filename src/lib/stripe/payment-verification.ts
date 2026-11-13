@@ -6,7 +6,9 @@
  * balance all mean "not verified".
  */
 
-export type StripePaymentVerdict = "FULLY_RECEIVED" | "PARTIAL" | "NO_STRIPE_PAYMENT" | "DISPUTED" | "UNVERIFIABLE";
+import { getPaymentMatchMode, tallyForReservations } from "./charge-id-payments";
+
+export type StripePaymentVerdict = "FULLY_RECEIVED" | "FULLY_RECEIVED_INCL_OFFLINE" | "PARTIAL" | "NO_STRIPE_PAYMENT" | "DISPUTED" | "UNVERIFIABLE";
 
 export interface StripePaymentVerification {
   hostawayReservationId: string;
@@ -78,10 +80,35 @@ export async function verifyHostawayPayments(
   if (reservations.length === 0) return out;
 
   let tallies: Map<string, StripeTally>;
-  try {
-    tallies = await fetchStripeTallies(sinceUnix);
-  } catch (err: any) {
-    for (const r of reservations) {
+  const lookupErrors = new Map<string, string>();
+  if (getPaymentMatchMode() === "charge_id") {
+    // Charge-ID matching: Hostaway lists the charges, Stripe confirms each charge id (see charge-id-payments.ts).
+    const r = await tallyForReservations(reservations.map((x) => x.hostawayReservationId));
+    tallies = r.tallies;
+    r.errors.forEach((msg, id) => lookupErrors.set(id, msg));
+  } else {
+    // LEGACY (PAYMENT_MATCH_MODE=description): list Stripe charges and match the "Reservation Id: N" description text.
+    try {
+      tallies = await fetchStripeTallies(sinceUnix);
+    } catch (err: any) {
+      for (const r of reservations) {
+        out.set(r.hostawayReservationId, {
+          hostawayReservationId: r.hostawayReservationId,
+          verdict: "UNVERIFIABLE",
+          expectedTotal: r.expectedTotal,
+          netReceived: 0,
+          refunded: 0,
+          chargeIds: [],
+          reason: String(err?.message || err),
+        });
+      }
+      return out;
+    }
+  }
+
+  for (const r of reservations) {
+    const lookupError = lookupErrors.get(r.hostawayReservationId);
+    if (lookupError) {
       out.set(r.hostawayReservationId, {
         hostawayReservationId: r.hostawayReservationId,
         verdict: "UNVERIFIABLE",
@@ -89,13 +116,10 @@ export async function verifyHostawayPayments(
         netReceived: 0,
         refunded: 0,
         chargeIds: [],
-        reason: String(err?.message || err),
+        reason: lookupError,
       });
+      continue;
     }
-    return out;
-  }
-
-  for (const r of reservations) {
     const t = tallies.get(r.hostawayReservationId);
     const net = t ? round2(t.received - t.refunded) : 0;
     let verdict: StripePaymentVerdict;

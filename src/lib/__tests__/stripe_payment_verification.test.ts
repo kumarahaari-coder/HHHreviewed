@@ -7,6 +7,8 @@ const ch = (id: string, res: number, amount: number, over: any = {}) => ({
 });
 
 async function main() {
+  // These cases cover the legacy description-text matcher; charge-id matching is tested in stripe_charge_id_payments.test.ts.
+  process.env.PAYMENT_MATCH_MODE = "description";
   process.env.STRIPE_SECRET_KEY = "rk_test_x";
   const charges = [
     ch("a1", 100, 500), ch("a2", 100, 500),                       // 100: two halves = 1000 -> full

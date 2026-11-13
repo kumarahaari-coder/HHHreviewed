@@ -27,6 +27,7 @@ import {
   PayoutRail,
 } from "@/lib/commissions/types";
 import { formatCurrency } from "@/lib/status-mapper";
+import { formatDateTime } from "@/lib/format-date";
 
 type BatchAction =
   | "submit"
@@ -617,6 +618,14 @@ export function Phase6LedgerPanel() {
                       }`}>
                         {b.status === "PENDING_APPROVAL" ? "Pending Approval" : b.status}
                       </span>
+                      {Array.isArray((b as any).metadata?.offlinePaidReservations) && (b as any).metadata.offlinePaidReservations.length > 0 && (
+                        <div
+                          className="mt-1 inline-block px-2 py-0.5 rounded-full text-[10px] font-medium border bg-warning-surface text-warning border-warning-border"
+                          title="Includes bookings paid offline (cash/bank) that two admins confirmed and approved"
+                        >
+                          Paid offline · {(b as any).metadata.offlinePaidReservations.length}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 text-center">
                       <div className="flex flex-col items-center gap-1.5">
@@ -765,6 +774,14 @@ export function Phase6LedgerPanel() {
                         <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${eventConfig.style}`}>
                           {eventConfig.label}
                         </span>
+                        {(ev as any).metadata?.offlinePayment && (
+                          <span
+                            className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-warning-surface text-warning border-warning-border"
+                            title={`Offline payment confirmed by ${(ev as any).metadata.offlinePayment.confirmedBy}, approved by ${(ev as any).metadata.offlinePayment.approvedBy}: ${(ev as any).metadata.offlinePayment.confirmationReason}`}
+                          >
+                            Paid offline
+                          </span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-xs text-primary font-semibold">REZ-{ev.provider_booking_id}</td>
                       <td className="py-3.5 px-4 text-secondary">
@@ -784,7 +801,7 @@ export function Phase6LedgerPanel() {
                         {ev.idempotency_key}
                       </td>
                       <td className="py-3.5 px-4 text-[11px] text-tertiary whitespace-nowrap">
-                        {new Date(ev.created_at).toLocaleString()}
+                        {formatDateTime(ev.created_at)}
                       </td>
                     </tr>
                   );

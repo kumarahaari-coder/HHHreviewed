@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Printer, CheckCircle2 } from "lucide-react";
+import { formatDate } from "@/lib/format-date";
 
 const monthLabel = (value: string) => {
   const [y, m] = value.split("-").map(Number);
@@ -222,7 +223,7 @@ function PartnerStatementsContent() {
                     return (
                       <tr key={res.id}>
                         <td className="p-3 font-mono font-medium text-[#1D1D1F]">{res.confirmationCode}</td>
-                        <td className="p-3 text-[#6E6E73]">{res.checkInDate}</td>
+                        <td className="p-3 text-[#6E6E73]">{formatDate(res.checkInDate)}</td>
                         <td className="p-3 text-right font-mono tabular-nums">{formatCurrency(res.bookingAmount)}</td>
                         <td className="p-3 text-right font-mono">{pay ? `${pay.commissionRate}%` : "—"}</td>
                         <td className="p-3 text-right font-mono font-medium text-[#6E6E73]">
@@ -248,7 +249,7 @@ function PartnerStatementsContent() {
         {/* Footer print information */}
         <div className="hidden print:flex justify-between items-end border-t border-[#E8E8ED] pt-8 text-[9px] text-[#6E6E73]">
           <div>
-            <p>Generated automatically on {new Date().toLocaleDateString()} via HHH Portal.</p>
+            <p>Generated automatically on {formatDate(new Date().toISOString())} via HHH Portal.</p>
             <p>Hidden Honey Homes LLC · St. Augustine, FL</p>
           </div>
           <div className="flex items-center space-x-1 font-semibold text-[#1D1D1F]">

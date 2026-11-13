@@ -17,7 +17,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { HostawayReservation, HostawaySyncSummary } from "./types";
-import { normalizeHostawayReservation, NormalizedHostawayReservation } from "./normalizers";
+import { normalizeHostawayReservation, normalizeHostawayPaymentStatus, NormalizedHostawayReservation } from "./normalizers";
 import { resolveHostawayProperty } from "./properties";
 import { resolveHostawayAttribution } from "./attribution";
 import { applyGuestFirstTouchAttribution } from "./guest-attribution";
@@ -27,6 +27,9 @@ import { appendCommissionLedgerEvent, reconcileReservationPaymentRealization } f
 import { resolveCommissionRule } from "@/lib/ownerrez/commission-preview";
 import { Reservation } from "@/lib/db/schema";
 import { mergeStripePayment, tryFetchStripeTallies } from "@/lib/stripe/reconcile-payments";
+import { getPaymentMatchMode } from "@/lib/stripe/charge-id-payments";
+import { PaymentLookup, loadPriorPaymentStates, lookupPaymentForBooking, prefetchPaymentLookups } from "./payment-lookup";
+import { getApprovedOfflineTotal, recordOfflinePayments } from "@/lib/payments/offline-payments";
 import type { StripeTally } from "@/lib/stripe/payment-verification";
 import { isHostawayIngestionEnabled, isHostawayCommissionAttributionEnabled } from "@/lib/config/pms-mode";
 
@@ -40,10 +43,25 @@ export interface SingleHostawaySyncResult {
   error?: string;
 }
 
+/** Commission on a Hostaway booking: contracted rent (gross minus cleaning, service fee and taxes) x the rule. */
+export function computeHostawayCommission(
+  amounts: { grossAmount: number; cleaningFee: number; serviceFee: number; taxesAmount: number },
+  rule: { rule_type: string; percentage?: number | null; fixed_amount?: number | null }
+): { contractedRent: number; calculatedCommission: number } {
+  const contractedRent = Math.max(0, amounts.grossAmount - amounts.cleaningFee - amounts.serviceFee - amounts.taxesAmount);
+  let calculatedCommission = 0;
+  if (rule.rule_type === "percentage" && rule.percentage != null) {
+    calculatedCommission = Math.round(contractedRent * (Number(rule.percentage) / 100) * 100) / 100;
+  } else if (rule.rule_type === "fixed" && rule.fixed_amount != null) {
+    calculatedCommission = Number(rule.fixed_amount);
+  }
+  return { contractedRent, calculatedCommission };
+}
+
 /**
  * Creates an INITIAL_ACCRUAL event for genuinely new Hostaway reservations.
  */
-async function executeHostawayInitialAccrual(params: {
+export async function executeHostawayInitialAccrual(params: {
   reservationId: string;
   hostawayBookingId: number;
   booking: HostawayReservation;
@@ -82,20 +100,7 @@ async function executeHostawayInitialAccrual(params: {
   }
 
   const rule = ruleRes.rule;
-  const contractedRent = Math.max(
-    0,
-    params.normalized.grossAmount -
-      params.normalized.cleaningFee -
-      params.normalized.serviceFee -
-      params.normalized.taxesAmount
-  );
-
-  let calculatedCommission = 0;
-  if (rule.rule_type === "percentage" && rule.percentage != null) {
-    calculatedCommission = Math.round(contractedRent * (Number(rule.percentage) / 100) * 100) / 100;
-  } else if (rule.rule_type === "fixed" && rule.fixed_amount != null) {
-    calculatedCommission = Number(rule.fixed_amount);
-  }
+  const { contractedRent, calculatedCommission } = computeHostawayCommission(params.normalized, rule);
 
   if (calculatedCommission <= 0) {
     return { status: "CALCULATION_ZERO", calculatedCommission: 0 };
@@ -133,6 +138,32 @@ async function executeHostawayInitialAccrual(params: {
   return { status: "ACCRUAL_CREATED", calculatedCommission };
 }
 
+/** Columns the cross-provider dedup needs; selecting `*` would drag every raw provider payload along. */
+const DEDUP_COLUMNS =
+  "id, confirmation_code, property_id, partner_id, site_id, check_in_date, check_out_date, gross_amount, amount_received, reservation_status, payment_status, payment_confirmation_source, ownerrez_booking_id, hostaway_reservation_id";
+
+/** Existing reservations for dedup: one property, or every property when propertyId is omitted (batch cache). */
+async function loadExistingReservations(supabase: any, propertyId?: string): Promise<Reservation[]> {
+  let q = supabase.from("reservations").select(DEDUP_COLUMNS);
+  if (propertyId) q = q.eq("property_id", propertyId);
+  const { data: rows } = await q;
+  return (rows || []).map((r: any) => ({
+    id: r.id,
+    confirmationCode: r.confirmation_code,
+    propertyId: r.property_id,
+    partnerId: r.partner_id || undefined,
+    siteId: r.site_id || undefined,
+    checkInDate: r.check_in_date,
+    checkOutDate: r.check_out_date,
+    grossAmount: Number(r.gross_amount || 0),
+    amountReceived: Number(r.amount_received || 0),
+    reservationStatus: r.reservation_status,
+    paymentStatus: r.payment_status,
+    sourceProvider: r.payment_confirmation_source?.toLowerCase() || (r.ownerrez_booking_id ? "ownerrez" : "hostaway"),
+    hostawayReservationId: r.hostaway_reservation_id,
+  })) as Reservation[];
+}
+
 /**
  * Synchronize a single Hostaway reservation.
  */
@@ -140,14 +171,39 @@ export async function syncSingleHostawayReservation(
   booking: HostawayReservation,
   supabaseClient?: any,
   cachedReservations?: Reservation[],
-  stripeTallies?: Map<string, StripeTally>
+  stripeTallies?: Map<string, StripeTally>,
+  paymentOptions?: {
+    lookup?: PaymentLookup;
+    forcePaymentRefresh?: boolean;
+    /** Per-run memo of listingMapId -> property resolution (avoids one DB lookup per booking). */
+    propertyCache?: Map<number, Awaited<ReturnType<typeof resolveHostawayProperty>>>;
+  }
 ): Promise<SingleHostawaySyncResult> {
   const supabase = supabaseClient || createAdminClient();
   const normalized = normalizeHostawayReservation(booking);
 
   // Hostaway reports Stripe-collected guest payments as unpaid; Stripe is the source of truth for money received.
-  const tallies = stripeTallies ?? (await tryFetchStripeTallies());
-  const merged = mergeStripePayment(tallies?.get(String(normalized.hostawayReservationId)), normalized.grossAmount, {
+  // LEGACY (PAYMENT_MATCH_MODE=description): tallies come from the Stripe charge list matched by description text.
+  // Default (charge_id): Hostaway's charges are read and each Stripe charge id is confirmed (see payment-lookup.ts).
+  const legacyTallies =
+    getPaymentMatchMode() === "description" ? (stripeTallies ?? (await tryFetchStripeTallies())) : undefined;
+  const payment: PaymentLookup =
+    paymentOptions?.lookup ??
+    (await lookupPaymentForBooking({
+      booking,
+      prior: (await loadPriorPaymentStates(supabase, [booking.id])).get(booking.id),
+      force: paymentOptions?.forcePaymentRefresh,
+      legacyTallies,
+    }));
+  // Unchanged since last sync, or the lookup failed: keep what is stored instead of overwriting it with Hostaway's
+  // own (empty) paid figures.
+  const keepStoredPayment = payment.kind === "unchanged" || payment.failed;
+  // If the lookup failed, blank the stored updatedOn so the next sync sees "changed" and checks payments again.
+  const rawForStorage =
+    payment.kind === "details" && payment.failed ? { ...normalized.rawHostawayData, updatedOn: null } : normalized.rawHostawayData;
+  const tally = payment.kind === "details" ? payment.tally : undefined;
+  const offlineCharges = payment.kind === "details" ? payment.offlineCharges : [];
+  const merged = mergeStripePayment(tally, normalized.grossAmount, {
     amountReceived: normalized.amountReceived,
     paymentStatus: normalized.paymentStatus,
   });
@@ -157,7 +213,11 @@ export async function syncSingleHostawayReservation(
   }
 
   // 1. Resolve Property
-  const propRes = await resolveHostawayProperty(normalized.listingMapId, supabase);
+  let propRes = paymentOptions?.propertyCache?.get(normalized.listingMapId);
+  if (!propRes) {
+    propRes = await resolveHostawayProperty(normalized.listingMapId, supabase);
+    if (propRes.status === "EXACT_MATCH") paymentOptions?.propertyCache?.set(normalized.listingMapId, propRes);
+  }
   if (propRes.status !== "EXACT_MATCH" || !propRes.propertyId) {
     return {
       hostawayReservationId: normalized.hostawayReservationId,
@@ -178,28 +238,7 @@ export async function syncSingleHostawayReservation(
   );
 
   // 3. Fetch existing reservations if not provided in batch
-  let existingReservations = cachedReservations;
-  if (!existingReservations) {
-    const { data: rows } = await supabase
-      .from("reservations")
-      .select("*")
-      .eq("property_id", hhhPropertyId);
-    existingReservations = (rows || []).map((r: any) => ({
-      id: r.id,
-      confirmationCode: r.confirmation_code,
-      propertyId: r.property_id,
-      partnerId: r.partner_id || undefined,
-      siteId: r.site_id || undefined,
-      checkInDate: r.check_in_date,
-      checkOutDate: r.check_out_date,
-      grossAmount: Number(r.gross_amount || 0),
-      amountReceived: Number(r.amount_received || 0),
-      reservationStatus: r.reservation_status,
-      paymentStatus: r.payment_status,
-      sourceProvider: r.payment_confirmation_source?.toLowerCase() || (r.ownerrez_booking_id ? "ownerrez" : "hostaway"),
-      hostawayReservationId: r.hostaway_reservation_id,
-    })) as Reservation[];
-  }
+  const existingReservations = cachedReservations ?? (await loadExistingReservations(supabase, hhhPropertyId));
 
   // 4. Cross-Provider Deduplication Check
   const matchResult = matchHostawayReservationToExisting(
@@ -264,6 +303,17 @@ export async function syncSingleHostawayReservation(
     .maybeSingle();
 
   if (existingHostawayRow) {
+    // Approved offline payments count as received on top of Stripe-verified money, so a sync never wipes them out.
+    let amountReceivedForUpdate = normalized.amountReceived;
+    let paymentStatusForUpdate = normalized.paymentStatus;
+    if (!keepStoredPayment) {
+      const approvedOffline = await getApprovedOfflineTotal(supabase, existingHostawayRow.id);
+      if (approvedOffline > 0) {
+        amountReceivedForUpdate = Math.round((normalized.amountReceived + approvedOffline) * 100) / 100;
+        paymentStatusForUpdate = normalizeHostawayPaymentStatus(normalized.grossAmount, amountReceivedForUpdate);
+      }
+    }
+
     // Backfill attribution only when the row has none yet; never overwrite an existing attribution.
     const attributionBackfill =
       !existingHostawayRow.site_id && attrRes.attributionTier === "ATTRIBUTED" && attrRes.siteId
@@ -276,19 +326,27 @@ export async function syncSingleHostawayReservation(
       .update({
         ...attributionBackfill,
         reservation_status: normalized.reservationStatus,
-        payment_status: normalized.paymentStatus,
+        ...(keepStoredPayment ? {} : { payment_status: paymentStatusForUpdate }),
+        check_in_date: normalized.checkInDate,
+        check_out_date: normalized.checkOutDate,
+        guest_name: normalized.guestName,
+        guest_email: normalized.guestEmail,
         gross_amount: normalized.grossAmount,
-        amount_received: normalized.amountReceived,
+        ...(keepStoredPayment ? {} : { amount_received: amountReceivedForUpdate }),
         cleaning_fee: normalized.cleaningFee,
         service_fee: normalized.serviceFee,
         taxes_amount: normalized.taxesAmount,
         nights: normalized.nights,
         guests: normalized.guests,
-        raw_hostaway_data: normalized.rawHostawayData,
+        raw_hostaway_data: rawForStorage,
         last_synced_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq("id", existingHostawayRow.id);
+
+    if (normalized.reservationStatus !== "CANCELLED" && payment.kind === "details") {
+      await recordOfflinePayments({ supabase, reservationId: existingHostawayRow.id, hostawayReservationId: normalized.hostawayReservationId, charges: offlineCharges });
+    }
 
     // Reconcile payment realization if CANCELLED or PAID
     let reconciliationStatus: string | undefined;
@@ -305,7 +363,7 @@ export async function syncSingleHostawayReservation(
       } catch (err: any) {
         reconciliationStatus = `ERROR: ${err?.message}`;
       }
-    } else if (normalized.paymentStatus === "PAID") {
+    } else if ((keepStoredPayment ? existingHostawayRow.payment_status : paymentStatusForUpdate) === "PAID") {
       try {
         const recon = await reconcileReservationPaymentRealization({
           reservationId: existingHostawayRow.id,
@@ -352,7 +410,7 @@ export async function syncSingleHostawayReservation(
     platform: normalized.platform,
     payment_confirmation_source: "HOSTAWAY",
     attribution_status: dbAttributionStatus,
-    raw_hostaway_data: normalized.rawHostawayData,
+    raw_hostaway_data: rawForStorage,
     last_synced_at: new Date().toISOString(),
   };
 
@@ -367,6 +425,10 @@ export async function syncSingleHostawayReservation(
   }
 
   const reservationId = insertedRow.id;
+
+  if (normalized.reservationStatus !== "CANCELLED" && payment.kind === "details") {
+    await recordOfflinePayments({ supabase, reservationId, hostawayReservationId: normalized.hostawayReservationId, charges: offlineCharges });
+  }
 
   // Financial Accrual: Only if not cancelled AND deterministically attributed AND commission attribution is enabled
   let accrualStatus = "NOT_ATTRIBUTED";
@@ -429,6 +491,8 @@ export interface HostawaySyncOptions {
   toDate?: string;
   maxReconciliationPasses?: number;
   skipReconciliation?: boolean;
+  /** Re-check payments for every booking, even those Hostaway reports as unchanged since the last sync. */
+  forcePaymentRefresh?: boolean;
 }
 
 /**
@@ -451,6 +515,8 @@ export async function syncHostawayReservationsBatch(
   const limit = options.limitPerPage || 100;
 
   let cursor = options.startingAfterId || 0;
+  const usedCursors = new Set<number>(cursor ? [cursor] : []);
+  const propertyCache = new Map<number, Awaited<ReturnType<typeof resolveHostawayProperty>>>();
   let page = 0;
   let hasMore = true;
 
@@ -482,7 +548,8 @@ export async function syncHostawayReservationsBatch(
   const supabase = supabaseClient || createAdminClient();
 
   // Stripe holds the real guest payments; fetch once per run and share across every reservation.
-  const stripeTallies = await tryFetchStripeTallies();
+  // Only the legacy matcher needs the whole Stripe charge list up front; charge_id mode looks up per reservation.
+  const stripeTallies = getPaymentMatchMode() === "description" ? await tryFetchStripeTallies() : undefined;
 
   // Step 2: Capture sync-start timestamp for deterministic tracking
   const syncStartTime = new Date().toISOString();
@@ -502,12 +569,26 @@ export async function syncHostawayReservationsBatch(
 
     summary.fetched += pageResult.totalFetched;
 
+    // Payment lookups (slow: Hostaway + Stripe calls) run a few at a time; the booking writes below stay sequential
+    // because guest first-touch attribution depends on processing order.
+    // Loaded once per page instead of once per booking (the per-booking `select *` was the slowest step).
+    const existingCache = await loadExistingReservations(supabase);
+
+    const paymentLookups = await prefetchPaymentLookups(supabase, pageResult.reservations, {
+      force: options.forcePaymentRefresh,
+      legacyTallies: stripeTallies,
+    });
+
     for (const booking of pageResult.reservations) {
       try {
         const stateMarker = String(booking.updatedOn || booking.insertedOn || "");
         processedReservationStates.set(booking.id, stateMarker);
 
-        const res = await syncSingleHostawayReservation(booking, supabase, undefined, stripeTallies);
+        const res = await syncSingleHostawayReservation(booking, supabase, existingCache, stripeTallies, {
+          lookup: paymentLookups.get(booking.id),
+          forcePaymentRefresh: options.forcePaymentRefresh,
+          propertyCache,
+        });
         if (res.status === "INSERTED") {
           summary.inserted += 1;
           summary.hostawayOnlyInserted += 1;
@@ -534,10 +615,13 @@ export async function syncHostawayReservationsBatch(
       }
     }
 
-    if (!pageResult.hasMore || !pageResult.nextAfterId || pageResult.nextAfterId <= cursor) {
+    // Hostaway returns reservations in its own order, NOT ascending by id, so the next cursor is often lower than
+    // the current one. Stop only when there is no next page, no progress, or a cursor we already used (a loop).
+    if (!pageResult.hasMore || !pageResult.nextAfterId || pageResult.nextAfterId === cursor || usedCursors.has(pageResult.nextAfterId)) {
       hasMore = false;
     } else {
       cursor = pageResult.nextAfterId;
+      usedCursors.add(cursor);
       summary.cursorAfterId = cursor;
     }
 
@@ -549,7 +633,7 @@ export async function syncHostawayReservationsBatch(
         event_type: "CHECKPOINT_PAGE",
         status: "PROCESSED",
         processed_at: new Date().toISOString(),
-      });
+      }, { onConflict: "provider,event_id" });
     } catch {
       // Non-fatal
     }
@@ -568,6 +652,7 @@ export async function syncHostawayReservationsBatch(
       reconPass += 1;
       passHasChanges = false;
       let reconCursor = 0;
+      const reconUsedCursors = new Set<number>();
       let reconHasMore = true;
       let reconPage = 0;
 
@@ -602,10 +687,11 @@ export async function syncHostawayReservationsBatch(
           }
         }
 
-        if (!reconResult.hasMore || !reconResult.nextAfterId || reconResult.nextAfterId <= reconCursor) {
+        if (!reconResult.hasMore || !reconResult.nextAfterId || reconResult.nextAfterId === reconCursor || reconUsedCursors.has(reconResult.nextAfterId)) {
           reconHasMore = false;
         } else {
           reconCursor = reconResult.nextAfterId;
+          reconUsedCursors.add(reconCursor);
         }
       }
     }
@@ -633,7 +719,7 @@ export async function syncHostawayReservationsBatch(
         status: "PROCESSED",
         processed_at: new Date().toISOString(),
         payload_hash: syncStartTime,
-      });
+      }, { onConflict: "provider,event_id" });
     } catch {
       // Non-fatal
     }
@@ -647,7 +733,7 @@ export async function syncHostawayReservationsBatch(
         status: "PENDING_RETRY",
         processed_at: new Date().toISOString(),
         payload_hash: syncStartTime,
-      });
+      }, { onConflict: "provider,event_id" });
     } catch {
       // Non-fatal
     }

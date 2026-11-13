@@ -34,10 +34,16 @@ export function Card({
     ? "cursor-pointer hover:border-secondary/50 hover:shadow-sm active:scale-[0.99]"
     : "";
 
+  // Without header/footer the children are laid out directly inside the card, so layout classes passed via
+  // className (flex, grid, space-y, gap) act on the real content instead of a single wrapper div.
+  const isBare = !title && !description && !action && !footer;
+  const hasOwnPadding = /(^|\s)(sm:|md:|lg:)?p-/.test(className);
+  const bareStyles = isBare && !hasOwnPadding ? "p-5" : "";
+
   return (
     <div
       onClick={onClick}
-      className={`${baseStyles} ${variantStyles[variant]} ${hoverStyles} ${className}`}
+      className={`${baseStyles} ${variantStyles[variant]} ${hoverStyles} ${bareStyles} ${className}`}
       {...props}
     >
       {(title || description || action) && (
@@ -57,7 +63,7 @@ export function Card({
           {action && <div className="shrink-0">{action}</div>}
         </div>
       )}
-      {children && <div className="p-5">{children}</div>}
+      {isBare ? children : children && <div className="p-5">{children}</div>}
       {footer && (
         <div className="px-5 py-3.5 bg-surface-subtle border-t border-divider-soft rounded-b-lg">
           {footer}

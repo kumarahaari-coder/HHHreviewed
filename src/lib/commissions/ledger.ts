@@ -362,6 +362,8 @@ export async function reconcileReservationPaymentRealization(params: {
   reservationId: string;
   sourceProvider?: "ownerrez" | "hospitable" | "hostaway";
   supabaseClient?: any;
+  /** Merged into the PAYMENT_REALIZED metadata (e.g. who confirmed/approved an offline payment). */
+  extraMetadata?: Record<string, unknown>;
 }): Promise<{
   reconciled: boolean;
   status:
@@ -510,6 +512,7 @@ export async function reconcileReservationPaymentRealization(params: {
       accrualRuleSnapshot: accrual.metadata,
       grossAmount,
       amountReceived,
+      ...(params.extraMetadata || {}),
     },
   });
 

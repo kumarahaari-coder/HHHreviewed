@@ -24,6 +24,7 @@ import {
   ArrowRight
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
+import { Pagination, usePagination } from "@/components/ui/pagination";
 import { Reservation, Partner, Site, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
 import {
   Card,
@@ -44,6 +45,7 @@ import {
   TableMobileCard
 } from "@/components/ui";
 import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
+import { formatDate, formatDateRange } from "@/lib/format-date";
 
 type ViewShortcut = "ALL" | "NEEDS_REVIEW" | "UNATTRIBUTED" | "AWAITING_PAYMENT" | "HOLDS";
 
@@ -349,6 +351,10 @@ function BookingsContent() {
     return true;
   });
 
+  // Pagination (client-side over the filtered list; resets to page 1 whenever a filter changes)
+  const filterKey = [searchQuery, selectedProperty, selectedStatus, selectedAttribution, selectedPaymentStatus, selectedPayoutStatus, selectedPartner, selectedSite, selectedProvider, selectedChannel].join("|");
+  const pagination = usePagination(filteredReservations, filterKey);
+
   // Export CSV Handler
   const exportCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
@@ -588,7 +594,7 @@ function BookingsContent() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredReservations.map(res => {
+                pagination.pageItems.map(res => {
                   const site = sites.find(s => s.id === res.siteId);
                   const partner = partners.find(p => p.id === res.partnerId);
                   const providerLabel = getReservationProviderLabel(res);
@@ -651,7 +657,7 @@ function BookingsContent() {
                             {getPropertyName(res.propertyId)}
                           </div>
                           <div className="text-[11px] text-secondary font-mono">
-                            {res.checkInDate ? res.checkInDate.slice(0, 10) : ""} → {res.checkOutDate ? res.checkOutDate.slice(0, 10) : ""}
+                            {formatDateRange(res.checkInDate, res.checkOutDate)}
                           </div>
                         </div>
                       </TableCell>
@@ -725,6 +731,16 @@ function BookingsContent() {
         </TableContainer>
       </div>
 
+      <Pagination
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        total={pagination.total}
+        totalPages={pagination.totalPages}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        className="bg-surface border border-divider rounded-lg"
+      />
+
       {/* 5. Mobile Operational Card Stack (<768px) */}
       <div className="block md:hidden space-y-3">
         {filteredReservations.length === 0 ? (
@@ -734,7 +750,7 @@ function BookingsContent() {
             action={isFilterActive ? <Button variant="secondary" size="sm" onClick={resetFilters}>Reset Filters</Button> : undefined}
           />
         ) : (
-          filteredReservations.map(res => {
+          pagination.pageItems.map(res => {
             const site = sites.find(s => s.id === res.siteId);
             const partner = partners.find(p => p.id === res.partnerId);
             const attrObj = attributions.find(a => a.reservationId === res.id || a.reservationId === res.hospitableReservationId);
@@ -744,7 +760,7 @@ function BookingsContent() {
               <TableMobileCard
                 key={res.id}
                 title={res.confirmationCode}
-                subtitle={`${getPropertyName(res.propertyId)} • ${res.checkInDate ? res.checkInDate.slice(0, 10) : ""}`}
+                subtitle={`${getPropertyName(res.propertyId)} • ${formatDate(res.checkInDate)}`}
                 badge={
                   <StatusBadge variant={getStatusTypeForState(attrStatus)}>
                     {formatStatusLabel(attrStatus)}
@@ -934,11 +950,11 @@ function BookingsContent() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-secondary">Booking Date:</span>
-                  <span className="text-xs font-medium text-primary font-mono">{selectedRes.bookingDate || selectedRes.checkInDate || "N/A"}</span>
+                  <span className="text-xs font-medium text-primary font-mono">{formatDate(selectedRes.bookingDate || selectedRes.checkInDate)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-secondary">Stay Dates:</span>
-                  <span className="text-xs font-medium text-primary font-mono">{selectedRes.checkInDate?.slice(0, 10)} → {selectedRes.checkOutDate?.slice(0, 10)}</span>
+                  <span className="text-xs font-medium text-primary font-mono">{formatDateRange(selectedRes.checkInDate, selectedRes.checkOutDate)}</span>
                 </div>
                 <div className="flex items-center justify-between pt-1 border-t border-divider-soft">
                   <span className="text-xs font-medium text-secondary">Stay Status:</span>

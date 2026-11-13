@@ -21,6 +21,7 @@ import {
   ExternalLink,
   Info
 } from "lucide-react";
+import { formatDateTime } from "@/lib/format-date";
 
 export default function PartnerProfile() {
   const [partner, setPartner] = useState<Partner | null>(null);
@@ -268,7 +269,7 @@ export default function PartnerProfile() {
             </div>
             <div className="flex justify-between items-center text-xs">
               <span className="text-[#6E6E73] font-semibold uppercase">Submission Date:</span>
-              <span className="text-[#6E6E73]">{new Date(taxDetails.currentVersion.submissionDate).toLocaleString()}</span>
+              <span className="text-[#6E6E73]">{formatDateTime(taxDetails.currentVersion.submissionDate)}</span>
             </div>
 
             {taxDetails.id && taxDetails.currentVersion.id && (() => {
