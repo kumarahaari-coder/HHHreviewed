@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { Pagination, usePagination } from "@/components/ui/pagination";
+import { reservationCommissionView } from "@/lib/commissions/commission-math";
 import { Reservation, Partner, Site, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
 import {
   Card,
@@ -48,22 +49,6 @@ import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 import { formatDate, formatDateRange } from "@/lib/format-date";
 
 type ViewShortcut = "ALL" | "NEEDS_REVIEW" | "UNATTRIBUTED" | "AWAITING_PAYMENT" | "HOLDS";
-
-/**
- * Commission shown for a booking that has an accrual. The accrual is an immutable snapshot of the booking total at
- * the time, so when the total has changed since, show the same rule applied to the CURRENT total (this is also what
- * gets realized once the booking is paid).
- */
-function currentAccrualCommission(accrual: any, res: any): number {
-  const snapshotValue = Number(accrual.calculated_commission ?? accrual.commission_amount ?? accrual.delta_amount ?? 0);
-  const meta = accrual.metadata || {};
-  if (meta.ingestion_source === "hostaway_sync" && meta.rule_type === "percentage" && meta.percentage != null) {
-    const gross = Number(res.grossAmount ?? res.bookingAmount ?? 0);
-    const base = Math.max(0, gross - Number(res.cleaningFee || 0) - Number(res.serviceFee || 0) - Number(res.taxesAmount || 0));
-    return Math.round(base * (Number(meta.percentage) / 100) * 100) / 100;
-  }
-  return snapshotValue;
-}
 
 function BookingsContent() {
   const searchParams = useSearchParams();
@@ -306,6 +291,19 @@ function BookingsContent() {
       "prop-004": "Beech Mountain Retreat"
     };
     return map[propertyId] || propertyId || "Other Property";
+  };
+
+  // Commission per booking from the ledger: earned once paid, otherwise expected on the CURRENT total.
+  const commissionFor = (res: Reservation): number | null => {
+    const events = ledgerEvents.filter(
+      e => e.reservation_id === res.id || e.provider_booking_id === String(res.hostawayReservationId ?? res.ownerrezBookingId) || e.provider_booking_id === res.confirmationCode
+    );
+    if (events.length === 0) return null;
+    return reservationCommissionView(
+      events,
+      { gross: Number(res.grossAmount ?? res.bookingAmount ?? 0), cleaning: Number(res.cleaningFee || 0), service: Number(res.serviceFee || 0), taxes: Number(res.taxesAmount || 0) },
+      { cancelled: res.reservationStatus === "CANCELLED" }
+    ).amount;
   };
 
   // Filtering Logic
@@ -620,16 +618,10 @@ function BookingsContent() {
                   const attrStatus = attrObj?.status || res.attributionStatus || "UNATTRIBUTED";
 
                   // Commission Accrual Snapshot Resolver
-                  const accrualEvent = ledgerEvents.find(
-                    e => (e.reservation_id === res.id || e.provider_booking_id === String(res.hostawayReservationId ?? res.ownerrezBookingId) || e.provider_booking_id === res.confirmationCode) &&
-                         e.event_type === "INITIAL_ACCRUAL"
-                  );
                   const preview = commissionPreviews.find(cp => cp.reservationId === res.id || cp.ownerrezBookingId === res.ownerrezBookingId);
-                  const calculatedVal = accrualEvent
-                    ? currentAccrualCommission(accrualEvent, res)
-                    : preview
-                    ? Number(preview.commissionCalculations?.calculatedCommission || 0)
-                    : null; // no accrual and no rule-based preview: the commission is genuinely not set (never guess a rate)
+                  // Earned (paid) or expected-on-current-total from the ledger; else the rule-based preview; else not set.
+                  const calculatedVal = commissionFor(res)
+                    ?? (preview ? Number(preview.commissionCalculations?.calculatedCommission || 0) : null);
 
                   const isHighAttnAttr = attrStatus === "UNATTRIBUTED" || attrStatus === "REVIEW_REQUIRED";
                   const isHighAttnPayout = res.payoutStatus === "ON_HOLD" || res.payoutStatus === "ELIGIBLE";
@@ -947,16 +939,9 @@ function BookingsContent() {
           const attrObj = attributions.find(a => a.reservationId === selectedRes.id || a.reservationId === selectedRes.hospitableReservationId);
           const attrStatus = attrObj?.status || selectedRes.attributionStatus || "UNATTRIBUTED";
 
-          const accrualEvent = ledgerEvents.find(
-            e => (e.reservation_id === selectedRes.id || e.provider_booking_id === String(selectedRes.hostawayReservationId ?? selectedRes.ownerrezBookingId) || e.provider_booking_id === selectedRes.confirmationCode) &&
-                 e.event_type === "INITIAL_ACCRUAL"
-          );
           const preview = commissionPreviews.find(cp => cp.reservationId === selectedRes.id || cp.ownerrezBookingId === selectedRes.ownerrezBookingId);
-          const calculatedVal = accrualEvent
-            ? currentAccrualCommission(accrualEvent, selectedRes)
-            : preview
-            ? Number(preview.commissionCalculations?.calculatedCommission || 0)
-            : null; // see above
+          const calculatedVal = commissionFor(selectedRes)
+            ?? (preview ? Number(preview.commissionCalculations?.calculatedCommission || 0) : null);
 
           return (
             <div className="space-y-6 font-sans py-1">

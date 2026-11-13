@@ -30,6 +30,8 @@ function PartnerPayoutsContent() {
     availableNow: number;
     paidOut: number;
     inFlight: number;
+    calculatedBalance?: number;
+    blockers?: string[];
     history: { reference: string; amount: number; status: string; date: string | null; transactionReference: string | null }[];
   } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +87,7 @@ function PartnerPayoutsContent() {
     .filter(p => p.status === "PAID")
     .reduce((acc, p) => acc + p.finalPayout, 0);
 
-  const calculatedCommission = phase6?.active ? phase6.availableNow + phase6.inFlight : legacyCalculated;
+  const calculatedCommission = phase6?.active ? (phase6.calculatedBalance ?? phase6.availableNow + phase6.inFlight) : legacyCalculated;
   const eligiblePayout = phase6?.active ? phase6.availableNow : legacyEligible;
   const totalPaidOut = phase6?.active ? phase6.paidOut : legacyPaid;
 
@@ -158,6 +160,18 @@ function PartnerPayoutsContent() {
           </div>
         </Card>
       </div>
+
+      {/* WHY NOTHING IS AVAILABLE YET */}
+      {phase6?.active && phase6.availableNow <= 0 && (phase6.blockers?.length ?? 0) > 0 && (
+        <div className="bg-[#FFFFFF] border border-[#D2D2D7] rounded-xl p-4 text-xs text-[#1D1D1F]">
+          <div className="font-semibold mb-2">Why is nothing available for payout yet?</div>
+          <ul className="space-y-1 text-[#6E6E73] list-disc pl-4">
+            {phase6.blockers!.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* READ-ONLY SETTLEMENT STATUS BANNER */}
       <div className="bg-[#F5F5F7] border border-[#D2D2D7] rounded-xl p-4 text-xs text-[#6E6E73] flex items-center gap-3">

@@ -3,6 +3,9 @@ import { getAuthSession, isAdminRole, isCreatorRole } from "@/lib/authorization"
 import { getPartnerDashboardData, getAllPartners } from "@/lib/supabase/data-store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPartnerFinancialProjection } from "@/lib/commissions/projections";
+import { explainPayoutBlockers } from "@/lib/commissions/payout-blockers";
+import { checkPartnerTaxClearance } from "@/lib/commissions/payout-generator";
+import { getActivePayoutAccount } from "@/lib/wise/payout-account";
 
 // Partner-safe view of the Phase 6 ledger: totals plus payout batches that have actually been approved.
 async function getPhase6Summary(partnerId: string) {
@@ -12,7 +15,7 @@ async function getPhase6Summary(partnerId: string) {
       .from("commission_ledger_events")
       .select("id", { count: "exact", head: true })
       .eq("partner_id", partnerId);
-    if (!count) return { active: false, availableNow: 0, paidOut: 0, inFlight: 0, history: [] as any[] };
+    if (!count) return { active: false, availableNow: 0, paidOut: 0, inFlight: 0, calculatedBalance: 0, blockers: [] as string[], history: [] as any[] };
 
     const projection = await getPartnerFinancialProjection(partnerId, supabase);
     const { data: batches } = await supabase
@@ -37,16 +40,42 @@ async function getPhase6Summary(partnerId: string) {
         transactionReference: paid ? b.metadata?.transactionReference || null : null,
       };
     });
+    const availableNow = Math.round(projection.partnerPayoutAvailable * 100) / 100;
+
+    // When nothing is available yet, say why in plain language (bookings, tax form, bank account).
+    let blockers: string[] = [];
+    if (availableNow <= 0) {
+      try {
+        blockers = await explainPayoutBlockers(partnerId, supabase, 6, "partner");
+        const clearance = await checkPartnerTaxClearance(partnerId, supabase);
+        if (!clearance.cleared) {
+          blockers.push(
+            clearance.status === "NOT_SUBMITTED"
+              ? "Payouts can't be sent until you upload your tax form (W-9) on the Profile page."
+              : "Your tax form is still being reviewed. Payouts can be sent once it is approved."
+          );
+        }
+        const account = await getActivePayoutAccount(partnerId, supabase);
+        if (!account) blockers.push("Add your bank account on the Profile page so payouts can be sent.");
+        else if (!account.verified_at) blockers.push("Your bank account is waiting for verification by HHH.");
+      } catch {
+        /* explanations are best-effort */
+      }
+    }
+
     return {
       active: true,
-      availableNow: Math.round(projection.partnerPayoutAvailable * 100) / 100,
+      blockers,
+      // Everything earned (paid by guests) that has not been paid out yet, including stays still in the hold period.
+      calculatedBalance: Math.round((projection.partnerAccountingOutstanding + inFlight) * 100) / 100,
+      availableNow,
       paidOut: Math.round(paidOut * 100) / 100,
       inFlight: Math.round(inFlight * 100) / 100,
       history,
     };
   } catch (err: any) {
     console.error("[Partner Dashboard] phase6 summary failed:", err?.message);
-    return { active: false, availableNow: 0, paidOut: 0, inFlight: 0, history: [] as any[] };
+    return { active: false, availableNow: 0, paidOut: 0, inFlight: 0, calculatedBalance: 0, blockers: [] as string[], history: [] as any[] };
   }
 }
 

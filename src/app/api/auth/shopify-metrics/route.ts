@@ -109,7 +109,18 @@ export async function GET(req: NextRequest) {
             email: partner.contact_email,
             status: partner.status,
             currency: partner.payout_currency || "USD",
-            commissionRate: partner.commission_rate || 10,
+            // Real active partner-level rule, or null when none is set (never an invented default).
+            commissionRate: await (async () => {
+              const { data: rule } = await supabase
+                .from("commission_rules")
+                .select("percentage")
+                .eq("partner_id", partnerId)
+                .is("site_id", null)
+                .eq("status", "active")
+                .eq("rule_type", "percentage")
+                .maybeSingle();
+              return rule?.percentage != null ? Number(rule.percentage) : null;
+            })(),
             createdAt: partner.created_at,
           };
         }

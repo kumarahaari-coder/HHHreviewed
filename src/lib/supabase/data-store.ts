@@ -1,3 +1,4 @@
+import { reservationCommissionView } from "@/lib/commissions/commission-math";
 import { createAdminClient } from "./admin";
 import { getTaxDocumentByPartner } from "./tax-documents";
 import { User, Partner, Site, Payout, UserRole, RedirectClick, ReservationAttribution, ReconciliationStatus, Reservation, SiteReadinessStage, Property } from "@/lib/db/schema";
@@ -755,21 +756,20 @@ export async function getPartnerDashboardData(partnerId: string) {
     console.error("[Partner Dashboard] Failed to load tax document:", err?.message);
   }
 
-  // Authoritatively source commissions from commission_ledger_events
+  // Authoritatively source commissions from commission_ledger_events, grouped per reservation. The amount shown is
+  // computed by reservationCommissionView (earned once paid, otherwise the expected amount on the current total),
+  // never by adding up every event, which double counted accruals and realizations.
   const { data: ledgerEvents } = await supabase
     .from("commission_ledger_events")
-    .select("reservation_id, calculated_commission, delta_amount, event_type")
+    .select("reservation_id, calculated_commission, delta_amount, event_type, metadata")
     .eq("partner_id", partnerId);
 
-  const ledgerByResId = new Map<string, number>();
-  if (ledgerEvents) {
-    for (const evt of ledgerEvents) {
-      if (evt.reservation_id) {
-        const cur = ledgerByResId.get(evt.reservation_id) || 0;
-        const amt = Number(evt.calculated_commission || evt.delta_amount || 0);
-        ledgerByResId.set(evt.reservation_id, cur + amt);
-      }
-    }
+  const eventsByResId = new Map<string, any[]>();
+  for (const evt of ledgerEvents || []) {
+    if (!evt.reservation_id) continue;
+    const list = eventsByResId.get(evt.reservation_id) || [];
+    list.push(evt);
+    eventsByResId.set(evt.reservation_id, list);
   }
 
   return {
@@ -802,11 +802,17 @@ export async function getPartnerDashboardData(partnerId: string) {
       launchDate: s.launch_date
     })),
     reservations: (reservations || []).map(r => {
-      const hasLedger = ledgerByResId.has(r.id);
-      const ledgerCommission = ledgerByResId.get(r.id);
-      const payoutAmount = hasLedger
-        ? ledgerCommission
-        : (r.partner_payout_amount != null ? Number(r.partner_payout_amount) : undefined);
+      const view = eventsByResId.has(r.id)
+        ? reservationCommissionView(
+            eventsByResId.get(r.id)!,
+            { gross: Number(r.gross_amount || 0), cleaning: Number(r.cleaning_fee || 0), service: Number(r.service_fee || 0), taxes: Number(r.taxes_amount || 0) },
+            { cancelled: r.reservation_status === "CANCELLED" }
+          )
+        : { amount: null, kind: "none" as const };
+      const payoutAmount =
+        view.amount !== null
+          ? view.amount
+          : (r.partner_payout_amount != null ? Number(r.partner_payout_amount) : undefined);
 
       return {
         id: r.id,
@@ -826,6 +832,7 @@ export async function getPartnerDashboardData(partnerId: string) {
         paymentStatus: r.payment_status,
         bookingAmount: Number(r.gross_amount || 0),
         partnerPayoutAmount: payoutAmount,
+        commissionKind: view.kind, // "earned" (paid) | "expected" (not paid yet) | "none"
         financialDataAvailable: payoutAmount !== undefined,
         lastSyncedAt: r.last_synced_at
       };

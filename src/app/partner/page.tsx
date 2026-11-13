@@ -244,7 +244,12 @@ function PartnerOverviewContent() {
                   <TableCell className="tabular-nums font-mono font-semibold">${res.bookingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                   <TableCell className="tabular-nums font-mono font-bold text-emerald-700">
                     {res.partnerPayoutAmount != null ? (
-                      `$${res.partnerPayoutAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      <>
+                        {`$${res.partnerPayoutAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                        {res.commissionKind === "expected" && (
+                          <span className="block text-[10px] font-normal text-[var(--secondary)]">Expected once paid</span>
+                        )}
+                      </>
                     ) : (
                       <span className="text-[var(--secondary)] text-xs font-normal">Pending</span>
                     )}

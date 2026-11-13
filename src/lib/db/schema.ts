@@ -168,6 +168,8 @@ export interface Reservation {
   propertyName?: string;
   guestName?: string;
   partnerPayoutAmount?: number;
+  /** "earned" = realized (guest paid in full), "expected" = not paid yet, "none" = no commission figure. */
+  commissionKind?: "earned" | "expected" | "none";
   bookingDate: string;
   checkInDate: string;
   checkOutDate: string;

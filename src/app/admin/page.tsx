@@ -1,5 +1,6 @@
 "use client";
 
+import { reservationCommissionView } from "@/lib/commissions/commission-math";
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -164,21 +165,22 @@ export default function AdminOverview() {
 
   // 3. Calculated Commission (Immutable historical INITIAL_ACCRUAL evidence from ledger)
   // Reconciles directly with INITIAL_ACCRUAL ledger events for attributed reservations in period
-  const calculatedCommission = attributedReservations.reduce((acc, r) => {
-    const accrualEvent = ledgerEvents.find(
-      e => (e.reservation_id === r.id || e.provider_booking_id === String(r.hostawayReservationId ?? r.ownerrezBookingId) || e.provider_booking_id === r.confirmationCode) &&
-           e.event_type === "INITIAL_ACCRUAL"
+  // Per booking: earned once paid, otherwise expected on the CURRENT total (never a guessed rate). Bookings with no
+  // accrual contribute nothing, because their partner has no rate set or they are not attributed.
+  const commissionOf = (r: any): number => {
+    const events = ledgerEvents.filter(
+      e => e.reservation_id === r.id || e.provider_booking_id === String(r.hostawayReservationId ?? r.ownerrezBookingId) || e.provider_booking_id === r.confirmationCode
     );
-
-    if (accrualEvent) {
-      const snapVal = Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0);
-      return acc + snapVal;
-    }
-
-    const fallbackRate = (r as any).commissionRate ? (r as any).commissionRate / 100 : 0.10;
-    const base = r.grossAmount || r.bookingAmount || 0;
-    return acc + (base * fallbackRate);
-  }, 0);
+    if (events.length === 0) return 0;
+    return (
+      reservationCommissionView(
+        events,
+        { gross: Number(r.grossAmount ?? r.bookingAmount ?? 0), cleaning: Number(r.cleaningFee || 0), service: Number(r.serviceFee || 0), taxes: Number(r.taxesAmount || 0) },
+        { cancelled: r.reservationStatus === "CANCELLED" }
+      ).amount ?? 0
+    );
+  };
+  const calculatedCommission = attributedReservations.reduce((acc, r) => acc + commissionOf(r), 0);
 
   // 4. Realized Commission (From authoritative PAYMENT_REALIZED, REFUND_CLAWBACK, MANUAL_ADJUSTMENT ledger events)
   const realizedCommission = ledgerEvents
@@ -245,14 +247,7 @@ export default function AdminOverview() {
     }
     const rev = res.grossAmount || res.bookingAmount || 0;
     
-    // Check if initial accrual event exists
-    const accrualEvent = ledgerEvents.find(
-      e => (e.reservation_id === res.id || e.provider_booking_id === String(res.hostawayReservationId ?? res.ownerrezBookingId)) &&
-           e.event_type === "INITIAL_ACCRUAL"
-    );
-    const commVal = accrualEvent
-      ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
-      : rev * 0.10;
+    const commVal = commissionOf(res);
 
     monthlyMap[monthKey].Revenue += rev;
     monthlyMap[monthKey].Commission += commVal;

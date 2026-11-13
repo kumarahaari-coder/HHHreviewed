@@ -136,7 +136,14 @@ function PartnerBookingsContent() {
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-[#1D1D1F] tabular-nums whitespace-nowrap">
                       {res.partnerPayoutAmount != null ? (
-                        formatCurrency(res.partnerPayoutAmount)
+                        <>
+                          {formatCurrency(res.partnerPayoutAmount)}
+                          {res.commissionKind && res.commissionKind !== "none" && (
+                            <span className="block text-[10px] font-normal text-[#6E6E73]">
+                              {res.commissionKind === "earned" ? "Earned" : "Expected once paid"}
+                            </span>
+                          )}
+                        </>
                       ) : (
                         <span className="text-xs text-[#6E6E73] font-normal">Pending</span>
                       )}
@@ -225,7 +232,7 @@ function PartnerBookingsContent() {
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-t border-[#E8E8ED]">
-                  <span className="text-[#6E6E73]">Calculated Commission</span>
+                  <span className="text-[#6E6E73]">{selectedRes.commissionKind === "earned" ? "Earned Commission" : selectedRes.commissionKind === "expected" ? "Expected Commission (once paid)" : "Calculated Commission"}</span>
                   <span className="font-mono font-semibold text-[#1D1D1F] tabular-nums">
                     {selectedRes.partnerPayoutAmount != null ? formatCurrency(selectedRes.partnerPayoutAmount) : "Pending"}
                   </span>
