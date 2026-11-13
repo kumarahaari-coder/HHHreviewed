@@ -462,7 +462,26 @@ export async function reconcileReservationPaymentRealization(params: {
   }
 
   const accrual = accrualEvents[0];
-  const commissionAmount = Number(accrual.calculated_commission || 0);
+  let commissionAmount = Number(accrual.calculated_commission || 0);
+
+  // A Hostaway booking's total can change after its (immutable) INITIAL_ACCRUAL was written: the accrual then holds
+  // a commission for the OLD total. Realize on the booking's CURRENT total, using the same historical rule snapshot
+  // (rule type and percentage from the accrual, never today's active rule). Fixed-amount rules and non-Hostaway
+  // accruals are left exactly as they were.
+  const snapshot: any = accrual.metadata || {};
+  const accrualSnapshotCommission = commissionAmount;
+  let recomputedFromCurrentTotal = false;
+  if (snapshot.ingestion_source === "hostaway_sync" && snapshot.rule_type === "percentage" && snapshot.percentage != null) {
+    const base = Math.max(
+      0,
+      grossAmount - Number(reservation.cleaning_fee || 0) - Number(reservation.service_fee || 0) - Number(reservation.taxes_amount || 0)
+    );
+    const recomputed = Math.round(base * (Number(snapshot.percentage) / 100) * 100) / 100;
+    if (Math.abs(recomputed - commissionAmount) > 0.005) {
+      commissionAmount = recomputed;
+      recomputedFromCurrentTotal = true;
+    }
+  }
 
   if (commissionAmount <= 0) {
     return {
@@ -510,6 +529,9 @@ export async function reconcileReservationPaymentRealization(params: {
       reconciliationSource: "ownerrez_sync_realization",
       inheritedAccrualId: accrual.id,
       accrualRuleSnapshot: accrual.metadata,
+      ...(recomputedFromCurrentTotal
+        ? { recomputedFromCurrentTotal: true, accrualSnapshotCommission, accrualSnapshotGross: snapshot.gross_amount }
+        : {}),
       grossAmount,
       amountReceived,
       ...(params.extraMetadata || {}),

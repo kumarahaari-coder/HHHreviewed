@@ -49,6 +49,22 @@ import { formatDate, formatDateRange } from "@/lib/format-date";
 
 type ViewShortcut = "ALL" | "NEEDS_REVIEW" | "UNATTRIBUTED" | "AWAITING_PAYMENT" | "HOLDS";
 
+/**
+ * Commission shown for a booking that has an accrual. The accrual is an immutable snapshot of the booking total at
+ * the time, so when the total has changed since, show the same rule applied to the CURRENT total (this is also what
+ * gets realized once the booking is paid).
+ */
+function currentAccrualCommission(accrual: any, res: any): number {
+  const snapshotValue = Number(accrual.calculated_commission ?? accrual.commission_amount ?? accrual.delta_amount ?? 0);
+  const meta = accrual.metadata || {};
+  if (meta.ingestion_source === "hostaway_sync" && meta.rule_type === "percentage" && meta.percentage != null) {
+    const gross = Number(res.grossAmount ?? res.bookingAmount ?? 0);
+    const base = Math.max(0, gross - Number(res.cleaningFee || 0) - Number(res.serviceFee || 0) - Number(res.taxesAmount || 0));
+    return Math.round(base * (Number(meta.percentage) / 100) * 100) / 100;
+  }
+  return snapshotValue;
+}
+
 function BookingsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -610,7 +626,7 @@ function BookingsContent() {
                   );
                   const preview = commissionPreviews.find(cp => cp.reservationId === res.id || cp.ownerrezBookingId === res.ownerrezBookingId);
                   const calculatedVal = accrualEvent
-                    ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
+                    ? currentAccrualCommission(accrualEvent, res)
                     : preview
                     ? Number(preview.commissionCalculations?.calculatedCommission || 0)
                     : null; // no accrual and no rule-based preview: the commission is genuinely not set (never guess a rate)
@@ -937,7 +953,7 @@ function BookingsContent() {
           );
           const preview = commissionPreviews.find(cp => cp.reservationId === selectedRes.id || cp.ownerrezBookingId === selectedRes.ownerrezBookingId);
           const calculatedVal = accrualEvent
-            ? Number(accrualEvent.calculated_commission ?? accrualEvent.commission_amount ?? accrualEvent.delta_amount ?? 0)
+            ? currentAccrualCommission(accrualEvent, selectedRes)
             : preview
             ? Number(preview.commissionCalculations?.calculatedCommission || 0)
             : null; // see above
