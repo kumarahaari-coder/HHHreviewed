@@ -19,6 +19,7 @@ const PUBLIC_PATTERNS: RegExp[] = [
   /^\/api\/auth\/(session|login|logout|forgot-password|reset-password|accept-invitation|handoff)$/
 ];
 
+
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_PATTERNS.some(re => re.test(pathname));
 }
