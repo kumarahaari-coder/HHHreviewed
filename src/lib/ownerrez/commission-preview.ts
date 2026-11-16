@@ -348,15 +348,26 @@ export async function getOwnerRezCommissionPreviews(): Promise<{
   const supabase = createAdminClient();
 
   // 1. Fetch all reservations originated or managed by OwnerRez
-  const { data: reservations, error: resErr } = await supabase
+  // Only the columns the calculation reads. "*" would pull the whole raw OwnerRez payload for every booking on each
+  // call; only its `charges` array is used, so that is selected on its own (JSON path) and re-wrapped below.
+  const { data: reservationRows, error: resErr } = await supabase
     .from("reservations")
-    .select("*")
+    .select(
+      "id, ownerrez_booking_id, confirmation_code, property_id, partner_id, site_id, check_in_date, check_out_date, nights, " +
+        "reservation_status, payment_status, gross_amount, amount_received, refund_amount, taxes_amount, cleaning_fee, service_fee, " +
+        "raw_charges:raw_ownerrez_data->charges"
+    )
     .not("ownerrez_booking_id", "is", null)
     .order("check_in_date", { ascending: false });
 
   if (resErr) {
     throw new Error(`Failed to fetch OwnerRez reservations: ${resErr.message}`);
   }
+
+  const reservations = ((reservationRows || []) as any[]).map(({ raw_charges, ...rest }) => ({
+    ...rest,
+    raw_ownerrez_data: { charges: raw_charges },
+  }));
 
   // 2. Fetch attributions for these reservations
   const resIds = (reservations || []).map((r) => r.id);
@@ -365,7 +376,7 @@ export async function getOwnerRezCommissionPreviews(): Promise<{
   for (let i = 0; i < resIds.length; i += 100) {
     const { data, error: attrErr } = await supabase
       .from("reservation_attributions")
-      .select("*")
+      .select("reservation_id, status, attribution_method, confidence_score")
       .in("reservation_id", resIds.slice(i, i + 100));
 
     if (attrErr) {
