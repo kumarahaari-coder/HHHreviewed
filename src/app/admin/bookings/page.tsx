@@ -1,7 +1,7 @@
 "use client";
 
 import { getReservationProvider, getReservationProviderLabel } from "@/lib/reservation-provider";
-import React, { useEffect, useState, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   Search,
@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { db } from "@/lib/db/mockDb";
 import { Pagination, usePagination } from "@/components/ui/pagination";
+import { PartialDataNotice } from "@/components/ui/partial-data-notice";
 import { reservationCommissionView } from "@/lib/commissions/commission-math";
 import { Reservation, Partner, Site, ReservationAttribution, ReconciliationStatus } from "@/lib/db/schema";
 import {
@@ -48,6 +49,8 @@ import {
 import { formatStatusLabel, getStatusTypeForState } from "@/lib/status-mapper";
 import { formatDate, formatDateRange } from "@/lib/format-date";
 
+const RESERVATION_CHUNK = 500;
+
 type ViewShortcut = "ALL" | "NEEDS_REVIEW" | "UNATTRIBUTED" | "AWAITING_PAYMENT" | "HOLDS";
 
 function BookingsContent() {
@@ -56,11 +59,16 @@ function BookingsContent() {
 
   // Data States
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  // Reservations are loaded newest-first in chunks to keep data transfer low; `totalReservations` is the full count.
+  const [totalReservations, setTotalReservations] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadedCountRef = useRef(0);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [attributions, setAttributions] = useState<ReservationAttribution[]>([]);
   const [commissionPreviews, setCommissionPreviews] = useState<any[]>([]);
   const [ledgerEvents, setLedgerEvents] = useState<any[]>([]);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
 
   // UI & Loading States
   const [loading, setLoading] = useState(true);
@@ -93,18 +101,20 @@ function BookingsContent() {
     try {
       setError(null);
       const [resRes, attrRes, sitesRes, partnersRes, commRes, ledgerRes] = await Promise.all([
-        fetch("/api/admin/reservations").catch(() => null),
+        fetch(`/api/admin/reservations?limit=${Math.max(loadedCountRef.current, RESERVATION_CHUNK)}`).catch(() => null),
         fetch("/api/admin/attributions").catch(() => null),
         fetch("/api/admin/sites").catch(() => null),
         fetch("/api/admin/partners").catch(() => null),
         fetch("/api/admin/commissions/preview").catch(() => null),
-        fetch("/api/admin/commissions/ledger").catch(() => null)
+        fetch("/api/admin/commissions/ledger?slim=1&limit=5000").catch(() => null)
       ]);
 
       if (resRes && resRes.ok) {
         const rData = await resRes.json();
         if (rData.success && Array.isArray(rData.reservations)) {
           setReservations(rData.reservations);
+          setTotalReservations(rData.total ?? rData.reservations.length);
+          loadedCountRef.current = rData.reservations.length;
         } else {
           setError("Unable to load reservations. Please refresh the page.");
         }
@@ -144,6 +154,7 @@ function BookingsContent() {
         const lData = await ledgerRes.json();
         if (lData.success && Array.isArray(lData.events)) {
           setLedgerEvents(lData.events);
+          setLedgerTotal(lData.total ?? lData.events.length);
         }
       }
     } catch (err: any) {
@@ -154,9 +165,12 @@ function BookingsContent() {
     }
   }, []);
 
+  // Load data once on mount (must not depend on `reservations`, or it refetches in an endless loop).
   useEffect(() => {
     refreshData();
+  }, [refreshData]);
 
+  useEffect(() => {
     // Check query params from Overview navigation
     const attrFilter = searchParams.get("attribution");
     const reviewFilter = searchParams.get("review");
@@ -177,7 +191,31 @@ function BookingsContent() {
     if (filterParam === "open") {
       setMobileFilterOpen(true);
     }
-  }, [searchParams, refreshData, reservations]);
+  }, [searchParams, reservations]);
+
+  // Append the next older chunk of bookings (no re-download of what is already loaded).
+  const loadMoreReservations = async () => {
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/admin/reservations?limit=${RESERVATION_CHUNK}&offset=${loadedCountRef.current}`);
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.reservations)) {
+        setReservations(prev => {
+          const seen = new Set(prev.map(r => r.id));
+          const merged = [...prev, ...data.reservations.filter((r: Reservation) => !seen.has(r.id))];
+          loadedCountRef.current = merged.length;
+          return merged;
+        });
+        setTotalReservations(data.total ?? totalReservations);
+      } else {
+        setError("Unable to load more bookings. Please try again.");
+      }
+    } catch {
+      setError("Unable to load more bookings. Please try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   // Handle Manual Sync Trigger
   const handleManualSync = async () => {
@@ -420,6 +458,23 @@ function BookingsContent() {
       />
 
       {error && <ErrorBanner message={error} />}
+
+      {ledgerTotal > ledgerEvents.length && (
+        <PartialDataNotice
+          summary={<>the latest <b>{ledgerEvents.length}</b> of <b>{ledgerTotal}</b> commission ledger events</>}
+          scope="Commission amounts"
+        />
+      )}
+
+      {totalReservations > reservations.length && (
+        <PartialDataNotice
+          summary={<>the latest <b>{reservations.length}</b> of <b>{totalReservations}</b> bookings</>}
+          scope="Search, filters, tab counts and CSV export"
+          onLoadMore={loadMoreReservations}
+          loadMoreLabel={`Load ${Math.min(RESERVATION_CHUNK, totalReservations - reservations.length)} older`}
+          loading={loadingMore}
+        />
+      )}
 
       {/* 2. Quick Filter Shortcuts Bar */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">

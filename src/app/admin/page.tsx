@@ -27,6 +27,8 @@ import {
   LoadingState,
   ErrorBanner
 } from "@/components/ui";
+import { PartialDataNotice } from "@/components/ui/partial-data-notice";
+
 import {
   ResponsiveContainer,
   AreaChart,
@@ -41,14 +43,19 @@ import {
   Cell
 } from "recharts";
 
+// Overview totals are computed in the browser, so it loads the newest reservations up to this cap.
+const OVERVIEW_RESERVATION_LIMIT = 2000;
+
 export default function AdminOverview() {
   const router = useRouter();
 
   // Data States
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [totalReservations, setTotalReservations] = useState(0);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
   const [ledgerEvents, setLedgerEvents] = useState<any[]>([]);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
   const [projection, setProjection] = useState<any>(null);
 
   // UI & Filter States
@@ -64,10 +71,10 @@ export default function AdminOverview() {
       setError(null);
 
       const [resRes, partnersRes, sitesRes, ledgerRes] = await Promise.all([
-        fetch("/api/admin/reservations").catch(() => null),
+        fetch(`/api/admin/reservations?limit=${OVERVIEW_RESERVATION_LIMIT}`).catch(() => null),
         fetch("/api/admin/partners").catch(() => null),
         fetch("/api/admin/sites").catch(() => null),
-        fetch("/api/admin/commissions/ledger").catch(() => null)
+        fetch("/api/admin/commissions/ledger?slim=1&limit=5000").catch(() => null)
       ]);
 
       let resDataLoaded = false;
@@ -76,6 +83,7 @@ export default function AdminOverview() {
         const rData = await resRes.json();
         if (rData.success && Array.isArray(rData.reservations)) {
           setReservations(rData.reservations);
+          setTotalReservations(rData.total ?? rData.reservations.length);
           resDataLoaded = true;
         }
       }
@@ -98,6 +106,7 @@ export default function AdminOverview() {
         const lData = await ledgerRes.json();
         if (lData.success && Array.isArray(lData.events)) {
           setLedgerEvents(lData.events);
+          setLedgerTotal(lData.total ?? lData.events.length);
         }
         if (lData.projection) {
           setProjection(lData.projection);
@@ -347,6 +356,20 @@ export default function AdminOverview() {
       />
 
       {error && <ErrorBanner message={error} />}
+
+      {ledgerTotal > ledgerEvents.length && (
+        <PartialDataNotice
+          summary={<>the latest <b>{ledgerEvents.length}</b> of <b>{ledgerTotal}</b> commission ledger events</>}
+          scope="Commission amounts"
+        />
+      )}
+
+      {totalReservations > reservations.length && (
+        <PartialDataNotice
+          summary={<>the latest <b>{reservations.length}</b> of <b>{totalReservations}</b> reservations</>}
+          scope="The totals, charts and tables on this overview"
+        />
+      )}
 
       {/* 2. Responsive Controls & Filters Bar */}
       <div className="bg-surface border border-divider rounded-xl p-3.5 sm:p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xs">

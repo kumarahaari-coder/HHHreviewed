@@ -740,7 +740,10 @@ export async function getPartnerDashboardData(partnerId: string) {
   if (partnerErr || !partner) return null;
 
   const { data: sites } = await supabase.from("sites").select("*").eq("partner_id", partnerId);
-  const { data: reservations } = await supabase.from("reservations").select("*").eq("partner_id", partnerId);
+  const { data: reservations } = await supabase
+    .from("reservations")
+    .select("id, hospitable_reservation_id, confirmation_code, partner_id, site_id, property_id, guest_name, booking_date, check_in_date, check_out_date, nights, guests, reservation_status, payment_status, gross_amount, cleaning_fee, service_fee, taxes_amount, partner_payout_amount, last_synced_at")
+    .eq("partner_id", partnerId);
   const { data: payouts } = await supabase.from("payouts").select("*").eq("partner_id", partnerId);
   const reservationPropertyIds = [...new Set((reservations || []).map(r => r.property_id).filter(Boolean))];
   const propertyNames = new Map<string, string>();
@@ -1745,24 +1748,35 @@ function normalizeAttributionStatus(raw: unknown): any {
   return "UNATTRIBUTED";
 }
 
-export async function getAdminReservations(): Promise<Reservation[]> {
+export const ADMIN_RESERVATIONS_DEFAULT_LIMIT = 500;
+export const ADMIN_RESERVATIONS_MAX_LIMIT = 2000;
+
+/** Newest reservations first, one page at a time. `total` is the full table count so the UI can say it is partial. */
+export async function getAdminReservations(
+  options: { limit?: number; offset?: number } = {}
+): Promise<{ reservations: Reservation[]; total: number }> {
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? ADMIN_RESERVATIONS_DEFAULT_LIMIT), 1), ADMIN_RESERVATIONS_MAX_LIMIT);
+  const offset = Math.max(Math.floor(options.offset ?? 0), 0);
+
   if (!isSupabaseEnabled()) {
-    return mockDb.reservations;
+    return { reservations: mockDb.reservations.slice(offset, offset + limit), total: mockDb.reservations.length };
   }
 
   const supabase = assertSupabaseClient();
-  const { data, error } = await supabase
+  const { data, error, count } = await supabase
     .from("reservations")
-    .select("*")
+    // Explicit columns: "*" would drag every raw provider payload (raw_*_data) along for the whole table.
+    .select("id, hospitable_reservation_id, ownerrez_booking_id, hostaway_reservation_id, quote_id, confirmation_code, property_id, partner_id, site_id, guest_name, guest_email, booking_date, check_in_date, check_out_date, nights, guests, reservation_status, payment_status, gross_amount, amount_received, refund_amount, cleaning_fee, service_fee, taxes_amount, currency, platform, payment_confirmation_source, attribution_status, financial_data_available, last_synced_at, created_at, updated_at", { count: "exact" })
     .order("booking_date", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (error) {
     console.error("[DataStore Error] getAdminReservations failed:", error);
     throw new Error(`Failed to fetch admin reservations: ${error.message}`);
   }
 
-  return (data || []).map((r: any) => ({
+  const reservations = (data || []).map((r: any) => ({
     id: r.id,
     hospitableReservationId: r.hospitable_reservation_id || undefined,
     ownerrezBookingId: r.ownerrez_booking_id ? Number(r.ownerrez_booking_id) : undefined,
@@ -1802,6 +1816,8 @@ export async function getAdminReservations(): Promise<Reservation[]> {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   })) as Reservation[];
+
+  return { reservations, total: count ?? reservations.length };
 }
 
 

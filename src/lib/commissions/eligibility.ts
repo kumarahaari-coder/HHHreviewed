@@ -333,27 +333,45 @@ export async function processCompletedStaysEligibility(options?: {
   const now = options?.now ?? new Date();
   const limit = options?.limit ?? 200;
 
-  // Query reservations that could potentially be eligible
+  // Query reservations that could potentially be eligible. Only light columns are read here, and only stays that
+  // have already checked out (future stays can never be released yet).
+  const checkedOutBy = now.toISOString().slice(0, 10);
   let query = supabase
     .from("reservations")
     .select("id, confirmation_code, reservation_status, payment_status")
-    .neq("reservation_status", "CANCELLED");
+    .neq("reservation_status", "CANCELLED")
+    .lte("check_out_date", checkedOutBy);
 
-  // Only partner-attributed stays can carry commission. Without this the oldest 200 reservations of any kind
-  // fill the scan limit and newer partner bookings are never reached.
+  // Only partner-attributed stays can carry commission.
   query = options?.partnerId ? query.eq("partner_id", options.partnerId) : query.not("partner_id", "is", null);
 
-  const { data: candidates, error: cErr } = await query
-    .order("check_out_date", { ascending: true })
-    .limit(limit);
+  const { data: allCandidates, error: cErr } = await query.order("check_out_date", { ascending: true });
   if (cErr) {
     throw new Error(`Failed to query reservations for eligibility scan: ${cErr.message}`);
   }
 
+  // One batched lookup for stays that are already released, instead of several queries per stay on every run.
+  // Released stays are dropped before the limit, so old released stays never crowd out newer ones.
+  const releasedIds = new Set<string>();
+  const allIds = (allCandidates || []).map((c: any) => c.id as string);
+  for (let i = 0; i < allIds.length; i += 200) {
+    const chunk = allIds.slice(i, i + 200);
+    const { data: released, error: rErr } = await supabase
+      .from("commission_ledger_events")
+      .select("reservation_id")
+      .eq("event_type", "ELIGIBILITY_RELEASE")
+      .in("reservation_id", chunk);
+    if (rErr) {
+      throw new Error(`Failed to query released stays for eligibility scan: ${rErr.message}`);
+    }
+    for (const row of released || []) releasedIds.add(row.reservation_id);
+  }
+  const candidates = (allCandidates || []).filter((c: any) => !releasedIds.has(c.id)).slice(0, limit);
+
   const result: BatchEligibilityResult = {
-    totalScanned: (candidates || []).length,
+    totalScanned: (allCandidates || []).length,
     eligibleReleased: 0,
-    alreadyReleased: 0,
+    alreadyReleased: releasedIds.size,
     skippedUnpaid: 0,
     skippedFuture: 0,
     skippedCancelled: 0,

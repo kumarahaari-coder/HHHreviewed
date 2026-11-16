@@ -17,12 +17,19 @@ export async function GET(req: NextRequest) {
     const partnerId = searchParams.get("partnerId");
     const reservationId = searchParams.get("reservationId");
     const eventType = searchParams.get("eventType");
-    const limit = parseInt(searchParams.get("limit") || "100", 10);
+    const MAX_LIMIT = 5000;
+    const requested = parseInt(searchParams.get("limit") || "100", 10);
+    const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 100, 1), MAX_LIMIT);
+    // slim=1: only the columns the admin pages compute commissions from (skips the rest of each row).
+    const slim = searchParams.get("slim") === "1";
 
     const supabase = createAdminClient();
     let query = supabase
       .from("commission_ledger_events")
-      .select("*")
+      .select(
+        slim ? "id, partner_id, reservation_id, provider_booking_id, event_type, delta_amount, calculated_commission, metadata, created_at" : "*",
+        { count: "exact" }
+      )
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -30,7 +37,7 @@ export async function GET(req: NextRequest) {
     if (reservationId) query = query.eq("reservation_id", reservationId);
     if (eventType) query = query.eq("event_type", eventType);
 
-    const { data: events, error } = await query;
+    const { data: events, error, count } = await query;
     if (error) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
@@ -43,6 +50,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       events: events || [],
+      total: count ?? (events || []).length,
       projection,
     });
   } catch (err: any) {

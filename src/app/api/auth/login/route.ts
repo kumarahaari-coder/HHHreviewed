@@ -18,11 +18,21 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = createAdminClient();
-    const { data: user } = await supabase
+    const { data: user, error: lookupError } = await supabase
       .from("users")
       .select("id, role, status, partner_id, password_hash, failed_login_attempts, locked_until")
       .eq("email", email)
       .maybeSingle();
+
+    // A failed lookup (database restricted, down, or misconfigured) is not a wrong password. Say so instead of
+    // reporting "Invalid email or password" for correct credentials.
+    if (lookupError) {
+      console.error("[Auth Login] User lookup failed:", lookupError.message);
+      return NextResponse.json(
+        { success: false, error: "Sign-in is temporarily unavailable. Please try again later." },
+        { status: 503 }
+      );
+    }
 
     if (!user || !user.password_hash) {
       await burnPasswordCheck(password);

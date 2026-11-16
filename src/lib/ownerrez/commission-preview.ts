@@ -360,13 +360,18 @@ export async function getOwnerRezCommissionPreviews(): Promise<{
 
   // 2. Fetch attributions for these reservations
   const resIds = (reservations || []).map((r) => r.id);
-  const { data: attributions, error: attrErr } = await supabase
-    .from("reservation_attributions")
-    .select("*")
-    .in("reservation_id", resIds);
+  // Chunk the id list: hundreds of UUIDs in one .in() overflow the request URL ("fetch failed").
+  const attributions: any[] = [];
+  for (let i = 0; i < resIds.length; i += 100) {
+    const { data, error: attrErr } = await supabase
+      .from("reservation_attributions")
+      .select("*")
+      .in("reservation_id", resIds.slice(i, i + 100));
 
-  if (attrErr) {
-    throw new Error(`Failed to fetch attributions: ${attrErr.message}`);
+    if (attrErr) {
+      throw new Error(`Failed to fetch attributions: ${attrErr.message}`);
+    }
+    attributions.push(...(data || []));
   }
 
   const attrMap = new Map<string, any>();
